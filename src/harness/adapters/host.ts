@@ -1,0 +1,90 @@
+/**
+ * Host domain (web ApiProxy host.describe/listDirectory/createDirectory/
+ * openPath/pickDirectory) over process facts and the filesystem. Native
+ * dialogs and platform openers do not exist on a phone, so those two degrade
+ * to path-based flows with the same data.
+ */
+import { mkdir, readdir, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import type { Context } from "@deepseek-ai/cordis";
+import { fail, ok, type AdapterResult } from "./types.js";
+
+export interface HostView {
+  version: string;
+  cwd: string;
+  provider?: string;
+  model?: string;
+  attachedSessions: number;
+  canOpenPath: boolean;
+}
+
+export function describeHost(ctx: Context, activeCwd: string = process.cwd()): HostView {
+  const agent = ctx.agents?.list()[0];
+  return {
+    version: "0.0.1",
+    cwd: activeCwd,
+    provider: agent?.options.provider,
+    model: agent?.options.model,
+    attachedSessions: ctx.agents?.list().length ?? 0,
+    canOpenPath: false,
+  };
+}
+
+export async function listDirectory(path: string): Promise<AdapterResult & { entries?: { name: string; kind: "file" | "directory"; size?: number }[] }> {
+  try {
+    const target = resolve(path);
+    const names = await readdir(target);
+    const entries = await Promise.all(
+      names.slice(0, 200).map(async (name) => {
+        try {
+          const info = await stat(join(target, name));
+          return { name, kind: (info.isDirectory() ? "directory" : "file") as "file" | "directory", ...(info.isFile() ? { size: info.size } : {}) };
+        } catch {
+          return { name, kind: "file" as const };
+        }
+      }),
+    );
+    entries.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "directory" ? -1 : 1));
+    const lines = entries.map((entry) => `${entry.kind === "directory" ? "\u{1F4C1}" : "\u{1F4C4}"} ${entry.name}${entry.size === undefined ? "" : ` (${entry.size} B)`}`);
+    return { ok: true, text: `\u{1F4C2} ${target}\n${lines.join("\n").slice(0, 3500)}`, entries };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** True only when the path exists and resolves to a directory. */
+export async function isDirectory(path: string): Promise<boolean> {
+  try {
+    const info = await stat(resolve(path));
+    return info.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export async function createDirectory(path: string): Promise<AdapterResult> {
+  try {
+    await mkdir(resolve(path), { recursive: false });
+    return ok(`\u{1F4C1} Created ${path}`);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** host.openPath: a phone cannot open a host file — return the resolved path. */
+export function openPath(path: string): AdapterResult {
+  try {
+    return ok(`\u{1F4C2} ${resolve(path)} \u2014 open it on the host (a phone client cannot launch host apps).`);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** host.pickDirectory: native picker unavailable — prompt for a text path. */
+export function pickDirectoryHint(current: string): AdapterResult {
+  return ok(`\u{1F4C1} Native directory picker is unavailable on Telegram \u2014 reply with the path (current: ${current}) or use /mkdir.`);
+}
+
+export function parentOf(path: string): string {
+  return dirname(resolve(path));
+}

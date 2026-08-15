@@ -1,0 +1,263 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function makeHost() {
+  const host = {
+    sends: [],
+    edits: [],
+    deletes: [],
+    nextId: 100,
+    inboundPending: false,
+    inboundRepliedMarks: 0,
+    consumer: undefined,
+    consumed: [],
+    currentAgentId: () => 'agent-1',
+    currentChatId: () => 7,
+    send: async (chatId, text, options) => {
+      host.sends.push({ chatId, text, options });
+      return host.nextId++;
+    },
+    editMessage: async (chatId, messageId, text, options) => {
+      host.edits.push({ chatId, messageId, text, options });
+      return true;
+    },
+    deleteMessage: async (chatId, messageId) => {
+      host.deletes.push({ chatId, messageId });
+    },
+    statusStats: () => ({}),
+    setAssistantConsumer: (consumer) => {
+      host.consumer = consumer;
+    },
+    pendingInbound: () => host.inboundPending,
+    markInboundReplied: () => {
+      host.inboundRepliedMarks += 1;
+      host.inboundPending = false;
+    },
+  };
+  return host;
+}
+
+function makeCtx(host) {
+  const listeners = new Map();
+  return {
+    host,
+    telegram: host,
+    logger: { info: () => {} },
+    on: (name, cb) => {
+      if (!listeners.has(name)) listeners.set(name, []);
+      listeners.get(name).push(cb);
+      return () => {};
+    },
+    effect: (fn) => {
+      fn();
+      return () => {};
+    },
+    emit: (sessionId, event) => {
+      for (const cb of listeners.get('session/event') ?? []) cb({ id: sessionId }, event);
+    },
+  };
+}
+
+async function setup() {
+  const host = makeHost();
+  const ctx = makeCtx(host);
+  const { apply } = await import('../dist/extensions/openclaw.js');
+  apply(ctx, undefined);
+  return { host, ctx };
+}
+
+const ev = (type, data) => ({ type, data });
+
+test('openclaw streams reasoning and tool lines then collapses to a summary', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'Let me' } }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: ' check' } }));
+  ctx.emit('agent-1', ev('tool/call', { callId: 'call_1', name: 'bash', arguments: 'ls -la' }));
+  ctx.emit('agent-1', ev('tool/result', { message: { source: { kind: 'tool', callId: 'call_1' }, content: [{ type: 'tool-result', isError: false }] } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  assert.equal(host.sends.length, 1);
+  assert.equal(host.sends[0].text, '\u2026');
+  assert.equal(host.sends[0].options.parse_mode, 'HTML');
+
+  const messageId = host.sends[0].text === '\u2026' ? 100 : undefined;
+  const edits = host.edits.filter((e) => e.messageId === messageId);
+  assert.ok(edits.length >= 2, `expected streaming edit + summary edit, got ${edits.length}`);
+  const lastStream = edits[edits.length - 2];
+  assert.ok(lastStream.text.includes('\u2699\uFE0F Working\u2026'));
+  assert.ok(lastStream.text.includes('\u{1F9E0}'));
+  assert.ok(lastStream.text.includes('<i>Let me check</i>'));
+  assert.ok(lastStream.text.includes('<b>\u2713 bash</b> <code>ls -la</code>'), 'result landed: ✓ icon, no trailing status');
+
+  const summary = edits[edits.length - 1];
+  assert.equal(summary.text, '\u{1F9E0} 1 thought \u00B7 \u{1F6E0}\uFE0F 1 tool call \u00B7 \u23F1\uFE0F 1s');
+  assert.equal(host.deletes.length, 0);
+});
+
+test('tool result swaps the icon to ✓ and drops the running status', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('tool/call', { callId: 'call_done', name: 'bash', arguments: 'ls' }));
+  await sleep(220);
+  const runningEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
+  assert.ok(runningEdit.text.includes('<b>\u{1F6E0}\uFE0F bash</b> <code>ls</code> <i>running</i>'), 'running state: emoji + bold label + code detail + italic status');
+  ctx.emit('agent-1', ev('tool/result', { message: { source: { kind: 'tool', callId: 'call_done' }, content: [{ type: 'tool-result', isError: false }] } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const streamEdit = host.edits.filter((e) => e.text.includes('Working\u2026')).at(-1);
+  assert.ok(streamEdit.text.includes('<b>\u2713 bash</b> <code>ls</code>'), 'completed icon ✓ and no trailing status');
+  assert.ok(streamEdit.text.includes('<i>running</i>') === false);
+});
+
+test('tool line commits the reasoning burst and the next burst starts a new line', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'first burst' } }));
+  ctx.emit('agent-1', ev('tool/call', { callId: 'call_a', name: 'read', arguments: 'src/a.ts' }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'second burst' } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const streamEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
+  assert.ok(streamEdit, 'missing streaming edit');
+  const first = streamEdit.text.indexOf('<i>first burst</i>');
+  const tool = streamEdit.text.indexOf('\u{1F4C4}');
+  const second = streamEdit.text.indexOf('<i>second burst</i>');
+  assert.ok(first >= 0 && tool >= 0 && second >= 0);
+  assert.ok(first < tool && tool < second, 'bursts interleave with the tool line');
+  const summary = host.edits.at(-1);
+  assert.equal(summary.text, '\u{1F9E0} 2 thoughts \u00B7 \u{1F6E0}\uFE0F 1 tool call \u00B7 \u23F1\uFE0F 1s');
+});
+
+test('reasoning text is HTML-escaped and whitespace folds to one line', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: '<b>bold</b> & "quote"\nsecond line' } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const streamEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
+  assert.ok(streamEdit.text.includes('<i>&lt;b&gt;bold&lt;/b&gt; &amp; &quot;quote&quot; second line</i>'));
+  assert.ok(streamEdit.text.includes('<b>bold</b>') === false);
+});
+
+test('thinking line strips markdown noise and head-truncates at a word boundary', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  const long = `**bold** \`code\` # Heading ${'word '.repeat(40)}`;
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: long } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const streamEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
+  assert.ok(streamEdit.text.includes('bold code Heading'), 'markdown stripped');
+  assert.ok(streamEdit.text.includes('**') === false && streamEdit.text.includes('`') === false);
+  const line = streamEdit.text.split('\n').find((l) => l.startsWith('\u{1F9E0}'));
+  assert.ok(line.length <= '\u{1F9E0} <i>'.length + 120 + '</i>'.length + 2);
+  assert.ok(line.includes('\u2026</i>'), 'truncated with ellipsis and balanced italic');
+});
+
+test('block-end text snapshot replaces partial deltas of the same block', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'I' } }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: ' need' } }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'block-end', index: 0, block: { type: 'text', text: 'I need to check this' } } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const streamEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
+  assert.ok(streamEdit.text.includes('<i>I need to check this</i>'), 'snapshot replaced the partial stream');
+  assert.ok(streamEdit.text.includes('<i>I needI need') === false, 'no duplication');
+});
+
+test('tool result with isError marks the line failed', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('tool/call', { callId: 'call_err', name: 'edit', arguments: 'x' }));
+  ctx.emit('agent-1', ev('tool/result', { message: { source: { kind: 'tool', callId: 'call_err' }, content: [{ type: 'tool-result', isError: true }] } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const streamEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
+  assert.ok(streamEdit.text.includes('<b>\u2717 edit</b>'));
+  assert.ok(streamEdit.text.includes('<i>failed</i>'));
+  assert.ok(streamEdit.text.includes('\u2713') === false);
+});
+
+test('empty turn sends nothing', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+  assert.equal(host.sends.length, 0);
+  assert.equal(host.edits.length, 0);
+});
+
+test('telegram_reply tool detail shows the message body, not the JSON wrapper', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('tool/call', { callId: 'call_r', name: 'telegram_reply', arguments: '{"text":"hello world"}' }));
+  await sleep(220);
+  const streamEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
+  assert.ok(streamEdit.text.includes('<code>hello world</code>'));
+  assert.ok(streamEdit.text.includes('{&quot;text&quot;') === false);
+});
+
+
+test('plugin registers as assistant consumer and buffers the latest block', async () => {
+  const { host, ctx } = await setup();
+  assert.equal(typeof host.consumer, 'function');
+  host.consumer(7, 'step one');
+  host.consumer(7, 'final answer');
+  assert.equal(host.consumed.length, 0);
+});
+
+test('turn end delivers the buffered final answer and marks the inbound replied', async () => {
+  const { host, ctx } = await setup();
+  host.inboundPending = true;
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  host.consumer(7, 'clean <b>answer</b>');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+  const answer = host.sends.find((s) => s.text.includes('clean'));
+  assert.ok(answer, 'final answer delivered as a separate message');
+  assert.ok(answer.text.includes('&lt;b&gt;answer&lt;/b&gt;'), 'answer HTML-escaped');
+  assert.equal(answer.options.parse_mode, 'HTML');
+  assert.equal(host.inboundRepliedMarks, 1);
+  assert.equal(host.inboundPending, false);
+});
+
+test('turn end sends the openclaw-mode reminder when nothing answered', async () => {
+  const { host, ctx } = await setup();
+  host.inboundPending = true;
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+  const reminder = host.sends.find((s) => s.text.includes('The turn ended without a telegram_reply'));
+  assert.ok(reminder, 'plugin owns the reminder while mounted');
+  assert.equal(host.inboundRepliedMarks, 1);
+});
+
+test('turn end skips delivery when a tool reply already answered the inbound', async () => {
+  const { host, ctx } = await setup();
+  host.inboundPending = false;
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  host.consumer(7, 'post-reply narration');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+  assert.ok(host.sends.every((s) => !s.text.includes('post-reply narration')), 'no duplicate after tool reply');
+  assert.equal(host.inboundRepliedMarks, 0);
+});

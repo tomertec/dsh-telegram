@@ -1,136 +1,146 @@
 # dsh-telegram
 
-**Telegram runtime adapter for DeepSeek Harness** — talk to your dsh agents from Telegram. Every allowed chat maps to one agent session; messages flow in via `followup()`, committed assistant text streams back to the chat. Zero runtime dependencies (plain HTTP over Node's built-in `fetch`).
+A native Telegram bridge plugin for [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (dsh `0.1.0-rc.6`): chat with your dsh agent from a phone, watch its status, and drive sessions/models/plugins/compaction through button menus — without slowing the agent down.
 
-## Overview
+- Fully async: long polling, a global rate-limit + per-chat FIFO send queue, and exponential backoff all run outside the agent loop.
+- Button-first UX modeled on `codex-telegram-bot` / `pi-telegram`: a persistent reply-keyboard bar plus ephemeral inline cards.
+- Mirrors the web UI's exposed surface: sessions (create/search/history/rename/fork/resume/prompt/queue/model/attachment), workspaces, goals, message feedback, skills, subagents, agent presets, host settings, credentials, models/discovery, host filesystem, commands, jobs, session-log downloads, plugin inventory + enable/disable, dynamic plugin inventory, and inline approval/question answering.
+- HTML parse mode with strict escaping everywhere — user content is never parsed as markup.
 
-dsh-telegram turns a DeepSeek Harness agent into a Telegram bot. It is a *protocol driver* in the dsh extension model: it adapts an external wire peer (Telegram) to `ctx.agents`, the same role the official ACP/JSON-RPC bridges play — but for human chat instead of automation.
+## Requirements
 
-**Who is it for?**
+- Node.js ≥ 22
+- dsh `0.1.0-rc.6` with a profile that includes `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-tools` and `@deepseek-ai/dsh-commands` (every shipped bundle does)
+- A Telegram bot token (create one with [@BotFather](https://t.me/BotFather))
 
-- Anyone who wants to query their DeepSeek agents from a phone, without opening the web UI.
-- Teams that want a shared, auditable chat surface in front of a harness (Telegram history is kept by Telegram).
-- Developers who want a minimal, readable reference for writing a protocol-driver plugin.
-
-**What it does**
-
-- Long-polls the Telegram Bot API (`getUpdates`) with no server, no webhook, no framework.
-- Creates one dsh agent session per allowed chat on first message; subsequent messages `followup()` into the same session, so conversation history is preserved.
-- Streams every committed assistant message back to the chat; long replies are split at Telegram's 4096-char limit.
-- Supports `/start`, `/new` (fresh session), `/status`.
-- Rejects unauthorized users outright (configurable allowlist).
-
-**What it does not do (yet)**
-
-- No webhook mode (requires a public HTTPS endpoint).
-- No inline keyboards, media, voice, or rich messages — text in, text out.
-- No cross-restart persistence of chat→session mapping (see Compatibility).
-
-## Compatibility
-
-- Requires **Node.js ≥ 22.19** (uses global `fetch`).
-- Built and verified against `@deepseek-ai/dsh@0.1.0-rc.6` / `@deepseek-ai/cordis@^4.0.1`.
-- **Last verified:** 2026-08-13 against mainline commit of the same day (dsh repo `master`).
-- dsh is in developer preview and iterates rapidly. Pin your dsh version and re-verify after updates; the plugin's peer dependencies (`@deepseek-ai/dsh-agent`, `dsh-llm`, `dsh-session`) may change shape between RC releases.
-- Chat→session mapping lives in memory: restarting dsh loses open sessions (use `/new` to start a fresh one).
-
-## Install / Uninstall
-
-Install into a dsh profile (local checkout; no build permission needed):
+## Install
 
 ```sh
-cd /path/to/deepseek-harness
-pnpm dsh plugin --profile web add /path/to/dsh-telegram
+# 1. install into a profile (forwards to pnpm in the profile directory)
+dsh plugin --profile <name> add dsh-telegram
+
+# 2. add the loader entry to <profile>/cordis.patch.yml (user layer)
+#    - insert:
+#        - id: telegram
+#          name: dsh-telegram
+
+# 3. provide the token (never written to disk)
+export TELEGRAM_BOT_TOKEN='123456:ABC...'
 ```
 
-From GitHub (source install — pnpm runs the `prepare` script, so allow it once):
+Start the profile, then in the dsh UI run:
 
 ```sh
-pnpm dsh plugin --profile web add github:<you>/dsh-telegram
-# pnpm ≥10 blocks the build script on first install; copy the printed package key
-# into <profile>/pnpm-workspace.yaml under allowBuilds, then re-run.
+/telegram start        # begin long polling (or set watch.autoStart: true)
+/telegram allow <id>   # whitelist your chat id (or tap "Allow this chat" once polled)
 ```
 
-From npm (once published):
+From then on, send `/start` to the bot in Telegram to see the welcome message and the persistent button bar.
 
-```sh
-pnpm dsh plugin --profile web add dsh-telegram
+## Buttons
+
+Persistent reply-keyboard bar (3 × 3):
+
+```text
+☰ Menu    ✨ New     🧹 Compact
+🧩 Models  🔌 Plugins 🎭 Mode
+🧭 Sessions 📊 Status ⏹ Stop
 ```
 
-Uninstall:
+`☰ Menu` opens the core card: status text, current model, queue depth, ✨ New / 🧹 Compact, then one row per web domain — Sessions, Status, Plugins, Mode, Workspaces, Goals, Skills, Subagents, Presets, Host settings, Credentials, Host, Jobs, Dynamic, Capabilities, Settings. The "All functions" card carries the same domains plus Usage/Queue, Allowed chats, Watch toggle, and About.
 
-```sh
-pnpm dsh plugin --profile web remove dsh-telegram
-```
-
-## Quick start
-
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Find your Telegram user id (e.g. message [@userinfobot](https://t.me/userinfobot)).
-3. Set the token and your user id in the profile's `cordis.patch.yml` (or export `DSH_TELEGRAM_BOT_TOKEN`):
-
-   ```yaml
-   - id: dsh-telegram
-     name: dsh-telegram
-     config:
-       botToken: '123456:ABC-DEF...'
-       allowedUserIds: [123456789]
-       provider: deepseek-official
-       model: deepseek-v4-flash
-   ```
-
-4. Start dsh, open your bot in Telegram, send `/start`, then any message.
+Every web-exposed ApiProxy/Typert method is reachable from Telegram. The full
+web-interface ↔ Telegram mapping lives in [`PLAN.md`](PLAN.md) (sections A–D);
+`/capabilities` shows which seams are live in the running profile.
 
 ## Configuration
 
-All keys live under the `dsh-telegram` row's `config` (patch layer; later layers win per row).
+The plugin reads `<workspace>/.pi/telegram.json`, where the workspace is the nearest ancestor directory containing `.pi`. All fields are optional:
 
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `botToken` | string | env `DSH_TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather. Empty disables sending. |
-| `allowedUserIds` | number[] | `[]` | Telegram user ids allowed to chat. **Empty = everyone rejected.** |
-| `provider` | string | — | Provider route for created agents (falls back to profile default). |
-| `model` | string | — | Model for created agents (falls back to profile default). |
-| `cwd` | string | `process.cwd()` | Working directory for created agent sessions. |
-| `pollTimeoutSeconds` | number | `25` | Long-poll timeout for `getUpdates` (Telegram max 50). |
+```json
+{
+  "security": { "allowedChatIds": [123456789] },
+  "watch": { "autoStart": false },
+  "inbound": {
+    "defaultMode": "auto-handle",
+    "rules": [{ "chatId": 123456789, "pattern": "urgent", "mode": "queue-only" }]
+  },
+  "outbound": {
+    "parseMode": "HTML",
+    "disableNotification": false,
+    "maxRetries": 3,
+    "sendRatePerSecond": 20,
+    "maxMessageLength": 4096
+  },
+  "mode": { "name": "headless" }
+}
+```
 
-## Permissions & data
+- `security.allowedChatIds` — inbound whitelist; **empty denies all inbound traffic**.
+- `inbound.defaultMode` — `auto-handle` (agent followup turn), `queue-only` (parked in the inbox without waking the agent), or `muted` (ignored). `rules` match in order (first match wins) on `chatId` and/or case-insensitive substring `pattern`.
+- `watch.autoStart` — start polling as soon as an agent is created.
+- The token comes **only** from `TELEGRAM_BOT_TOKEN`; it is never persisted.
 
-- **Authorization:** the allowlist is the only gate. Unauthorized users receive `⛔ You are not authorized` and are never given an agent session. The bot token itself is the secret that lets anyone *call* your bot; the allowlist decides who gets a session.
-- **Network:** the plugin talks only to `api.telegram.org` (bot API). Agent model calls go through the harness's normal LLM provider path.
-- **Filesystem:** no files are read or written by this plugin; agent sessions inherit the harness workspace policy.
-- **Secrets:** never commit `botToken` to the repository. Use the env-var form in the shipped patch (`process.env.DSH_TELEGRAM_BOT_TOKEN ?? ''`).
-- **Transcripts:** Telegram keeps chat history on its servers; dsh sessions additionally persist per the harness session persistence config.
+## Agent tools
 
-## Troubleshooting
+The plugin registers five tools the model can call:
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| Bot never replies, `botToken is empty` warning | Token not configured | Set `DSH_TELEGRAM_BOT_TOKEN` or `config.botToken`; restart dsh |
-| `⛔ You are not authorized` | Your user id is not in `allowedUserIds` | Add your id; restart dsh |
-| `poll error: telegram getUpdates: 401` | Token invalid/revoked | Recreate token in @BotFather |
-| Replies stop mid-conversation | Agent error | Check dsh logs; the error is forwarded to the chat with `⚠️ Agent error:` |
-| Long poll spam in logs | Network to `api.telegram.org` blocked/unstable | Ensure the machine can reach `api.telegram.org` (proxy env vars are respected by Node `fetch`); the plugin backs off automatically |
-| `cannot get property "agents" without inject` | Plugin loaded without `inject` metadata (stale build) | Rebuild: `pnpm run build`; verify the installed `lib/index.js` is fresh |
+| Tool | Purpose |
+| --- | --- |
+| `telegram_send` | Send HTML to one chat id |
+| `telegram_reply` | Reply to the current inbound Telegram message |
+| `telegram_broadcast` | Send one HTML message to several chats |
+| `telegram_status` | Report bridge/agent/inbox state |
+| `telegram_mark_no_reply` | Mark the inbound message as intentionally unanswered |
+
+## Slash commands (dsh side)
+
+`/telegram status` · `/telegram start` · `/telegram stop` · `/telegram allow <chatId>` · `/telegram disallow <chatId>` · `/telegram watch on|off` · `/telegram config auto-start`
+
+Telegram-side commands: `/start /menu /new /compact /stop /models /sessions /workspaces /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help` plus `/history [id] [limit]`, `/search <query>`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/queueedit <itemId> <text>`, `/steer <text>`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
+
+## Platform limits (shown as guidance in chat)
+
+- `host.pickDirectory` / `host.openPath` have no phone-side native dialog — the bot guides with a text path instead.
+- `downloads.sessionLog` streams the same ZIP as the web; files over 50 MB are handed off to the web download with a link/instruction.
+- `dynamicCordisRunner` run/stop/dependency mutations and plugin install/uninstall remain web-panel operations (read-only inventory + guidance in chat).
+- Long polling only (no webhook); replies are per completed assistant message (no token streaming).
+- Out-of-tree plugin packages need their optional peers `@deepseek-ai/dsh-compaction` / `@deepseek-ai/cordis-plugin-loader` only if you want the typed seam at build time; at runtime missing services degrade to readable errors.
+
+## Hot update & hot plug (cordis-native)
+
+- `apply(ctx, config)` consumes the loader entry config (the official config
+  channel); `.pi/telegram.json` stays the file fallback.
+- `internal/update` waterfall live-applies config changes (whitelist, inbound
+  rules, outbound rate/retry/length, watch.autoStart) and vetoes the restart,
+  following the include plugin's official pattern. `SendQueue.configure` and
+  `TelegramTransport.applyLimits` hot-adjust the running limiter.
+- Disable the entry (`loader.update` / `/plugindisable` on itself, or the
+  profile patch) or edit the source under the `hmr` plugin: `teardownMount()`
+  reverses every mount effect (transport, bridge, interactive, panels,
+  pending state, model selections, session lifecycle), and `apply` is
+  idempotent — reload 800 次 ≡ 冷启动（论文 Theorem 73 的 Confluence 约定）。
+- `ctx.provide("telegram", …)` exposes `getConfig/status/chats/sendText/
+  broadcast/start/stop` to other plugins.
+- Telegram-side `/config get|set <path> [json]` and dsh-side
+  `/telegram config get|set <path> <json>` hot-apply and persist any config
+  leaf (e.g. `outbound.sendRatePerSecond`).
+
+## Live test
+
+`TESTING.md` records the isolated live-bot harness (temp `DSH_HOME` +
+`test/telegram-live-overlay.yml`) and the manual acceptance checklist.
 
 ## Development
 
 ```sh
-pnpm install
-pnpm run typecheck     # tsc --noEmit
-pnpm run build         # tsc → lib/
+npm install
+npm run check          # tsc build + node --test
+npm pack --dry-run     # verify the publish payload (dist + README + LICENSE)
 ```
 
-Structure:
+Verified dsh seams are documented in [`docs/SEAMS.md`](docs/SEAMS.md).
 
-- `src/index.ts` — plugin entry (`name`/`inject`/`Config`/`apply`), Telegram client, long-poll loop, session mapping.
-- `cordis.patch.yml` — the bundle patch layer that mounts the plugin row.
+## License
 
-Design notes for contributors:
-
-- **Zero runtime dependencies** is a goal: the Bot API surface used here is intentionally small (`getUpdates`, `sendMessage`, `sendChatAction`). Before adding a dependency, ask whether Node's built-ins cover it.
-- Session mapping is deliberately naive (one chat = one agent, in memory). A future version may key sessions by `(chat, bot)` or persist them; see Compatibility.
-
-## License & security
-
-MIT. Report security issues privately via the repository's security advisory (or open an issue without secrets). The plugin runs the Telegram token as configured by the operator; it executes no model code itself — all agent behavior is governed by the harness's own permission and sandbox policy.
+MIT

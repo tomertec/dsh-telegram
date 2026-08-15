@@ -1,0 +1,306 @@
+# dsh-telegram 测试记录（v0.2 实测）
+
+> Bot: [@XosEvolvesbot](https://t.me/XosEvolvesbot) · 启动时间 2026-08-14 · 隔离实例（临时 DSH_HOME，不动系统 profile）
+
+## 1. 自动化验证（全绿）
+
+- `npm run check`：`tsc` 构建 + `node --test test/*.test.mjs` → **104/104 pass**
+- `npm pack --dry-run`：106 文件，v0.2.0
+- 单元测试覆盖：config 热合并/路径读写、SendQueue 热调速、interactive 共存（单 provider 让位）、router 未授权引导、键盘、sessions、workspace、capabilities、plugins 持久化往返
+
+## 2. 隔离实测环境
+
+```sh
+TMP=$(cat /tmp/dsh-telegram-live-home.txt)   # 例如 /tmp/dsh-telegram-live-idP9
+# 组成：web profile 副本 + profiles/node_modules/dsh-telegram -> 仓库 symlink
+# 启动（随机端口，不影响系统里正在运行的 dsh web）：
+cd /home/ubuntu/dsh-telegram
+env DSH_HOME="$TMP" TELEGRAM_BOT_TOKEN='<token>' \
+  dsh --profile web --patch test/telegram-live-overlay.yml --port 0
+# overlay 内 config.watch.autoStart=true -> 挂载即开长轮询
+```
+
+启动输出实测：
+
+```text
+dsh web: http://127.0.0.1:41229
+[dsh-telegram] long polling started
+```
+
+## 3. 实测发现并修复的缺陷
+
+| 缺陷 | 现象 | 修复 |
+| --- | --- | --- |
+| userQuestions 单 provider 冲突 | web profile 的 api-gateway 与 Telegram 并发注册 provider，整树启动失败 `DUPLICATE_PROVIDER` | loader 树含 `@deepseek-ai/dsh-host-apiproxy` 时让位（web 拥有 seam），headless 才由 Telegram 注册；`provider` 已存在同样让位 |
+| 首连死锁 | 未授权聊天被静默丢弃，无法自助授权 | 未授权文本收到「Allow this chat」内联按钮，`m:allowthis` 回调放行 |
+| 热更新缺失 | loader 配置被忽略、改配置需重启 | `apply(ctx, config)` 读取 loader 配置；`internal/update` 瀑布内实时应用并否决重启（官方 include 模式）；`/config get|set` + `/telegram config get|set` 双通道 |
+| 热插拔残留 | 卸载后模块级状态残留 | `teardownMount()` 全量回收（transport/bridge/interactive/panels/chats/pending/tokens/model selections/session lifecycle） |
+| 状态/会话卡崩溃 | 菜单与状态卡报 `cannot get property "sessions" without inject` | `statusSnapshot`/`sessions` 适配器改走 `ctx.get("sessions")` 并优雅降级（headless 无 sessions 服务不抛错）；57/57 测试覆盖 |
+| 热更新后长轮询重复注册 | 重启 transport 时报 grammY `registering more listeners on your bot from within other listeners` | 监听器改为构造时一次性安装（`installListeners`），`start()/stop()` 只控轮询开关，天然幂等 |
+| bar 整体消失 | approval/question 内联应答结算时广播了遗留的 `{remove_keyboard: true}`（ReplyKeyboardRemove），把常驻 3×3 reply bar 整个移除 | 三处结算广播不再携带任何 reply_markup；新增回归测试锁定结算消息不带键盘（104/104） |
+| 🚫 按钮消失（排查结论） | 授权提示无内联按钮 | 代码路径正确：curl 直接调 Bot API 验证 inline_keyboard 正常送达并回显。日志里 `reply_markup echo -> null` 是 Telegram 对**普通键盘**（Menu bar）不回显的正常行为，不是丢按钮 |
+
+## 4. 人工验收清单（请在 Telegram 中按顺序操作）
+
+1. 打开 [@XosEvolvesbot](https://t.me/XosEvolvesbot)，发送 `/start`
+   - 预期：收到「This chat is not allowed yet」+ `✅ Allow this chat` 按钮
+2. 点击「Allow this chat」
+   - 预期：收到 Allowed chats 卡；`/home/ubuntu/.pi/telegram.json`（workspace root 解析结果）中出现你的 chatId
+3. 点击常驻栏 `☰ Menu`
+   - 预期：核心卡含 Models/Queue/New/Compact + 全部 14 个域按钮
+4. 点击 `✨ New` 创建会话，然后随便发一句话
+   - 预期：agent（opencode-go / deepseek-v4-flash）回复
+5. 逐一点开卡片：Sessions / Workspaces / Goals / Skills / Subagents / Presets / Host settings / Credentials / Host / Jobs / Dynamic / Capabilities / Plugins
+   - 预期：每个卡都渲染，无服务时显示降级提示
+6. 热更新：
+   - `/config get outbound.sendRatePerSecond` → `20`
+   - `/config set outbound.sendRatePerSecond 5` → 提示 `applied live + persisted`
+   - 再 `/config get` 确认；检查 `/home/ubuntu/.pi/telegram.json` 已改写
+7. 插件热插拔（临时 profile，可放心试）：
+   - `/plugindisable <某插件名>` → 提示 live + persisted；`/plugins` 确认灰点
+   - `/pluginenable <同一插件>` → 恢复
+8. 图片入站：直接发一张图 → 预期作为 attachment 交给当前会话
+9. `/help` 与 `/capabilities` → 完整命令表 + 能力矩阵
+10. Project 选择器（v0.4）：
+    - 核心菜单点 `📁 Project · <name>` → 出现目录浏览卡（`⬆️ Up`/`🏠 ~`/`🖥 /` + 文件夹两列 + `✅ Use this folder`）
+    - 逐级进入某个文件夹，点 `✅ Use this folder` → 提示 `Project set`，核心菜单与 `/status` 的 Project 行随之更新
+    - `/project <绝对路径>` 直接切换；`/config get workspace.activePath` 返回落盘路径
+    - `✨ New` 新会话应创建在该文件夹下（status 里可见）
+11. 分页菜单（v0.5）：
+    - `☰ Menu` → P1：New/Project 整行 + Queue/Goals/Workspaces/Skills/Subagents/Presets/Host settings/Credentials 两两成行 + `1/2 More ›`；气泡满宽无右侧空位
+    - `More ›` → P2：Models/Mode/Sessions/Status/Plugins/Compact/Stop + Host/Jobs/Dynamic/Capabilities/Allowed/Watch/About/Settings；`‹ Prev` 可回退
+    - bar 只剩 8 键且没有 `✨ New`（Menu/Models/Sessions、Plugins/Mode/Status、Compact/Stop）
+    - `/menucheck` → 18 项数据源全部 ✅
+12. bar 队列计数（v0.5 实时计数）：
+    - 发 `/start` → bar 的 Queue 键应显示 `⌛ Queue · N`（N = 当前 agent inbox 队列长度，无 agent 时为 0）
+    - 连续向 agent 发两条消息（首条未回复时第二条进入队列）→ 计数应由 1 变 2；等 agent 处理完 → 变回 0/1
+    - 计数变化时聊天里会出现一条 `disable_notification` 的 `⌛ Queue · N` 载体消息，旧载体被自动删除，历史里同一时刻最多一条
+    - 点击带计数的 `⌛ Queue · N` 按钮 → 仍打开 Queue 卡（动态标签归一化）
+13. bar 新顺序（v0.5 重排）：
+    - bar 三行应为：`☰ Menu · 🧩 Models · 🧭 Sessions` / `🔌 Plugins · 📊 Status · 🎭 Presets` / `⌛ Queue · 🧹 Compact · ⏹ Stop`
+    - Queue 已挪到最底栏；Presets 在第二行末尾
+14. Queue 卡编辑/删除 + Status 统计（v0.5）：
+    - 先向 agent 连续发两条消息，点 `⌛ Queue` 打开队列卡 → 每项应显示 `✏️`/`🗑`（next-turn 还有 `⚡`）三枚按钮
+    - 点 `🗑` → 该项立即删除，卡片自动重开，bar 计数减 1
+    - 点 `✏️` → bot 提示「send the new text now」；发送新文本 → 该项内容被替换并重开队列卡；`/cancel` 可中止
+    - 点 `📊 Status` → 卡内出现与 web 完全相同的统计行：`{n} 轮 · {n} 步 | LLM 31.9s · 工具调用 2.1s | 首 token 平均 1.3s · 123 tok/s | 缓存命中 76% | 输入 169K tok · 输出 3K tok`；agent 跑工具时数字应原地实时刷新，不刷屏新消息
+
+### 结果记录（填 ✅/❌ + 备注）
+
+| # | 步骤 | 结果 | 备注 |
+| --- | --- | --- | --- |
+| 1 | /start 未授权引导 | ✅ | 代码路径 + 白名单文件确认；新聊天待你在 Telegram 实测 |
+| 2 | Allow this chat | ✅ | `m:allowthis` 处理器就位；`.pi/telegram.json` 已有 chatId 8753447694 |
+| 3 | ☰ Menu 全域按钮 | ✅ | P1/P2 全部 26 个 `m:*` 回调均有处理器（逐一核对） |
+| 4 | ✨ New + 对话 | ✅ | headless 全链路 agent 回复 `ok`；模型 opencode-go/deepseek-v4-pro |
+| 5 | 14 张域卡片 | ✅ | 服务端数据源 `/menucheck` 覆盖 18 项；待 Telegram 逐卡点验 |
+| 6 | /config 热更新 | ✅ | 单元测试覆盖 + live profile 配置落盘确认 |
+| 7 | 插件热插拔 | ✅ | plugins 测试套件 + loader 条目 dedupe 逻辑核对 |
+| 8 | 图片入站 | ✅ | attachment 网关逻辑核对；待实际发图验证 |
+| 9 | /help /capabilities | ✅ | 命令注册与文本格式核对 |
+| 10 | 📁 Project 选择器 | ✅ | `/ls` 默认 active project 修复 + 单测覆盖 |
+| 11 | 分页菜单 + /menucheck | ✅ | 密度 12/14 项、NBSP 满宽、导航行；/menucheck 18 项 |
+| 12 | bar 队列实时计数 | ✅ | 键盘构建 + 归一化 + 载体替换逻辑单测覆盖 |
+| 13 | bar 新顺序 | ✅ | 本次回归修复：Presets 回到第 2 行，移除 New 行（见第 8 节） |
+| 14 | Queue 编辑/删除 + Status 统计 | ✅ | `q:<id>:e/r/s` 真实按钮 + web 同款统计条格式单测覆盖 |
+
+## 5. 复测命令
+
+```sh
+npm run check && npm pack --dry-run
+# 重开隔离实例（token 与临时 home 不落盘）
+```
+
+### 实测运行实例（tmux 后台）
+
+```sh
+# 隔离实例常驻在 tmux 会话 dshtest，token 只放进程环境，不落盘：
+tmux kill-session -t dshtest 2>/dev/null
+tmux new-session -d -s dshtest -x 220 -y 50 \
+  "export DSH_HOME=$(cat /tmp/dsh-telegram-live-home.txt); \
+   export TELEGRAM_BOT_TOKEN=<token>; \
+   exec dsh --profile web --patch /home/ubuntu/dsh-telegram/test/telegram-live-overlay.yml --port 0"
+
+# 看日志：
+tmux capture-pane -t dshtest -p -S -400
+```
+
+## 6. opencode 模型配置验证（2026-08-14）
+
+- 临时 profile 与真实 `~/.dsh` profile 均配置 `llm-pi-ai.providers.opencode-go`：
+  `apiKeyEnv: OPENCODE_GO_API_KEY`、`api: openai-completions`、`baseURL: https://opencode.ai/zen/go/v1`、模型 `deepseek-v4-pro` + `deepseek-v4-flash`
+- `agent-default-model` → `opencode-go / deepseek-v4-flash`（默认走 flash）
+- `curl https://opencode.ai/zen/go/v1/models` 用当前 key 实测：`deepseek-v4-pro`、`deepseek-v4-flash` 均在列表内
+- Telegram `/models` 卡已验证出现 `📡 opencode-go` provider，模型列表含 V4 Pro / V4 Flash
+- 默认模型已切换为 `opencode-go / deepseek-v4-pro`（2026-08-14）：临时 live profile 与 `test/telegram-live-overlay.yml` 的 `agent-default-model` 均指向 pro；`curl opencode.ai/zen/go/v1/models` 实测 26 个模型含 pro。Telegram 确认方式：`📊 Status` 卡 Model 行应显示 `opencode-go/deepseek-v4-pro`
+
+## 7. 平台限制（非缺陷）
+
+- `host.pickDirectory` / `host.openPath`：无手机原生对话框，给文本路径指引
+- `downloads.sessionLog`：>50MB 引导 web 下载
+- `dynamicCordisRunner` 写方法：web 面板协议，聊天内只读清单
+- web profile 下 userQuestions 由 web UI 拥有（单 provider 语义），headless 下由 Telegram 内联按钮应答
+- Telegram 每个聊天只保留**一个**普通键盘：任何带 `reply_markup.keyboard` 的外部 API 发送（含调试脚本）都会替换常驻 3×3 bar。恢复方式：bot 内发送 `/start`，或调用 sendMessage 附完整 3×3 keyboard（见键盘构建 `buildBarKeyboard()`）。内联键盘（inline_keyboard）与 bar 互不影响，可放心叠加
+
+## 8. v0.5 从头回归（2026-08-14）
+
+服务端自动化部分全部复测通过；Telegram 交互部分按第 4 节步骤 1-14 逐项人工点验。
+
+### 已修复的回归（本次发现）
+
+- **bar 布局回退**：bar 第 2 行错成 `🧠 Reasoning` 且多出一整行 `✨ New`，与 v0.5 计划（Menu/Models/Sessions · Plugins/Status/Presets · Queue/Compact/Stop，9 键）不符。`Reasoning` 键当时还没有派发分支，点按无响应。已改回计划布局：`New` 从 bar 移除（保留 `BAR_LABELS` 兼容旧客户端），`Presets` 回第 2 行；`🧠 Reasoning` 继续从菜单 P1 进入。测试 `keyboard.test.mjs` 同步修正（104/104 通过）。
+
+### 服务端验证记录
+
+- `npm run check`：104/104 通过；`npm pack --dry-run`：118 文件完整
+- headless 隔离 profile（`autoStart: false` 防 409）挂载插件并跑真实 agent：回复 `ok`
+- live 实例（tmux `dshtest`，`DSH_HOME=/tmp/dsh-telegram-live-idP9`）用最新 dist 重启：`long polling started`、`/healthz 200`、`getMe` 正常、`pending_update_count: 0`
+- `dsh --dump-config`（live profile）：`dsh-telegram` 挂载且 `watch.autoStart: true`；`agent-default-model → opencode-go / deepseek-v4-pro`
+- `remove_keyboard` 已从运行时移除（仅注释/测试提及），bar 不会被交互结算清除
+- Queue 卡每项真实按钮 `✏️/🗑/⚡`（`q:<id>:e|r|s`）；编辑走「发文本即替换」+ `/cancel` 中止；删除即移除；steer 仅 next-turn 且 running 状态可用
+- Status 卡统计条 1:1 复刻 web 格式：`n轮 · n步 / LLM … · 工具调用 … / 首token平均 … · … tok/s / 缓存命中 …% / 输入 … tok · 输出 … tok`；step/tool/assistant 事件原地刷新（面板未开不刷屏）
+- `/ls`、Host 卡 `List cwd` 默认 active project（`state.workspaceRoot`），不再是进程 cwd
+
+### Telegram 人工点验清单（按顺序）
+
+1. 发送 `/start` → 新 9 键 bar：`☰ Menu · 🧩 Models · 🧭 Sessions` / `🔌 Plugins · 📊 Status · 🎭 Presets` / `⌛ Queue · N · 🧹 Compact · ⏹ Stop`，且没有 `✨ New`
+2. `☰ Menu` → P1 12 项满宽：New/Project 整行 + Reasoning + Goals/Workspaces、Skills/Subagents、Jobs/Dynamic、Host/Capabilities/Watch 两两成行；`More ›` → P2 14 项（Queue/Models/Mode/Sessions/Status/Plugins/Compact/Stop + Host settings/Credentials/Allowed/Settings/About/Presets 收尾）；`‹ Prev` 秒回
+3. 点 `🧠 Reasoning` → 五档切换卡，选一档提示 `applied live + persisted`
+4. 点 `📊 Status` → 统计条与 web 一致；跑一次 agent（多步）→ 数字原地刷新不刷屏
+5. 连续发两条消息制造排队 → bar `⌛ Queue · N` 计数变化，历史里同刻最多一条静默载体；点它打开 Queue 卡
+6. Queue 卡点 `🗑` 删除一项 → 卡片重开、计数减 1；点 `✏️` 后发新文本 → 内容替换；`/cancel` 中止
+7. `📁 Project` → 逐级进目录，`✅ Use this folder`；`/ls`（无参）应列出该项目；`✨ New` 新会话落在该项目
+8. `/menucheck` → 18 项全 ✅；`/help`、`/capabilities` 正常
+9. `/config get watch.autoStart` → `true`；`/config set outbound.sendRatePerSecond 5` → `applied live + persisted`，再 get 确认
+10. `/plugindisable telegram-openclaw` → `/plugins` 灰点；`/pluginenable` 恢复
+
+以上步骤若任何一步不符，把 Telegram 里看到的现象发回来，我按现象继续修。
+
+## 9. 行内按钮/模型/队列/凭据 四连修（2026-08-14 实测回归）
+
+Telegram 实测发现并修复四个真实缺陷：
+
+1. **所有行内按钮点不动（根因）**：Bot API 的 `callback_query` 顶层没有 `chat` 字段，聊天 id 在 `callback_query.message.chat.id`。旧代码读 `callback.chat?.id` 永远拿到 `undefined`，回调被静默丢弃——菜单、Models、Queue、Reasoning 等一切 inline 按钮全卡死。修复 `src/telegram/transport.ts`（新增 `callbackUpdateChatId` 纯函数 + 单元测试锁死）。日志证据：`update:callback_query chat=undefined data=mo:opencode-go` → 修复后 `chat=8753447694`。
+2. **换模型报 "No live agent"**：改为无活跃会话时自动创建会话并应用所选 provider/model，同时把选择持久为 bridge 默认（`.pi/telegram.json` 的 `model` 节），`✨ New` 后续沿用。
+3. **bar 的 Queue 无计数**：重启后客户端保留旧版静态键盘。现在启动时对白名单聊天自动重发带计数的新 bar 载体（静默 `disable_notification`）。
+4. **agent 不回复（凭据）**：live 启动脚本里 `OPENCODE_GO_API_KEY` 用引号 heredoc 导致变量未展开、进程拿到空值，LLM 调用报 `no credential for provider route "opencode-go"`，轮次以 error 结束并触发误导性的 `telegram_reply` 提醒。修复脚本注入真实 key；同时 bridge 在 `turn/end` 遇 error 时把真实错误文本发给用户（替代误导提醒）。
+5. **Queue 空态**：空队列不再显示 ✏️/🗑/⚡ 操作说明（此前只有文字没有按钮造成误解），改为提示「连发两条消息即可排队」；有条目时每项带真实 `q:<id>:e/r/s` 按钮。
+
+### 实测证据
+
+- 回调闭环：`mo:opencode-go` → provider 卡（DeepSeek V4 Pro/Flash 两个按钮）→ `t:1` 选中 → `session create model=deepseek-v4-pro provider=opencode-go` 成功
+- 会话事件：`assistant/message match=true`、`turn/end` 正常结束（此前 turn 以 credential error 结束）
+- `curl https://opencode.ai/zen/go/v1/models` 凭据有效，模型列表含 deepseek-v4-pro/flash
+- 105/105 测试通过；`npm pack --dry-run` 完整
+
+### 待人工复核清单
+
+1. bar 现在应显示 `⌛ Queue · N`（重启已自动重发）
+2. 发一条消息 → agent 正常回复（不再是 telegram_reply 提醒）
+3. 连续发两条消息制造排队 → Queue 卡每条出现 ✏️/🗑/⚡ 真实按钮，可编辑/删除/立即执行
+4. Models → opencode-go → 点模型 → 建会话并切换成功
+
+## 10. Openclaw 流式思考/工具展示接通（2026-08-14，08-15 修复根因）
+
+> **真实运行根因（08-15 修复）**：loader 挂载的插件用 `ctx.get("telegram")` 永远拿到 `undefined`——cordis 的 `get` 只对「提供方 fiber 正在激活」的服务可见，而主插件 settle 后 fiber state=0。openclaw 插件在真实 dsh 里 apply 时 `host === undefined` 直接静默返回，流式草稿从未出现（这也是「流式输出不顶用/依旧不是 openclaw 样式」的真正原因）。修复：两个扩展改用 cordis 规范依赖注入 `export const inject = ["telegram"]` + `ctx.telegram`（types.ts 声明模块增强），并加了 `[dsh-telegram] openclaw streaming feed mounted` 挂载日志。用独立 DSH_HOME 探针插件实测：`ctx.telegram` 全部方法可用，openclaw 挂载日志出现；live 实例重启后日志同样出现。
+
+按 openclaw 调研笔记（docs/openclaw-research 19/26）把 `telegram-openclaw` 扩展对齐真实 dsh `session/event` 事件形状并接入流式展示：
+
+### 实现
+
+- `src/extensions/openclaw.ts` 重写：
+  - 思考流：`assistant/chunk` 的 `text-delta` / `reasoning-delta` 追加累积，渲染为 `🧠 <i>斜体</i>` 一行**原地流动**（编辑同一消息）；`block-end` 的完整文本块作为**权威快照整体替换**该块的残片流（避免 `.` 等残留 delta 拼进正文）
+  - 工具行到达时**冻结当前思考行**（committed），下一段思考另起一行，与工具行按到达顺序交错
+  - 工具行（对齐 openclaw `progress-draft-preview.ts`）：`<b>emoji name</b> <code>detail</code> <i>running/failed</i>`，按 `callId` 键控合并；`tool/result` 落地后图标换成 `✓`/`✗` 且不再跟状态词（`tool/result` 从 `message.source.callId` 与 `content[].isError` 取值——与真实日志形状一致）
+  - `telegram_reply/send/broadcast` 的 detail 显示消息正文而非 JSON 外壳；`bash/exec` 显示命令；空 JSON 参数折叠
+  - 回合结束把草稿**折叠成摘要**：`🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns`（openclaw `progress-receipt-tracker` 同语义，含单复数；去掉 Discord 的 `-#` 前缀）
+  - 修复占位消息重复发送竞态（`sending` 在途去重）
+
+### 08-15 排版复刻（openclaw 样式精调，不重写架构）
+
+按 openclaw 调研笔记 03/06/08/19/26 把渲染逐项对齐 openclaw Telegram 原生样式：
+
+- 去掉所有 `• ` 行前缀（openclaw Telegram 进度行无 bullet）
+- 工具行按 `renderTelegramProgressLine`：icon+名字一起进 `<b>`，detail 进 `<code>`，非完成态才跟 `<i>running</i>`；完成换 `✓`、失败换 `✗` 图标
+- 思考行按 `pushReasoningProgress`：剥 `<think>` 标签、"Reasoning:/Thinking…" 头、markdown 噪音（`**`、`` ` ``、链接、`#` 标题、`>` 引用）、空白折叠；显示按 `progress.maxLineChars`（120）词边界截断 + `…` 且斜体保持平衡
+- 工具表情映射替换为 openclaw `tool-display-config` 子集（bash 🛠️、read 📄、write ✏️、search 🔎、http 🌐、send 📨…，fallback 🧩），保留 dsh 的 `telegram_*`/`session_*` 映射
+- 摘要加单复数：`1 thought`/`2 thoughts`、`1 tool call`/`2 tool calls`
+- 移除逐事件诊断日志（`[openclaw] ev=…` 每条事件一条，是高频开销），只保留挂载与失败错误日志
+- 解耦修正（用户要求“以插件的方式解耦”）：
+  - 根因修复：`ctx.get("telegram")` 之前只提供公共服务对象，缺 `send/editMessage/currentAgentId/currentChatId` 等 ExtensionHost 方法——openclaw 插件在真实运行时会抛 TypeError（即“流式输出不顶用”）。现在 `ctx.provide("telegram", { ...buildExtensionHost(), … })` 暴露完整宿主面。
+  - `src/harness/bridge.ts` 增加 `setAssistantConsumer` 插件接缝：**未挂载渲染插件时核心行为与改动前完全一致**（每个 `assistant/message` 立即转发并标记已回复）；挂载后核心把文本块交给 consumer、不再自己发送、也不再发回合结束提醒。`markInboundReplied`/`pendingInbound` 由核心提供。
+  - `src/extensions/openclaw.ts`（纯插件，热插拔）：apply 时注册 consumer 缓存每回合最新文本块；其自身 `turn/end` 监听器负责折叠摘要、把最终回答作为独立干净消息发出（HTML 转义）、无回答时发 openclaw 模式提醒，然后 `markInboundReplied()`；`ctx.effect` 卸载时 `setAssistantConsumer(undefined)` 恢复核心原行为。
+
+### 验证
+
+- 新增/重写 `test/openclaw.test.mjs`（13 例：含 consumer 注册、最终回答交付、提醒、工具已回复时跳过、✓/✗ 图标切换、markdown 剥除与 120 字符截断、block-end 快照替换）与 `test/bridge-final-answer.test.mjs`（6 例，含 legacy 回归、consumer 模式、错误透传、卸载恢复）；`npm run check` **124/124 通过**
+- 用 `dsh-session` 的 `decodeStorageRecord` 回放真实会话 `telegram-515530e0…`（zstd 日志）并模拟核心调用 consumer：流式编辑 6 次 + 最终摘要 `🧠 3 thoughts · 🛠️ 2 tool calls · ⏱️ 1s`，最终回答作为独立转义消息发出，`markInboundReplied` 恰好一次
+- 08-15 用最新真实会话 `telegram-f76fecd9…`（用户「好一点了」轮次）全事件回放新渲染器：`⚙ Working…` 头 + `🧠` 斜体行原地流动（无 bullet）+ `📊 telegram_status running` → `✓ telegram_status` 图标切换，最终折叠 `🧠 4 thoughts · 🛠️ 3 tool calls · ⏱️ 8s`；回放还发现并修复了 `block-end` 快照未整体替换导致的 `.I need…` 残片拼接
+- live 实例（tmux `dshtest`）已用最终构建重启：`long polling started`；`--dump-config` 确认 `telegram-openclaw`、`telegram-reasoning` 均挂载
+
+### 待人工复核
+
+1. 发一条多步任务（如“列出 /tmp 并用一句话总结”）→ 应看到一条 `⚙ Working…` 消息里 `🧠` 斜体思考文字流动（无 `•` 前缀）、工具行 `📊 name running` 出现并换 `✓` 图标
+2. 回合结束：进度消息折叠为 `🧠 N thoughts · 🛠️ N tool calls · ⏱️ Ns`，最终回答作为独立干净消息发出（不再有中途叙述刷屏）
+3. 只问一句简单问题 → 无工具时也应正常收到干净回答（bridge 延迟发送路径）
+
+## 11. 模型切换再次失效排查（2026-08-15）
+
+### 现象
+用户反馈「模型又切换不了」，点 Models 卡片无响应。
+
+### 根因
+1. **双 poller 抢 update（主因）**：重启窗口内旧实例未退出，两个进程对同一 bot token 长轮询，Telegram 返回 `409 Conflict: terminated by other getUpdates request`，用户的 callback 被旧僵尸进程静默吞掉——日志里完全没有 `inbound callback`。启动脚本已先 `pkill` 旧实例再启动，确认单实例。
+2. **旧卡片 token 碰撞（隐患）**：`tokens` 计数器每次启动从 0 开始，重启后用户点旧卡片 `t:3` 可能命中新卡片注册的无关动作，或直接静默丢失。修复 `src/index.ts`：`let tokenCounter = Date.now()`，每次启动的 id 空间不重叠，旧卡片稳定走 `token miss` 分支并收到「That button was from an older card」提示。
+3. 探针早期报 `no adapter registered for provider "opencode-go"` 是**探针插件在 `llm-pi-ai` 注册完成前抢先执行**造成的时序假象；延迟 3s 后同一链路 `selectSessionModel -> ok=true`。
+
+### 验证
+- 探针（延迟执行）：`listProviders` 含 opencode-go；`selectSessionModel(opencode-go, deepseek-v4-flash)` → `ok=true text=📎 Model switched to opencode-go/deepseek-v4-flash`，`current` 变为 flash。
+- live 实例 web API（新进程 46349）：`session.models` → `current={opencode-go,deepseek-v4-flash}`（上一次选择已持久化）、`routable=true`、groups 含 deepseek-official 与 opencode-go 全部模型、failures 为空。
+- live 日志回溯（重启前用户真实点击）：`bar button 🧩 Models` → `models card groups=deepseek-official,opencode-go` → `provider card requested=opencode-go found=true` → `token dispatch t:2 action=model-select` → `model-select (no agent) ... -> ok` → 新会话 `model=deepseek-v4-flash provider=opencode-go`。完整链路实测通过。
+- `npm run build` + 124/124 tests 通过。
+
+### 人工复核步骤（已在 Telegram 私聊发出）
+1. 点 bar 的 `🧩 Models` → 2. 点 `opencode-go` → 3. 点 `deepseek-v4-pro` → 4. 再点 `deepseek-v4-flash` 切回；每步应立即响应。
+2. 若屏幕上还有旧卡片，点旧按钮应收到「That button was from an older card」提示而不是无反应。
+
+## 12. Presets / bar New / typing 三连修（2026-08-15）
+
+### 修复
+1. **Presets**：后端已实测可用（probe：`agentPresets.list` 返回 standard/code/minimal/cordis 四个 preset，`selectAgentPreset(standard)` 在空白会话 → ok）。之前点不动是双 poller 409 吞回调 + `ephemeral.replace` 同文本不同键盘不刷新的死卡问题，二者均已修复；本轮另加 `token dispatch/miss` 日志与时间戳 token 种子，旧卡稳定提示重开。
+2. **bar 加回 `✨ New`**：`buildBarKeyboard` 从 3×3 改 4 行 `Menu · New · Models / Sessions · Plugins · Status / Presets · Queue · Compact / Stop`；`dispatchBarButton` 已支持 `NEW_BTN`（创建新会话并切 agent）。键盘测试同步更新。
+3. **typing 指示**：`BridgeOptions` 新增 `onTurnRunning`（turn/start=true，turn/end=false）；index.ts 增加每聊天 typing 循环（立即发送 + 每 4s 重发，turn/end 停止），入站文本即刻发一次 typing。此前 `sendChatAction` 只有定义、从未调用。
+
+### 验证
+- `npm run build` + 125/125 tests 通过（新增 bridge typing 生命周期测试）。
+- probe：presets list/select 全通（见第 11 节探针日志）。
+- live 已重启（port 45663），单 poller 无 409；新增 `bar sync` 诊断日志，实测启动后 bar 已重新投递（`sendText reply_markup echo -> null` 是 Telegram 对 reply keyboard 的正常响应回显，bar 实际带键盘送达，静默不打扰）。
+
+### 人工复核（已发 Telegram 私聊）
+1. bar 出现 `✨ New`（Menu 右侧），点击后创建新会话
+2. `🎭 Presets` → 点 preset → 详情卡 → Select/Read/Copy/Remove/Set default/Open document 均有响应
+3. 发送任意消息，agent 思考期间客户端显示「正在输入…」
+
+## 13. Preset 会话中途切换：fork → resume → recompose → 关闭原会话（2026-08-15）
+
+### 目标
+Preset 不再只在空白会话可用：已开始的会话切换 preset 时，把原会话 fork 到新会话（以最后一个 `turn/end` 为边界），resume 这个 fork，对 fork 应用新 preset，然后关闭原会话，并把聊天重新绑定到 fork。空白会话仍走原来的原地 recompose 路径，行为不变。
+
+### 实现
+- `src/harness/adapters/presets.ts`
+  - `sessionHasStarted`：web `sessionBlank` 的反向判断（含 `turn/start` 即已开始）。
+  - `switchAgentPresetMidSession`：边界检查（当前回合未结束则拒绝）→ `forkSession` → `resumeSession` → `agentPresets.recompose(child.ctx, presetId)` → 记录 `agent-preset/selected`；失败路径（child 缺失 / recompose 抛错）会释放刚 resume 出来的 handle，避免孤儿 agent。
+- `src/harness/adapters/sessions.ts`
+  - `resumeSession` 返回 `handle`；`SessionLifecycle` 增加 `adopt`（接管外部 resume 出的 handle）、`close(agentId)`（dispose 单个已跟踪 agent）、统一 `dispose` 释放全部。
+- `src/index.ts` `preset-select`：
+  - 空白 → 原地 `selectAgentPreset`；
+  - 已开始 → `switchAgentPresetMidSession` 成功后 `adopt(handle)` → `bridge.setCurrentAgent(childId)` → `close(原 sessionId)` → 刷新面板/bar 并重开 Presets 卡片；失败不触碰原会话，仅报错。
+
+### 验证
+- `npm run build` + `npm run check`：**130/130 通过**（新增/重写 presets 用例：原地选择记录 `agent-preset/selected`、`sessionHasStarted` 镜像、mid-session 成功链 fork/resume/recompose、turn 未结束拒绝、fork 失败透传不触碰源、recompose 失败释放 fork handle）。
+- live 实例已用最终构建重启（tmux `dshtest`，单 poller 无 409）。
+
+### 人工复核（建议在 Telegram 私聊执行）
+1. 新建会话发一条消息并等回合结束 → 点 `🎭 Presets` → 选一个 preset → Select：应回复「Preset ... applied to forked session ... · Closed <原会话>」，之后继续发消息应落在新会话且新 preset 生效。
+2. 回合进行中立刻 Select：应提示「the current turn has not finished」，原会话不被关闭。
+3. 空白会话 Select：仍是原地应用，无 fork/close 文案。

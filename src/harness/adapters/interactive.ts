@@ -1,0 +1,348 @@
+/**
+ * Interactive answering (web ApiProxy `respond` for approval/question frames).
+ * Mirrors the api-proxy semantics exactly:
+ *   - approvals: `approval/request` waterfall listener claims the pending
+ *     approval/asked event (callId-matched) and settles it with the button
+ *     answer;
+ *   - questions: `ctx.userQuestions.registerProvider` owns the ask() promise
+ *     and settles it with the submitted answers.
+ */
+import { randomUUID } from "node:crypto";
+import type { Context } from "@deepseek-ai/cordis";
+
+export type ApprovalOutcome = "allowed-once" | "rejected" | "cancelled";
+
+export interface BroadcastDelivery {
+  chatId: number;
+  messageId: number;
+}
+
+export interface InteractiveDelivery {
+  broadcast(text: string, keyboard: unknown): Promise<BroadcastDelivery[]>;
+  edit(chatId: number, messageId: number, text: string, keyboard: unknown): Promise<boolean>;
+}
+
+interface ApprovalRequestLike {
+  agent: { id: string; session: { events: readonly { seq: number; type: string; data?: Record<string, unknown> }[] } };
+  toolName: string;
+  callId?: string;
+  reason?: string;
+  signal?: AbortSignal;
+}
+
+interface PendingApproval {
+  id: number;
+  approvalId: string;
+  sessionId: string;
+  toolName: string;
+  reason?: string;
+  resolve: (outcome: ApprovalOutcome) => void;
+  messageIds: Map<number, number>;
+}
+
+interface QuestionOptionLike {
+  id: string;
+  label: string;
+}
+
+interface QuestionItemLike {
+  id: string;
+  question: string;
+  detail?: string;
+  header?: string;
+  options?: QuestionOptionLike[];
+  multiSelect?: boolean;
+}
+
+interface QuestionRequestLike {
+  agent?: { id: string };
+  questions: QuestionItemLike[];
+  signal?: AbortSignal;
+}
+
+interface PendingQuestion {
+  id: number;
+  sessionId: string;
+  questions: QuestionItemLike[];
+  resolve: (answer: { answers: { id: string; selected: string[]; custom?: string }[] }) => void;
+  reject: (err: Error) => void;
+  messageIds: Map<number, number>;
+  selections: Map<string, string[]>;
+  custom: Map<string, string>;
+  answerer?: number;
+}
+
+interface QuestionsServiceLike {
+  registerProvider(provider: { ask(request: QuestionRequestLike): Promise<{ answers: { id: string; selected: string[]; custom?: string }[] }> }): () => void;
+  /** The single active UI provider; web UI sets this when it owns the seam. */
+  provider?: unknown;
+}
+
+interface LoaderEntryLike {
+  disabled?: boolean;
+  options?: { name?: string; group?: unknown };
+}
+
+interface LoaderLike {
+  entries(): Iterable<LoaderEntryLike>;
+}
+
+/** The web API proxy owns the single userQuestions provider when mounted. */
+function webUiOwnsQuestions(ctx: Context): boolean {
+  const loader = ctx.get("loader") as LoaderLike | undefined;
+  if (!loader) return false;
+  for (const entry of loader.entries()) {
+    if (entry.disabled === true) continue;
+    if (entry.options?.name === "@deepseek-ai/dsh-host-apiproxy") return true;
+  }
+  return false;
+}
+
+interface ApprovalServiceLike {
+  on?: unknown;
+}
+
+interface CordisEventsLike {
+  on<K extends string>(name: K, listener: (...args: unknown[]) => unknown): () => void;
+}
+
+export interface Interactive {
+  answerApproval(id: number, outcome: ApprovalOutcome): boolean;
+  toggleQuestionOption(chatId: number, id: number, questionId: string, optionId: string): Promise<boolean>;
+  setQuestionCustom(chatId: number, id: number, questionId: string, text: string): Promise<boolean>;
+  submitQuestions(chatId: number, id: number): Promise<boolean>;
+  cancelQuestions(chatId: number, id: number): Promise<boolean>;
+  detach(): void;
+}
+
+const approvals = new Map<number, PendingApproval>();
+const questions = new Map<number, PendingQuestion>();
+let counter = 0;
+
+function mint(): number {
+  counter += 1;
+  return counter;
+}
+
+async function reRenderQuestion(ctx: Context, pending: PendingQuestion, chatId: number, delivery: InteractiveDelivery): Promise<void> {
+  const messageId = pending.messageIds.get(chatId);
+  if (messageId === undefined) return;
+  const text = renderQuestions(pending, chatId);
+  await delivery.edit(chatId, messageId, text, questionKeyboard(pending.id, chatId)).catch(() => {});
+  void ctx;
+}
+
+export function questionIdAt(id: number, index: number): string | undefined {
+  const pending = questions.get(id);
+  return pending?.questions[index]?.id;
+}
+
+export function renderQuestions(pending: PendingQuestion, chatId: number): string {
+  const lines = [`\u2753 ${pending.sessionId ? `Session ${pending.sessionId}` : "Session"} asks (id ${pending.id}):`, ""];
+  pending.questions.forEach((question, index) => {
+    lines.push(`${index + 1}. ${question.header ? `[${question.header}] ` : ""}${question.question}`);
+    const selected = pending.selections.get(question.id) ?? [];
+    const custom = pending.custom.get(question.id);
+    if (question.options?.length) {
+      for (const option of question.options) {
+        lines.push(`   ${selected.includes(option.id) ? "\u2705" : "\u25CB"} ${option.label}`);
+      }
+      if (question.multiSelect) lines.push("   (multi-select: tap to toggle)");
+    } else {
+      lines.push(selected.length ? `   \u2705 ${selected[0]}` : "   \u25CB (reply with /answer <id> <question-number> <text>)");
+    }
+    if (custom) lines.push(`   \u270F custom: ${custom}`);
+    void chatId;
+  });
+  return lines.join("\n").slice(0, 3800);
+}
+
+export function questionKeyboard(pendingId: number, chatId: number): unknown {
+  const pending = questions.get(pendingId);
+  if (!pending) return undefined;
+  const rows: { text: string; callback_data: string }[][] = [];
+  pending.questions.forEach((question, index) => {
+    const options = (question.options ?? []).slice(0, 24);
+    const selected = pending.selections.get(question.id) ?? [];
+    for (const option of options) {
+      const marked = selected.includes(option.id) ? "\u2705 " : "";
+      rows.push([{ text: `${index + 1}:${marked}${option.label}`.slice(0, 40), callback_data: `qu:${pendingId}:${index}:${option.id}`.slice(0, 64) }]);
+    }
+  });
+  rows.push([
+    { text: "\u2714\uFE0F Submit", callback_data: `qu:${pendingId}:s` },
+    { text: "\u2716 Cancel", callback_data: `qu:${pendingId}:c` },
+  ]);
+  return { inline_keyboard: rows };
+}
+
+function approvalKeyboard(id: number): unknown {
+  return {
+    inline_keyboard: [
+      [
+        { text: "\u2705 Allow once", callback_data: `ap:${id}:y` },
+        { text: "\u274C Reject", callback_data: `ap:${id}:n` },
+      ],
+    ],
+  };
+}
+
+export function attachInteractive(ctx: Context, delivery: InteractiveDelivery): Interactive {
+  const disposers: (() => void)[] = [];
+
+  if (ctx.get("approval") !== undefined) {
+    const events = ctx as unknown as CordisEventsLike;
+    disposers.push(
+      events.on("approval/request", (request, next) => {
+        const req = request as ApprovalRequestLike;
+        if (req.signal?.aborted === true) return Promise.resolve("cancelled");
+        const claimed = new Set([...approvals.values()].map((entry) => entry.approvalId));
+        const decided = new Set<string>();
+        let approvalId: string | undefined;
+        for (let i = req.agent.session.events.length - 1; i >= 0; i -= 1) {
+          const event = req.agent.session.events[i];
+          if (event.type === "approval/decided") decided.add(String((event.data as { id?: unknown })?.id));
+          else if (event.type === "approval/asked") {
+            const data = event.data as { id?: unknown; callId?: unknown };
+            if (decided.has(String(data.id)) || claimed.has(String(data.id))) continue;
+            if ((req.callId ?? null) !== (data.callId ?? null)) continue;
+            approvalId = String(data.id);
+            break;
+          }
+        }
+        if (approvalId === undefined) return (next as () => Promise<unknown>)();
+        const id = mint();
+        return new Promise<ApprovalOutcome>((resolve) => {
+          const settle = (outcome: ApprovalOutcome) => {
+            if (!approvals.delete(id)) return;
+            req.signal?.removeEventListener("abort", onAbort);
+            // No reply-markup here: a `remove_keyboard` reply would wipe the
+            // persistent command bar for the whole chat.
+            void delivery
+              .broadcast(`\u{1F6E1} Approval ${outcome} \u00B7 ${req.toolName}${req.reason ? ` \u00B7 ${req.reason}` : ""}`, undefined)
+              .catch(() => {});
+            resolve(outcome);
+          };
+          const onAbort = () => settle("cancelled");
+          const pending: PendingApproval = { id, approvalId, sessionId: req.agent.id, toolName: req.toolName, ...(req.reason === undefined ? {} : { reason: req.reason }), resolve: settle, messageIds: new Map() };
+          approvals.set(id, pending);
+          req.signal?.addEventListener("abort", onAbort, { once: true });
+          void delivery
+            .broadcast(`\u{1F6E1} Approval requested \u00B7 ${req.toolName}${req.reason ? `\nReason: ${req.reason}` : ""}\nSession: ${req.agent.id}`, approvalKeyboard(id))
+            .then((delivered) => {
+              for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
+            })
+            .catch(() => {});
+        });
+      }),
+    );
+  }
+
+  const questionsService = ctx.get("userQuestions") as QuestionsServiceLike | undefined;
+  let disposeProvider: (() => void) | undefined;
+  if (questionsService && questionsService.provider === undefined && !webUiOwnsQuestions(ctx)) {
+    disposeProvider = questionsService.registerProvider({
+      ask(request: QuestionRequestLike) {
+        const sessionId = request.agent?.id;
+        if (sessionId === undefined) return Promise.reject(new Error("telegram user interaction requires an agent-owned session"));
+        return new Promise((resolve, reject) => {
+          const id = mint();
+          const pending: PendingQuestion = {
+            id,
+            sessionId,
+            questions: request.questions,
+            resolve,
+            reject,
+            messageIds: new Map(),
+            selections: new Map(),
+            custom: new Map(),
+          };
+          const onAbort = () => {
+            if (!questions.delete(id)) return;
+            reject(new Error("ask_user_question was aborted before the user answered"));
+          };
+          pending.questions.forEach((question) => pending.selections.set(question.id, []));
+          questions.set(id, pending);
+          request.signal?.addEventListener("abort", onAbort, { once: true });
+          void delivery
+            .broadcast(renderQuestions(pending, 0), questionKeyboard(id, 0))
+            .then((delivered) => {
+              for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
+              pending.answerer = delivered[0]?.chatId;
+            })
+            .catch(() => {});
+        });
+      },
+    });
+  }
+
+  return {
+    answerApproval(id, outcome) {
+      const pending = approvals.get(id);
+      if (!pending) return false;
+      pending.resolve(outcome);
+      return true;
+    },
+    async toggleQuestionOption(chatId, id, questionId, optionId) {
+      const pending = questions.get(id);
+      if (!pending) return false;
+      const question = pending.questions.find((candidate) => candidate.id === questionId);
+      if (!question) return false;
+      const selected = pending.selections.get(questionId) ?? [];
+      if (selected.includes(optionId)) {
+        pending.selections.set(questionId, selected.filter((entry) => entry !== optionId));
+      } else if (question.multiSelect) {
+        pending.selections.set(questionId, [...selected, optionId]);
+      } else {
+        pending.selections.set(questionId, [optionId]);
+      }
+      await reRenderQuestion(ctx, pending, chatId, delivery);
+      return true;
+    },
+    async setQuestionCustom(chatId, id, questionId, text) {
+      const pending = questions.get(id);
+      if (!pending) return false;
+      pending.custom.set(questionId, text);
+      await reRenderQuestion(ctx, pending, chatId, delivery);
+      return true;
+    },
+    async submitQuestions(chatId, id) {
+      const pending = questions.get(id);
+      if (!pending) return false;
+      const answers: { id: string; selected: string[]; custom?: string }[] = [];
+      for (const question of pending.questions) {
+        const selected = pending.selections.get(question.id) ?? [];
+        const custom = pending.custom.get(question.id);
+        if (selected.length === 0 && custom === undefined && question.options?.length) {
+          void delivery.edit(chatId, pending.messageIds.get(chatId) ?? 0, `${renderQuestions(pending, chatId)}\n\n\u26A0\uFE0F Answer every question first.`, questionKeyboard(id, chatId)).catch(() => {});
+          return true;
+        }
+        answers.push({ id: question.id, selected, ...(custom === undefined ? {} : { custom }) });
+      }
+      questions.delete(id);
+      pending.resolve({ answers });
+      void delivery.broadcast(`\u2705 Questions answered (id ${id}).`, undefined).catch(() => {});
+      return true;
+    },
+    async cancelQuestions(chatId, id) {
+      const pending = questions.get(id);
+      if (!pending) return false;
+      questions.delete(id);
+      pending.reject(new Error("the user cancelled ask_user_question"));
+      void delivery.broadcast(`\u2716 Questions cancelled (id ${id}).`, undefined).catch(() => {});
+      void chatId;
+      return true;
+    },
+    detach() {
+      for (const dispose of disposers.splice(0)) dispose();
+      disposeProvider?.();
+      disposeProvider = undefined;
+      for (const pending of approvals.values()) pending.resolve("cancelled");
+      for (const pending of questions.values()) pending.reject(new Error("telegram interactive provider was disposed"));
+      approvals.clear();
+      questions.clear();
+    },
+  };
+}
+
+export { randomUUID };
