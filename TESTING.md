@@ -588,3 +588,32 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 1. 发一张图 → 回执含 `Attachment <id>` 与 `/attachment <id>`；执行该命令应把同一张图发回。
 2. `/attachment unknown` → 提示「was not saved by this bridge」。
 3. Host 卡 provider/model 应与 profile 的 `agent-default-model` 一致，而不是某个已打开会话的模型。
+
+## 25. Round 11：v0.3.0 release candidate（2026-08-16，202/202）
+
+### 改动
+
+1. **版本与发布物**：
+   - `package.json` / `package-lock.json` 版本 0.2.0 → **0.3.0**；
+   - 新增 `CHANGELOG.md`（0.2.0 基线 + 0.3.0 全部 hardening/UX 条目），并加入 npm `files`。
+2. **agentPreset.list 对齐 web 最后缺项**：透传 `hasDocument`（deployment fact），Presets 卡显示 `document: yes/no`。
+3. **回归**：`npm run check` 202/202；ESM 三入口 smoke import；`npm pack --dry-run` 应包含 CHANGELOG。
+
+### 验证
+
+- `npm run check`：**202/202 pass**（新增 presets list facts 1 例）。
+- round 1–10 的 201 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步 agentPreset.list 状态。
+
+### 上线前人工 checklist（请在 Telegram 实机执行并回填 ✅/❌）
+
+1. `/start` → allow 流程 → bar 出现；`/menucheck` 18 项全 ✅。
+2. 发一句话 → 原生引用回复 + 👍/👎/📋；点反馈、删除反馈闭环。
+3. 两个白名单 chat 并发互不串话；快速连发首条只建一个 session。
+4. Models 翻页选择模型；Reasoning 五档热切；`/config get|set outbound.liveFeed false|true` 热生效。
+5. Sessions 排序/翻页、History Load older、Search 分页。
+6. Host Browse cwd 逐级浏览、Up/~//、无权限错误卡可回退。
+7. Workspace/Session/Preset/Subagent 危险操作确认；Preset copy 自定义 id。
+8. 发图片 → 附件入站 → `/attachment <id>` 读回同一张图；发文档 → 明确指引。
+9. `/credential A B`、`/credentialset` 原消息自删；Host 卡 version=0.3.0。
+10. `/telegram stop && /telegram start` 无 409；卸载/热重载无残留 typing/panel。

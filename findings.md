@@ -86,3 +86,9 @@
 - `readImageAttachment` 用伪造的零字段 ref 读图，真实 `ctx.attachments.readImage` 会校验 bytes 与 ref 失败——这是死代码级 bug；改为记录真实 durable ref，并新增 `/attachment` UI 闭环。
 - Host provider/model 取第一个 live agent，不符合 web `host.describe` 的 `agentDefaultModel` seam；已对齐并测试。
 - 发布前 smoke import 验证三个 ESM 入口均可加载。
+
+## Round 11 发现与修复
+
+- agentPreset.list 缺 web `hasDocument` deployment fact；补透传并在 Presets 卡显示。
+- 发布物缺 CHANGELOG；新增并把其纳入 package files。
+- 版本号长期停在 0.2.0，与大量新功能不匹配；升至 0.3.0（package.json + lock）。

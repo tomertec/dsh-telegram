@@ -27,6 +27,7 @@ interface PresetLike {
 interface AgentPresetsLike {
   defaultId?: string;
   authorable?: boolean;
+  hasDocument?: boolean;
   list(): Promise<PresetLike[]>;
   read(id: string): Promise<string>;
   copy(from: string, id: string, name?: string): Promise<void>;
@@ -40,9 +41,9 @@ function presetsOf(ctx: Context): AgentPresetsLike | undefined {
   return ctx.get("agentPresets") as AgentPresetsLike | undefined;
 }
 
-export async function listAgentPresets(ctx: Context): Promise<{ presets: AgentPresetEntry[]; authorable: boolean }> {
+export async function listAgentPresets(ctx: Context): Promise<{ presets: AgentPresetEntry[]; authorable: boolean; hasDocument: boolean }> {
   const presets = presetsOf(ctx);
-  if (!presets) return { presets: [], authorable: false };
+  if (!presets) return { presets: [], authorable: false, hasDocument: false };
   try {
     const defaultId = presets.defaultId;
     return {
@@ -55,9 +56,10 @@ export async function listAgentPresets(ctx: Context): Promise<{ presets: AgentPr
         ...(preset.broken === undefined ? {} : { broken: preset.broken }),
       })),
       authorable: presets.authorable ?? false,
+      hasDocument: presets.hasDocument ?? false,
     };
   } catch {
-    return { presets: [], authorable: false };
+    return { presets: [], authorable: false, hasDocument: false };
   }
 }
 

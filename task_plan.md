@@ -15,7 +15,8 @@
 - [x] Round 8：非图片媒体明确指引 + downloads 单测（194/194）
 - [x] Round 9：credentials 批量 + Host 版本真实化（198/198）
 - [x] Round 10：session.attachment 读回 + Host 默认模型对齐（201/201）
-- [ ] Round 11+：继续收敛剩余项（见下），每轮回归 `npm run check` + pack
+- [x] Round 11：v0.3.0 release candidate（版本/CHANGELOG/preset hasDocument/202 tests）
+- [ ] Round 12+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -27,9 +28,9 @@
 
 ## 剩余候选（按性价比排序）
 
-1. Telegram 实机回归 + 最终上线复测记录。
-2. 审计剩余 🟡 收敛（history tool view、settings 边界、workspace confirm 等）。
-3. 发布前最终 `npm pack` / README 复核与版本号决策。
+1. Telegram 实机回归 + 最终上线复测记录（TESTING §25 checklist）。
+2. 审计剩余 🟡 收敛（history tool view、settings 边界等）。
+3. 实机通过后决定 tag/publish。
 
 ## 错误记录
 
@@ -88,3 +89,9 @@
 - `/attachment <id>` 读回真实 durable ref 并 sendPhoto 发回；发图回执附 attachment id。
 - `describeHost` 优先 agentDefaultModel；ESM 三入口 smoke import。
 - 新增附件读回、sendPhoto、host 默认模型测试。
+
+## Round 11 已完成
+
+- 版本升至 0.3.0；新增 CHANGELOG.md 并纳入 npm files。
+- agentPreset.list 补 hasDocument；Presets 卡显示 document yes/no。
+- 202/202 tests；上线前人工 checklist 写入 TESTING §25。

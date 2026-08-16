@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyAgentPreset, selectAgentPreset, sessionHasStarted, switchAgentPresetMidSession } from '../dist/harness/adapters/presets.js';
+import { copyAgentPreset, listAgentPresets, selectAgentPreset, sessionHasStarted, switchAgentPresetMidSession } from '../dist/harness/adapters/presets.js';
 
 function key(id) {
   return typeof id === 'object' && id !== null ? String(id.value ?? id) : String(id);
@@ -200,4 +200,23 @@ test('copyAgentPreset forwards the user-chosen new preset id', async () => {
 test('copyAgentPreset degrades without the presets service', async () => {
   const res = await copyAgentPreset({ get: () => undefined }, 'source', 'copy');
   assert.equal(res.ok, false);
+});
+
+
+test('listAgentPresets reports authorable and hasDocument deployment facts', async () => {
+  const ctx = {
+    get: (name) => (name === 'agentPresets' ? {
+      defaultId: 'standard',
+      authorable: true,
+      hasDocument: true,
+      list: async () => [{ id: 'standard', trust: 'system' }, { id: 'custom', trust: 'user', broken: 'missing plugin' }],
+    } : undefined),
+  };
+  const view = await listAgentPresets(ctx);
+  assert.equal(view.authorable, true);
+  assert.equal(view.hasDocument, true);
+  assert.equal(view.presets[0].isDefault, true);
+  assert.equal(view.presets[1].broken, 'missing plugin');
+  const empty = await listAgentPresets({ get: () => undefined });
+  assert.deepEqual(empty, { presets: [], authorable: false, hasDocument: false });
 });

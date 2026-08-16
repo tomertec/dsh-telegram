@@ -90,7 +90,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | workspace.insertSessionBefore | /workspacepin | ✅ | 命令对手机不友好，见计划 |
 | workspace.archiveSession | /archive、详情 Archive | ✅ | 归档后 UI 只显示 `Archived`，无 unarchive（web 同样没有） |
 | skill.list | Skills 卡 | ✅ | 传入当前 sessionId（web 契约）；卡片只显示 user-invocable 技能并标注 model-only 隐藏数 |
-| agentPreset.list | Presets 卡 | 🟡 | 缺 web `hasDocument` 字段 |
+| agentPreset.list | Presets 卡 | ✅ | 已显示 `authorable`/`hasDocument` 两个 deployment facts；presets/trust/isDefault/broken 与 web 一致 |
 | agentPreset.select | 详情 Select；已开始会话自动 fork 切换 | ✅ | 比 web 更顺手（web 会拒绝） |
 | agentPreset.read | 详情 Read | ✅ | 只切前 3800 字符 |
 | agentPreset.copy | 详情 Copy → 回复新 id | ✅ | 点击后回复新 preset id 完成复制；`/cancel` 可中止 |
@@ -324,7 +324,9 @@ Map<chatId, {
 - [x] downloads 单测（50MB 常量 + seam 缺失降级指引）。
 - [x] credentials.describe 支持批量 refs（≤64、去重、POSIX 校验）；Host 卡显示真实 bridge version。
 - [x] `session.attachment` 读回闭环：`/attachment <id>` 用真实 durable ref 读回并以图片发回；Host provider/model 改读 `agentDefaultModel`。
+- [x] agentPreset.list 补 `hasDocument` deployment fact。
 - [x] ESM smoke import 三入口全通。
+- [x] 版本升至 0.3.0，新增 CHANGELOG.md 并纳入 npm 包 files。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

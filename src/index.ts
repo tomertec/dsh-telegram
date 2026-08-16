@@ -968,8 +968,8 @@ async function openSubagentDetailCard(chatId: number, parentId: string, childId:
 }
 
 async function openPresetsCard(chatId: number): Promise<void> {
-  const { presets, authorable } = await listAgentPresets(requireCtx());
-  const lines = [`\u{1F3AD} Agent presets (${presets.length}) \u00B7 authorable: ${authorable}`, ""];
+  const { presets, authorable, hasDocument } = await listAgentPresets(requireCtx());
+  const lines = [`\u{1F3AD} Agent presets (${presets.length}) \u00B7 authorable: ${authorable} \u00B7 document: ${hasDocument ? "yes" : "no"}`, ""];
   for (const preset of presets.slice(0, 20)) {
     lines.push(`${preset.isDefault ? "\u2B50" : "\u2022"} ${plain(preset.id)} \u00B7 ${preset.trust}${preset.broken ? " \u00B7 broken" : ""}`);
     if (preset.description) lines.push(`  ${plain(truncate(preset.description, 60))}`);
