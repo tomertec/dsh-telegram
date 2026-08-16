@@ -226,6 +226,19 @@ export interface SessionsPaging {
   next?: string;
 }
 
+/** Generic pagination row for text-heavy cards plus a back button. */
+export function buildPagingKeyboard(callbacks: { previous?: string; next?: string; back: string }): InlineKeyboard {
+  const rows: { text: string; callback_data: string }[][] = [];
+  if (callbacks.previous !== undefined || callbacks.next !== undefined) {
+    const nav: { text: string; callback_data: string }[] = [];
+    if (callbacks.previous !== undefined) nav.push({ text: "\u2039 Prev", callback_data: callbacks.previous });
+    if (callbacks.next !== undefined) nav.push({ text: "More \u203A", callback_data: callbacks.next });
+    rows.push(nav);
+  }
+  rows.push([{ text: "\u2190 Back", callback_data: callbacks.back }]);
+  return InlineKeyboard.from(rows);
+}
+
 export function buildSessionsKeyboard(ids: readonly string[], paging?: SessionsPaging): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [
     [{ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" }],
@@ -303,13 +316,25 @@ export function buildModelsKeyboard(groups: readonly { id: string; name: string 
   return kb.row().text("\u{1F50D} Discover models", "m:discover").text("\u2190 Back", "m:back");
 }
 
+export interface ModelPaging {
+  previous?: string;
+  next?: string;
+}
+
 export function buildModelDetailKeyboard(
   models: readonly { id: string; name: string; cb: string }[],
   thinking?: { label: string; cb: string },
+  paging?: ModelPaging,
 ): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [];
-  for (const model of models.slice(0, 20)) {
+  for (const model of models.slice(0, 12)) {
     rows.push([{ text: `${model.name.slice(0, 40)}${model.id === model.name ? "" : ` \u00B7 ${model.id.slice(0, 20)}`}`.slice(0, 60), callback_data: model.cb }]);
+  }
+  if (paging !== undefined && (paging.previous !== undefined || paging.next !== undefined)) {
+    const nav: { text: string; callback_data: string }[] = [];
+    if (paging.previous !== undefined) nav.push({ text: "\u2039 Prev", callback_data: paging.previous });
+    if (paging.next !== undefined) nav.push({ text: "More \u203A", callback_data: paging.next });
+    rows.push(nav);
   }
   if (thinking !== undefined) rows.push([{ text: `\u{1F9E0} Thinking \u00B7 ${thinking.label}`.slice(0, 64), callback_data: thinking.cb }]);
   rows.push([{ text: "\u2190 Providers", callback_data: "m:models" }]);

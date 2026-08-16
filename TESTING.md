@@ -419,3 +419,27 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 2. 打开任一长会话 History → 显示 20 条，点 `⏪ Load older` 继续往前翻，`← Session` 回到详情。
 3. `/goaledit 新目标 9` → 目标 objective 与 maxGoalRounds 都更新；`/goalcreate x 5` 行为不变。
 4. Presets → 任一 preset → Copy → 回复自定义 id → 收到 `Copied to <id>` 并回到 Presets；回复 `/cancel` → 提示 cancelled 且不复制。
+
+## 18. Round 4：Models/Plugins 分页 + 工具白名单 + adapter 测试补齐（2026-08-16，183/183）
+
+### 改动
+
+1. **Models provider 卡分页**：每页 12 个模型，`‹ Prev` / `More ›` token 回调翻页；`buildModelDetailKeyboard` 支持可选 paging 行（不破坏 Thinking/Providers 行）。
+2. **Plugins 卡分页**：每页 20 条插件条目 + 动态包清单；新增通用 `buildPagingKeyboard` 供文本型卡片复用。
+3. **agent 工具不能绕过白名单**：`telegram_send` / `telegram_broadcast` 只允许发往 `state.chats`（白名单 roster），非白名单返回 `chat is not in the allowed roster`；broadcast 空目标整体失败。security 测试直接调用注册的 tool definition 验证。
+4. **adapter 测试补齐**：
+   - `test/host.test.mjs`：listDirectory 排序/降级、createDirectory 成功与重复失败、openPath/pickDirectoryHint/parentOf/isDirectory；
+   - `test/commands-jobs-dynamic.test.mjs`：listJobs caller 委托、listCommands hint 投影、executeCommand success/error/unknown、dynamic inventory 降级。
+
+### 验证
+
+- `npm run check`：**183/183 pass**（新增 4 keyboard + 2 security tool + 4 host + 4 commands/jobs/dynamic）。
+- round 1–3 的 173 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步 llm.models、卡片分页与工具白名单状态。
+
+### Telegram 人工复核
+
+1. 打开含 13+ 个模型的 provider → 第一页 12 个 + `More ›`；翻页后 `‹ Prev` 出现；模型选择与 Thinking 行仍在。
+2. 30+ 插件 profile → Plugins 卡显示 `page 1/2`，`More ›` 可翻页。
+3. agent 调用 `telegram_send` 发往未授权 chatId → 工具返回 not allowed，不真正发送；白名单 chat 正常发送。
+4. `/ls`、`/mkdir`、`/jobs`、`/commands`、Dynamic 卡在无服务 profile 下仍优雅降级。

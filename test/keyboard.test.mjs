@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildQueueKeyboard, buildSessionsKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildQueueKeyboard, buildSessionsKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -182,4 +182,22 @@ test('buildHistoryKeyboard adds Load older only when there is an older window', 
   const last = buildHistoryKeyboard('s1');
   assert.ok(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 's:s1')));
   assert.equal(last.inline_keyboard.some((row) => row.some((b) => b.text === '⏪ Load older')), false);
+});
+
+test('buildModelDetailKeyboard paginates to 12 models and adds nav', () => {
+  const models = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, name: `Model ${i}`, cb: `t:${i}` }));
+  const kb = buildModelDetailKeyboard(models, undefined, { next: 't:next' });
+  assert.equal(kb.inline_keyboard.filter((row) => row.some((b) => b.callback_data.startsWith('t:') && /^t:\d+$/.test(b.callback_data))).length, 12);
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:next')));
+  const last = buildModelDetailKeyboard(models.slice(12), undefined, { previous: 't:prev' });
+  assert.ok(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:prev')));
+});
+
+test('buildPagingKeyboard shows nav only when a page edge exists', () => {
+  const kb = buildPagingKeyboard({ next: 't:next', back: 'm:plugins' });
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:next')));
+  assert.equal(kb.inline_keyboard.some((row) => row.some((b) => b.text === '‹ Prev')), false);
+  const both = buildPagingKeyboard({ previous: 't:prev', next: 't:next', back: 'm:plugins' });
+  assert.ok(both.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:prev')));
+  assert.ok(both.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:plugins')));
 });

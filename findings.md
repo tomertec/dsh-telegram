@@ -41,3 +41,10 @@
 - History 详情没有「看更早」入口，`beforeSeq` 参数实际是死能力；接上 `Load older` token 流。
 - `/goaledit` 丢掉 web 的 maxGoalRounds 能力；按 `/goalcreate` 同款解析补齐并加单测。
 - Preset Copy 固定 `<id>-copy` 不符合人类操作；改为「点 Copy → 回复自定义 id」，`/cancel` 可中止。
+
+## Round 4 发现与修复
+
+- Models provider 卡一次只显示前 20 且无翻页；改为 12/页 token 分页。
+- Plugins 卡截断 30 条且键盘没有翻页；新增通用 `buildPagingKeyboard`，20/页。
+- `telegram_send`/`telegram_broadcast` 可由 agent 发给任意 chatId，绕过安全白名单；两个工具现在只接受 roster 内 chat。
+- host/commands/jobs/dynamic 长期无单测；补齐 8 个用例（含 mkdir 递归失败语义）。

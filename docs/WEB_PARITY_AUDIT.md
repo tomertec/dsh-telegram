@@ -108,7 +108,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | credentials.set | /credentialset `<REF> <value>` | 🟡 | 命令原消息在 500ms 后自动删除，值不回显；Telegram 服务端短期缓存仍非本项目可控 |
 | credentials.unset | /credentialunset `<REF>` | ✅ | |
 | llm.providers | Models 卡（间接） | 🟡 | 缺 `settingsNs` / `settingsPath` / `active` / `declared` 展示；没有单独 Providers 卡 |
-| llm.models | Models 卡 | 🟡 | 每 provider 只显示前 12 个，无模型翻页 |
+| llm.models | Models 卡 | ✅ | 每 provider 12 个/页，`‹ Prev`/`More ›` 翻页 |
 | llm.discoverModels | /discover `<settingsNs> [baseURL]` | 🟡 | web 还支持 `provider` / `api` / `apiKey`；TG 只透出两个参数 |
 | events.mux | bridge 订阅 `session/event`；approval/question 内联 | 🟡 | 只转发最终 assistant text；无 `session/subscribed`、`session/queue` 推送、`session/jobs` 推送、`session/projection`、tool view、`stream/error` 全量 |
 | events.host | `session/created|disposed`、`agent/status|error`、`domain/changed` + 打开卡片时重读 | ✅ | 订阅后只刷新已打开的卡片/status panel，不向聊天推送（无 open card 不打扰） |
@@ -215,7 +215,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 - [x] 审批/提问按会话 chat 路由（只有当前绑定 chat 收到），无绑定时才广播。
 - [x] `outbound.liveFeed` 真正控制 openclaw 草稿开关（core 忽略 consumer + 扩展逐事件检查，热切换免重启）。
 - [x] 危险操作统一二次确认：Delete session、Workspace delete、Preset remove、Subagent interrupt 全部走同一张 confirm 卡。
-- [ ] 卡片分页统一：Sessions/Models/Plugins/Jobs/History/Search 都支持翻页。
+- [x] 卡片分页：Sessions/Models/Plugins/History 已支持翻页；Jobs/Search 仍为文本截断（候选）。
 - [ ] 补 adapter 单测：feedback/host/settings/commands/jobs/downloads/dynamic/events forwarding。
 
 ---
@@ -315,6 +315,8 @@ Map<chatId, {
 - [x] 危险操作统一确认卡：session delete、workspace delete、preset remove、subagent interrupt；`buildConfirmKeyboard` 纯函数 + 单测。
 - [x] `/credentialset` 原消息 500ms 后自动删除，secret 不留聊天历史。
 - [x] Sessions 卡 10 条/页（`lastPromptAt desc`）、History `Load older`、`/goaledit <objective> [maxRounds]`、Preset copy 自定义 id。
+- [x] Models provider 卡 12 个/页、Plugins 卡 20 个/页；`telegram_send/broadcast` 只允许白名单 roster。
+- [x] host/commands/jobs/dynamic 适配器补单测（`test/host.test.mjs`、`test/commands-jobs-dynamic.test.mjs`）。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

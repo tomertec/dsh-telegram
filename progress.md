@@ -11,16 +11,21 @@
 - 163/163 tests；提交 `4beeb7f`、`319169c`、`64337ee`。
 - 详见 TESTING.md §16。
 
-## 2026-08-16 Round 3（本轮）
+## 2026-08-16 Round 3（已完成）
 
-- Sessions 卡按 `lastPromptAt desc` 排序并 10 条/页翻页。
-- History `Load older` 窗口分页。
-- `/goaledit <objective> [maxRounds]`；Preset Copy 回复自定义 id。
-- 新增 goals.test.mjs 等 10 个用例；`npm run check` **173/173 pass**。
-- 文档已同步 TESTING.md §17 与 WEB_PARITY_AUDIT.md。
+- Sessions/History 分页、goal edit maxRounds、preset copy 自定义。
+- 173/173 tests；提交 `71f8347`；详见 TESTING.md §17。
+
+## 2026-08-16 Round 4（本轮）
+
+- Models provider 卡 12/页、Plugins 卡 20/页分页。
+- `telegram_send`/`telegram_broadcast` 目标限白名单 roster。
+- 新增 host 与 commands/jobs/dynamic 单测。
+- `npm run check`：**183/183 pass**。
+- 文档已同步 TESTING.md §18 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 4 候选）
+## 下一步（Round 5 候选）
 
-Models/Plugins 翻页、host 目录逐级浏览卡、文档/语音附件、skills scope、
-subagent 详情字段、补齐 adapter 单测、工具目标白名单限制。
+host 目录 breadcrumb 浏览卡、文档/语音附件、skills scope、subagent 详情字段、
+downloads 单测、Jobs/Search 卡分页。

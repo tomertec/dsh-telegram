@@ -68,6 +68,7 @@ import {
   buildConfirmKeyboard,
   buildHistoryKeyboard,
   buildMenuPage,
+  buildPagingKeyboard,
   buildProjectKeyboard,
   queueBarLabel,
   type MenuItem,
@@ -587,7 +588,9 @@ async function openModelsCard(chatId: number): Promise<void> {
   await openCard(chatId, lines.join("\n"), buildModelsKeyboard(catalog.groups));
 }
 
-async function openProviderModelsCard(chatId: number, providerId: string): Promise<void> {
+const MODELS_PAGE_SIZE = 12;
+
+async function openProviderModelsCard(chatId: number, providerId: string, page = 0): Promise<void> {
   const ctx = requireCtx();
   const agent = currentAgent(chatId);
   const current = agent ? currentSessionModel(ctx, agent.id) : {};
@@ -595,8 +598,16 @@ async function openProviderModelsCard(chatId: number, providerId: string): Promi
   const group = catalog.groups.find((candidate) => candidate.id === providerId);
   log(`provider card requested=${providerId} groups=${catalog.groups.map((g) => g.id).join(",")} found=${group !== undefined}`);
   if (!group) return openModelsCard(chatId);
-  const lines = [`\u{1F4E1} ${plain(group.name)}`, "", `current: ${current.provider === providerId ? plain(current.model ?? "default") : "other provider"}`, ""];
-  const models = group.models.slice(0, 20).map((model) => ({
+  const totalPages = Math.max(1, Math.ceil(group.models.length / MODELS_PAGE_SIZE));
+  const safe = Math.max(0, Math.min(page, totalPages - 1));
+  const pageModels = group.models.slice(safe * MODELS_PAGE_SIZE, (safe + 1) * MODELS_PAGE_SIZE);
+  const lines = [
+    `\u{1F4E1} ${plain(group.name)} \u00B7 page ${safe + 1}/${totalPages}`,
+    "",
+    `current: ${current.provider === providerId ? plain(current.model ?? "default") : "other provider"}`,
+    "",
+  ];
+  const models = pageModels.map((model) => ({
     id: model.id,
     name: model.name,
     cb: token({ action: "model-select", provider: providerId, model: model.id }),
@@ -605,7 +616,10 @@ async function openProviderModelsCard(chatId: number, providerId: string): Promi
     lines.push(`${current.provider === providerId && current.model === model.id ? "\u2705" : "\u25CB"} ${plain(truncate(model.id, 40))}`);
     if (model.name !== model.id) lines.push(`   ${plain(truncate(model.name, 40))}`);
   }
-  await openCard(chatId, lines.join("\n"), buildModelDetailKeyboard(models));
+  await openCard(chatId, lines.join("\n"), buildModelDetailKeyboard(models, undefined, {
+    ...(safe > 0 ? { previous: token({ action: "model-page", provider: providerId, page: String(safe - 1) }) } : {}),
+    ...(safe + 1 < totalPages ? { next: token({ action: "model-page", provider: providerId, page: String(safe + 1) }) } : {}),
+  }));
 }
 
 /** Current reasoning effort from the live config (default medium). */
@@ -615,11 +629,16 @@ function currentReasoningEffort(): "minimal" | "low" | "medium" | "high" | "max"
 }
 
 /** Reasoning-effort picker card: the fixed codex-telegram-bot levels. */
-async function openPluginsCard(chatId: number): Promise<void> {
+const PLUGINS_PAGE_SIZE = 20;
+
+async function openPluginsCard(chatId: number, page = 0): Promise<void> {
   const ctx = requireCtx();
   const plugins = listPlugins(ctx);
-  const lines = [`\u{1F50C} Plugins (${plugins.length})`, ""];
-  for (const plugin of plugins.slice(0, 30)) {
+  const totalPages = Math.max(1, Math.ceil(plugins.length / PLUGINS_PAGE_SIZE));
+  const safe = Math.max(0, Math.min(page, totalPages - 1));
+  const pageItems = plugins.slice(safe * PLUGINS_PAGE_SIZE, (safe + 1) * PLUGINS_PAGE_SIZE);
+  const lines = [`\u{1F50C} Plugins (${plugins.length}) \u00B7 page ${safe + 1}/${totalPages}`, ""];
+  for (const plugin of pageItems) {
     lines.push(`${plugin.enabled ? "\u2705" : "\u26AA"} ${plain(truncate(plugin.moduleName ?? plugin.entryId, 36))} \u00B7 ${plain(plugin.fiberPhase ?? "\u2014")}`);
   }
   const dynamic = listDynamicCordis(ctx);
@@ -628,8 +647,11 @@ async function openPluginsCard(chatId: number): Promise<void> {
     for (const row of dynamic.slice(0, 10)) lines.push(`\u2022 ${plain(String(row.pluginId))}`);
   }
   lines.push("", "Toggle: /pluginenable <name> \u00B7 /plugindisable <name>");
-  const kb = buildBackKeyboard();
-  await openCard(chatId, lines.join("\n"), kb);
+  await openCard(chatId, lines.join("\n"), buildPagingKeyboard({
+    ...(safe > 0 ? { previous: token({ action: "plugins-page", page: String(safe - 1) }) } : {}),
+    ...(safe + 1 < totalPages ? { next: token({ action: "plugins-page", page: String(safe + 1) }) } : {}),
+    back: "m:plugins",
+  }));
 }
 
 const SESSIONS_PAGE_SIZE = 10;
@@ -1153,6 +1175,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       refreshAllPanels();
       return openModelsCard(chatId);
     }
+    case "model-page": {
+      const page = Number(payload["page"] ?? "0");
+      return openProviderModelsCard(chatId, payload["provider"] ?? "", Number.isFinite(page) && page > 0 ? page : 0);
+    }
     case "goal": {
       if (!agent) return openGoalsCard(chatId);
       const op = payload["op"] ?? "";
@@ -1271,6 +1297,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "sessions-page": {
       const page = Number(payload["page"] ?? "0");
       return openSessionsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "plugins-page": {
+      const page = Number(payload["page"] ?? "0");
+      return openPluginsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
     }
     case "history-older": {
       const beforeSeq = Number(payload["beforeSeq"] ?? "");
@@ -2760,8 +2790,12 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
     },
     output: textOutput(),
     async execute(args) {
+      const chatId = Number(args.chatId);
+      if (!Number.isInteger(chatId) || !state.chats.has(chatId)) {
+        return JSON.stringify({ ok: false, error: `chat ${args.chatId} is not in the allowed roster` });
+      }
       const t = requireTransport();
-      const id = await t.sendText(Number(args.chatId), args.text, {
+      const id = await t.sendText(chatId, args.text, {
         parse_mode: validateParseMode(args.parseMode),
         disable_notification: args.disableNotification === true,
       });
@@ -2816,15 +2850,19 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       const targets = (args.targets as { chatId?: string }[]).map((x) => x.chatId).filter((x): x is string => typeof x === "string");
       const results = await Promise.all(
         targets.map(async (chatId) => {
+          const numeric = Number(chatId);
+          if (!Number.isInteger(numeric) || !state.chats.has(numeric)) {
+            return { chatId, ok: false, error: "chat is not in the allowed roster" };
+          }
           try {
-            const id = await t.sendText(Number(chatId), args.text, { parse_mode: validateParseMode(args.parseMode) });
+            const id = await t.sendText(numeric, args.text, { parse_mode: validateParseMode(args.parseMode) });
             return { chatId, ok: true, messageId: id ?? null };
           } catch (err) {
             return { chatId, ok: false, error: err instanceof Error ? err.message : String(err) };
           }
         }),
       );
-      return JSON.stringify({ ok: results.every((r) => r.ok), results });
+      return JSON.stringify({ ok: results.length > 0 && results.every((r) => r.ok), results });
     },
   }));
 

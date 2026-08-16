@@ -22,7 +22,8 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
       return () => {};
     },
     effect: () => {},
-    tools: { register: () => {} },
+    tools: { register: (definition) => { ctx.toolsDefs.set(definition.name, definition); } },
+    toolsDefs: new Map(),
     commands: { register: (definition) => { ctx.command = definition; } },
     services: new Map(),
     command: undefined,
@@ -70,6 +71,14 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
     // roster that receives broadcasts and approval/question cards.
     await handlers.onText(222, 'hello');
     assert.deepEqual(telegram.chats(), []);
+
+    // Agent tools must not bypass the whitelist either.
+    const send = JSON.parse(await ctx.toolsDefs.get('telegram_send').execute({ chatId: '222', text: 'x' }));
+    assert.equal(send.ok, false);
+    assert.match(send.error, /not in the allowed roster/);
+    const broadcast = JSON.parse(await ctx.toolsDefs.get('telegram_broadcast').execute({ targets: [{ chatId: '222' }], text: 'x' }));
+    assert.equal(broadcast.ok, false);
+    assert.match(broadcast.results[0].error, /not in the allowed roster/);
 
     // The self-service allow button promotes the chat.
     await handlers.onCallback(222, 'm:allowthis');
