@@ -12,7 +12,7 @@ export interface RouterDeps {
   transport: TelegramTransport;
   isAllowed: (chatId: number) => boolean;
   onCommand: (chatId: number, command: string, args: string, messageId?: number) => void | Promise<void>;
-  onBarButton: (chatId: number, label: string) => void | Promise<void>;
+  onBarButton: (chatId: number, label: string, messageId?: number) => void | Promise<void>;
   onCallback: (chatId: number, data: string) => void | Promise<void>;
   onUserText: (chatId: number, text: string, messageId?: number) => void | Promise<void>;
   onPhoto: (chatId: number, fileId: string, caption: string, messageId?: number) => void | Promise<void>;
@@ -51,7 +51,7 @@ export function attachRouter(deps: RouterDeps): void {
         const match = COMMAND_RE.exec(text.trim());
         if (!deps.isAllowed(chatId)) return deps.onUnauthorized(chatId, match ? `command:${match[1]}` : undefined);
         const barLabel = normalizeBarLabel(text);
-        if (barLabel !== undefined) return deps.onBarButton(chatId, barLabel);
+        if (barLabel !== undefined) return deps.onBarButton(chatId, barLabel, messageId);
         if (match) return deps.onCommand(chatId, match[1]!, (match[2] ?? "").trim(), messageId);
         return deps.onUserText(chatId, text, messageId);
       }),

@@ -34,6 +34,24 @@ test('router maps dynamic Queue labels back to the canonical bar button', async 
   assert.deepEqual(calls, ['bar:\u231B Queue', 'bar:\u231B Queue', 'bar:\u231B Queue', 'bar:\u2630 Menu', 'text']);
 });
 
+test('router passes the tapped message id through bar buttons', async () => {
+  const calls = [];
+  const t = fakeTransport();
+  attachRouter({
+    transport: t,
+    isAllowed: () => true,
+    onCommand: () => calls.push('command'),
+    onBarButton: (_chatId, label, messageId) => calls.push(`bar:${label}:${messageId ?? -1}`),
+    onCallback: () => calls.push('callback'),
+    onUserText: () => calls.push('text'),
+    onPhoto: () => calls.push('photo'),
+    onUnauthorized: () => calls.push('unauthorized'),
+  });
+  const h = t.handlers();
+  await h.onText(7, '\u2630 Menu', 321);
+  assert.deepEqual(calls, ['bar:\u2630 Menu:321']);
+});
+
 test('router prompts unauthorized chats and gates their traffic', async () => {
   const calls = [];
   const t = fakeTransport();

@@ -65,7 +65,9 @@ interface PersistenceHeaderLike {
 
 interface PersistenceLike {
   list(signal?: AbortSignal): Promise<PersistenceHeaderLike[]>;
-  readRaw(id: SessionId, signal?: AbortSignal): Promise<{ events?: readonly SessionEventLike[] } | undefined>;
+  /** The real `SessionPersistence.readRaw` returns `{ meta, filename, content }`
+   * (verbatim JSONL text); older test seams return parsed `events` directly. */
+  readRaw(id: SessionId, signal?: AbortSignal): Promise<{ content?: string; events?: readonly SessionEventLike[] } | undefined>;
 }
 
 interface AgentLike {
@@ -328,6 +330,32 @@ function titleFor(ctx: Context, session: SessionLike): string | undefined {
   return undefined;
 }
 
+/** Parse the JSONL text of a cold log back into structural events. */
+function parseRawEvents(content: string): SessionEventLike[] {
+  const events: SessionEventLike[] = [];
+  for (const line of content.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const value = JSON.parse(line) as {
+        seq?: unknown;
+        type?: unknown;
+        at?: unknown;
+        data?: unknown;
+      };
+      if (typeof value.type !== "string" || typeof value.seq !== "number") continue;
+      events.push({
+        seq: value.seq,
+        type: value.type,
+        ...(typeof value.at === "number" ? { at: value.at } : {}),
+        ...(typeof value.data === "object" && value.data !== null ? { data: value.data as Record<string, unknown> } : {}),
+      });
+    } catch {
+      /* a torn tail line must not hide the titles that precede it */
+    }
+  }
+  return events;
+}
+
 function scanMeta(session: SessionLike): { blank: boolean; lastPromptAt?: number; eventCount: number } {
   let blank = true;
   let lastPromptAt: number | undefined;
@@ -369,7 +397,10 @@ export async function listSessionDetails(ctx: Context): Promise<SessionDetail[]>
         let session: SessionLike | undefined;
         try {
           const raw = await persistence.readRaw(header.id);
-          session = raw ? ({ id: header.id, events: raw.events ?? [] } as SessionLike) : undefined;
+          if (raw !== undefined) {
+            const events = raw.events ?? (typeof raw.content === "string" ? parseRawEvents(raw.content) : []);
+            session = { id: header.id, events } as SessionLike;
+          }
         } catch {
           /* a broken cold log must not hide the rest of the roster */
         }

@@ -21,12 +21,21 @@ export const SESSIONS_BTN = "\u{1F9ED} Sessions";
 export const STATUS_BTN = "\u{1F4CA} Status";
 export const QUEUE_BTN = "\u231B Queue";
 export const QUEUE_BTN_PREFIX = `${QUEUE_BTN} \u00B7 `;
+export const GOAL_BTN = "\u{1F3AF} Goal";
+/** Kept so clients with stale bars still dispatch; no longer rendered on the bar. */
 export const PRESETS_BTN = "\u{1F3AD} Presets";
 export const THINKING_BTN = "\u{1F9E0} Thinking";
 /** Bar label for the reasoning picker (unified name; THINKING_BTN kept for
  * stale client bars). */
 export const REASONING_BTN = "\u{1F9E0} Reasoning";
 export const STOP_BTN = "\u23F9 Stop";
+/** Collapses the whole bar to a single return button (more chat history visible). */
+export const COLLAPSE_BTN = "\u{1F5DC}\uFE0F \u6536\u8D77";
+/** The one button left on a collapsed bar; tapping it restores the full bar. */
+export const RETURN_BTN = "\u8FD4\u56DE";
+/** Stale client bars from earlier builds keep these labels working. */
+export const LEGACY_COLLAPSE_BTN = "\u{1F648} \u6536\u8D77";
+export const LEGACY_RETURN_BTN = "\u{1F519} \u8FD4\u56DE";
 
 export const BAR_LABELS: readonly string[] = [
   MENU_BTN,
@@ -38,10 +47,15 @@ export const BAR_LABELS: readonly string[] = [
   SESSIONS_BTN,
   STATUS_BTN,
   QUEUE_BTN,
+  GOAL_BTN,
   REASONING_BTN,
   THINKING_BTN,
   PRESETS_BTN,
   STOP_BTN,
+  COLLAPSE_BTN,
+  RETURN_BTN,
+  LEGACY_COLLAPSE_BTN,
+  LEGACY_RETURN_BTN,
 ];
 
 /** Queue button label with a live count embedded (`⌛ Queue · 3`). */
@@ -75,7 +89,7 @@ export function decodeCallbackValue(value: string): string {
 
 /** Always-visible bar grouped by frequency:
  * `Menu · New · Models` / `Sessions · Plugins · Status` /
- * `Presets · Queue · Compact` / `Stop`. `🧠 Reasoning` stays reachable from
+ * `Goal · Queue · Compact` / `Stop · 收起`. `🧠 Reasoning` stays reachable from
  * the menu P1. Pass `queueCount` to embed the live inbox count. */
 export function buildBarKeyboard(queueCount?: number): Keyboard {
   return new Keyboard()
@@ -87,19 +101,27 @@ export function buildBarKeyboard(queueCount?: number): Keyboard {
     .text(PLUGINS_BTN)
     .text(STATUS_BTN)
     .row()
-    .text(PRESETS_BTN)
+    .text(GOAL_BTN)
     .text(queueCount === undefined ? QUEUE_BTN : queueBarLabel(queueCount))
     .text(COMPACT_BTN)
     .row()
     .text(STOP_BTN)
+    .text(COLLAPSE_BTN)
     .resized()
     .persistent();
+}
+
+/** Collapsed bar: only the return button, so the chat itself gets the screen. */
+export function buildCollapsedBarKeyboard(): Keyboard {
+  return new Keyboard().text(RETURN_BTN).resized().persistent();
 }
 
 /** Map inbound bar-button text back to its canonical label. The Queue
  * button's text changes as the live count is embedded (`⌛ Queue · 7`), so
  * exact BAR_LABELS matching alone would drop those taps. */
 export function normalizeBarLabel(text: string): string | undefined {
+  if (text === LEGACY_COLLAPSE_BTN) return COLLAPSE_BTN;
+  if (text === LEGACY_RETURN_BTN) return RETURN_BTN;
   if ((BAR_LABELS as readonly string[]).includes(text)) return text;
   if (text.startsWith(QUEUE_BTN_PREFIX)) return QUEUE_BTN;
   return undefined;
@@ -293,7 +315,7 @@ export interface SessionsKeyboardOptions {
 }
 
 export function buildSessionsKeyboard(
-  items: readonly { id: string; title?: string; running?: boolean }[],
+  items: readonly { id: string; title?: string; running?: boolean; archiveCb?: string; deleteCb?: string }[],
   options: SessionsKeyboardOptions = {},
 ): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [];
@@ -305,9 +327,14 @@ export function buildSessionsKeyboard(
   rows.push(top.slice(0, 3));
   for (const item of items.slice(0, 10)) {
     const label = item.title && item.title.trim() !== "" ? item.title : item.id;
-    const suffix = item.title && item.title.trim() !== "" ? ` \u00B7 ${item.id.slice(0, 14)}` : "";
+    const suffix = item.title && item.title.trim() !== "" ? ` \u00B7 ${item.id.slice(0, 10)}` : "";
     const marker = item.running === true ? "\u25B6 " : "";
-    rows.push([{ text: `\u{1F9ED} ${marker}${label.slice(0, 24)}${suffix}`.slice(0, 64), callback_data: `s:${item.id}`.slice(0, 64) }]);
+    const row: { text: string; callback_data: string }[] = [
+      { text: `\u{1F9ED} ${marker}${label.slice(0, 22)}${suffix}`.slice(0, 48), callback_data: `s:${item.id}`.slice(0, 64) },
+    ];
+    if (item.archiveCb !== undefined) row.push({ text: "\u5F52\u6863", callback_data: item.archiveCb });
+    if (item.deleteCb !== undefined) row.push({ text: "\u5220\u9664", callback_data: item.deleteCb });
+    rows.push(row);
   }
   const paging = options.paging;
   if (paging !== undefined && (paging.previous !== undefined || paging.next !== undefined)) {
@@ -385,9 +412,14 @@ export function buildWorkspaceKeyboard(items: readonly { id: string; title: stri
   return kb.row().text("\u2795 Create", "w:create").text("\u2190 Back", "m:back");
 }
 
-export function buildWorkspaceDetailKeyboard(id: string): InlineKeyboard {
+export function buildWorkspaceDetailKeyboard(
+  id: string,
+  actions?: { use?: string; sessions?: string },
+): InlineKeyboard {
   const prefix = `w:${id}`.slice(0, 52);
   const kb = new InlineKeyboard();
+  if (actions?.use !== undefined) kb.row().text("\u2705 \u4F7F\u7528\u6B64\u9879\u76EE", actions.use);
+  if (actions?.sessions !== undefined) kb.row().text("\u{1F9ED} \u4F1A\u8BDD", actions.sessions);
   kb.row().text("\u270F Rename", `${prefix}:rename`.slice(0, 64)).text("\u{1F5D1} Delete", `${prefix}:delete`.slice(0, 64));
   kb.row().text("\u2B06 Move up", `${prefix}:up`.slice(0, 64)).text("\u2193 Move down", `${prefix}:down`.slice(0, 64));
   kb.row().text("\u{1F4CC} Pin session first", `${prefix}:pin`.slice(0, 64));
@@ -472,14 +504,21 @@ export function buildThinkingKeyboard(options: readonly { id: string; name: stri
   return InlineKeyboard.from(rows);
 }
 
-export function buildGoalsKeyboard(hasGoal: boolean, callbacks: { create: string; edit: string; pause: string; resume: string; complete: string; clear: string }): InlineKeyboard {
+export function buildGoalsKeyboard(
+  hasGoal: boolean,
+  callbacks: { edit?: string; toggle?: string },
+  paused = false,
+): InlineKeyboard {
   const kb = new InlineKeyboard();
   if (hasGoal) {
-    kb.row().text("\u270F Edit", callbacks.edit).text("\u23F8 Pause", callbacks.pause).text("\u25B6 Resume", callbacks.resume);
-    kb.row().text("\u2705 Complete", callbacks.complete).text("\u{1F5D1} Clear", callbacks.clear);
-  } else {
-    kb.row().text("\u2795 Create goal", callbacks.create);
+    const actions: { text: string; callback_data: string }[] = [];
+    if (callbacks.edit !== undefined) actions.push({ text: "\u270F Edit", callback_data: callbacks.edit });
+    if (callbacks.toggle !== undefined) {
+      actions.push({ text: paused ? "\u25B6 Resume" : "\u23F8 Pause", callback_data: callbacks.toggle });
+    }
+    if (actions.length > 0) kb.row(...actions.slice(0, 2));
   }
+  // No goal = display-only: starting a goal is the `/goal <objective>` command.
   return kb.row().text("\u2190 Back", "m:back");
 }
 

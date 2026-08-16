@@ -1176,3 +1176,208 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - `getUpdates` 连续 409（另一实例在轮询同一 token）时：首次只打一条诊断日志，
   之后指数退避（2s→4s→…→30s）静默重试；对方停止后自动接管并复位计数。
 - 避免之前每次 409 刷屏、持续硬碰的局面。
+
+## 55. Workspaces 直接使用 + Create 派发修复（2026-08-16，238/238）
+
+### 实机发现
+
+1. Workspaces 卡的 `Create` 按钮回调是旧式 `w:create`，路由按
+   `w:<workspaceId>:<action>` 拆包后把 `create` 当成了 workspaceId，点击后
+   落到不存在的详情页 → 用户看到“点了没反应”。
+2. Workspaces 详情卡只有 Rename/Delete/Move/Pin，无法把一个已注册项目直接设为
+   当前项目来使用。
+
+### 修复
+
+- `dispatchCallback` 在 id/sub 拆包前特判 `id === "create" && sub === undefined`，
+  恢复 `Create` → 目录浏览选择器流程；键盘回归测试锁定 `w:create` 契约。
+- Workspace 详情卡新增：
+  - `✅ 使用此项目`（`workspace-use` token）：等价于对 workspace.path 执行
+    `/project`，写入 `workspace.activePath` 并注册缺省 workspace；
+  - `🧭 会话`：直接打开该项目在分组 Sessions 卡里的会话页。
+- `buildWorkspaceDetailKeyboard` 增加可选 `actions` 参数，缺省行为不变。
+
+### 测试
+
+- `test/keyboard.test.mjs`：`w:create` 契约 + Workspace 详情 Use/Sessions
+  按钮随 actions 出现、缺省不出现。
+- `npm run check`：**238/238 pass**。
+
+## 56. 冷会话标题与 web 完全对齐（2026-08-16，239/239）
+
+### 实机发现
+
+web 的 `session.list` 对冷会话能通过 projection cache 返回 `session/title` 标题，
+Telegram 却只显示项目基名/id。根因：真实 `SessionPersistence.readRaw` 返回
+`{ meta, filename, content }`（JSONL 原文），Telegram 适配器还在读旧形状的
+`raw.events`，于是冷会话扫描到的 events 恒为空，标题/blank/lastPromptAt 全部丢失。
+
+### 修复
+
+- `PersistenceLike.readRaw` 兼容两种返回形状：`events`（测试 seam）与
+  `content`（真实 JSONL 原文）。
+- 新增 `parseRawEvents(content)`：逐行解析冷日志为结构化事件，损坏的尾巴行
+  跳过但不影响前面的 `session/title`。
+- 冷会话的 `titleFor` / `scanMeta` 从此与 web 同源：标题、最近提示时间、
+  事件数都来自同一份日志。
+
+### 测试
+
+- `test/sessions.test.mjs` 新增真实 `{ content }` 形状用例：冷会话标题、
+  `lastPromptAt`、`eventCount`、`cwd` 全部命中。
+- `npm run check`：**239/239 pass**。
+
+## 57. Menu 重排：Goal 置顶 + Watch 第二页 + `/goal`（2026-08-16，240/240）
+
+### 用户要求
+
+- Watch 移到菜单第二页。
+- Goal 固定在菜单第一页最上方，且 Goal 卡是显示/编辑/暂停，不是创建入口。
+- 用 `/goal <objective> [maxRounds]` 启动目标。
+
+### 修复
+
+- `openMenuAt`：`pages[0]` 第一项改为 Goal（`full` 行，显示当前 objective 摘要），
+  `pages[0]` 删除 Watch；`pages[1]` 尾部加 Watch。
+- `openGoalsCard`：无目标时只显示“(no current goal)”和 `/goal` 提示；
+  有目标时只给 Edit + Pause/Resume（按 `goal.phase` 切换文案）。
+- `buildGoalsKeyboard(hasGoal, { edit?, toggle? }, paused)`：移除
+  Create/Complete/Clear 按钮，无目标时只剩 Back。
+- 新增 `/goal` 命令（与 `/goalcreate` 同解析），`/goalcreate` 保留兼容。
+- `dispatchToken` 的 `goal` 分支删除 create/complete/clear，只处理
+  edit/pause/resume。
+
+### 测试
+
+- `test/keyboard.test.mjs`：Goal 键盘无 Create、有 Edit/Pause、paused 时变 Resume。
+- `npm run check`：**240/240 pass**。
+
+## 58. Bar 布局：Goal 替换 Presets + 收起按钮（2026-08-16，241/241）
+
+### 用户要求
+
+- bar 第三行的 Presets 换成 Goal。
+- Stop 右边加“收起”：点击后整条 bar 只剩一个返回按钮，给聊天内容让出屏幕；
+  再点返回恢复完整 bar。
+
+### 修复
+
+- `buildBarKeyboard`：`Menu/New/Models · Sessions/Plugins/Status ·
+  Goal/Queue·N/Compact · Stop/🙈 收起`。
+- 新增 `buildCollapsedBarKeyboard()`：单按钮 `↩ 返回`，同样 resized/persistent。
+- `BAR_LABELS` 保留 Presets（旧客户端 bar 兼容），新增 Goal/收起/返回；
+  `normalizeBarLabel` 对三者直接归一。
+- `state.barCollapsed` 按 chat 记录收起态：
+  - 收起：替换 bar carrier 为单按钮键盘；
+  - 返回：恢复完整 bar；
+  - 收起期间 `syncBar` 不再自动重发完整 bar；
+  - `sendWithLiveBar` 在收起态只附单按钮键盘，避免普通消息把 bar 弹回来。
+- `dispatchBarButton`：Goal → Goals 卡；收起/返回 → `setBarCollapsed`。
+
+### 测试
+
+- `test/keyboard.test.mjs`：新 bar 布局逐行断言、Presets 不在渲染结果、
+  收起键盘仅一个返回按钮、新标签归一化、旧 Presets 标签仍可归一。
+- `npm run check`：**241/241 pass**。
+
+## 59. Menu 终版：Goal 与 Capabilities 同行各占一半（2026-08-16，241/241）
+
+- 用户反馈 Goal 不应占满第一行：撤销 §57 的置顶/目标摘要行。
+- `pages[0]` 现在为 New session（full）→ Project（full）→ 扩展项 →
+  Workspaces/Skills/Subagents/Jobs/Dynamic/Host 两列配对 →
+  **Goals 与 Capabilities 同一行，各占一半**。
+- `npm run check`：**241/241 pass**。
+
+## 60. 收起按钮视觉与消息清理（2026-08-16，241/241）
+
+- 收起按钮 emoji 从 `🙈` 改为 `🗜️`，返回按钮从 `↩` 改为 `🔙`。
+- 点收起/返回后，router 把用户按出的那条按钮文字消息立即删除，
+  聊天里不留下“输入内容”；收起态的承载消息文本改为一个点 `·`。
+- `RouterDeps.onBarButton` 增加 `messageId`，collapse/return 两种 bar 状态
+  切换在 dispatch 后自动清理来源消息。
+- `npm run check`：**241/241 pass**。
+
+## 61. 快速收起：inline 控制条 + 原生 bar（2026-08-16，243/243）
+
+### 调研结论
+
+- Telegram 官方文档：`ReplyKeyboardMarkup` 无法原地编辑；`editMessageReplyMarkup`
+  只能编辑 inline keyboard。内置 reply 键盘按钮必然发消息，所以收起提速只能走
+  callback_query（用户选择“保留原生 bar + inline 收起控制条”方案）。
+
+### 修复
+
+- 原生 bar 恢复为 `Stop` 单独一行（收起不再作为 reply button，避免慢路径）。
+- 新增 `buildBarControlKeyboard(collapsed)`：极小 inline 控制条，展开态一个
+  `🗜️ 收起` 按钮（`m:collapsebar`），折叠态一个纯文字 `返回` 按钮
+  （`m:returnbar`，无 emoji）。
+- `state.barControls` 跟踪控制条消息；`ensureBarControl` 优先
+  `editReplyMarkup` 原地改键盘，只有消息消失才补发 `·` 载体。
+- 点收起：`dropBarCarrier` 删原生 bar 载体 → 控制条原地编辑成 `返回`；
+  **聊天里不再新增消息，也不发送/删除用户消息**。
+- 点返回：重新 pin 原生 bar（`⌛ Queue · N`）→ 控制条原地编辑回 `🗜️ 收起`。
+- 收起期间 `sendWithLiveBar` 不再附 reply keyboard，普通消息保持干净。
+- 旧客户端残留的 `🙈 收起`/`🔙 返回` 标签通过 `LEGACY_*` 归一化继续可用。
+
+### 测试
+
+- `test/keyboard.test.mjs`：原生 bar 行数/标签、inline 控制条展开/折叠按钮与
+  callback_data、无 emoji 返回、legacy 标签归一化。
+- `test/router.test.mjs`：bar button 的 `messageId` 透传。
+- `npm run check`：**243/243 pass**。
+
+## 62. 撤销 inline 控制条：收起按钮回到原生 bar（2026-08-16，243/243）
+
+- 用户反馈收起按钮必须可见于 bar 本身：撤销 §61 的独立 inline 控制条。
+- `buildBarKeyboard` 第四行恢复 `⏹ Stop · 🗜️ 收起`。
+- 收起/展开回到原生载体替换路径（点击后删除按出的消息、点 `·` 承载单按钮
+  `返回`），`state.barControls` / `ensureBarControl` 全部移除。
+- 旧 inline 控制条的 `m:collapsebar` / `m:returnbar` 仍映射到原生 toggle，
+  防止旧按钮失效。
+- `npm run check`：**243/243 pass**。
+
+## 63. 保留收起/返回的按出消息（2026-08-16，243/243）
+
+- 用户反馈：不要删掉点击收起/返回时发出的那条消息。
+- 撤销 §60 的“dispatch 后删除来源消息”逻辑；bar button 派发恢复为纯
+  dispatch，按出的消息正常留在聊天里。
+- router 的 `messageId` 透传保留（测试覆盖），供后续需要时使用。
+- `npm run check`：**243/243 pass**。
+
+## 64. Sessions 列表直接归档/删除（2026-08-16，244/244）
+
+### 用户反馈
+
+归档/删除藏在会话详情卡里，列表页找不到入口；归档后行还在，看起来“没生效”。
+
+### 修复
+
+- `buildSessionsKeyboard` 每行新增两个内联小按钮：`🗄` 归档、`🗑` 删除
+  （有 token 时才渲染）。
+- `openSessionsCard` 给每行注入 `session-archive` / `session-delete` token；
+  归档直接执行并回到项目列表，删除走原确认卡。
+- Sessions 列表与 web 对齐：**归档的会话从列表隐藏**，页头显示
+  `🗄N` 归档计数；详情卡仍可显示已归档状态。
+- `dispatchToken` 新增 `session-archive` / `session-delete` 两个动作。
+
+### 测试
+
+- `test/keyboard.test.mjs`：有 token 时行内出现 `🗄`/`🗑`，无 token 不出现。
+- `npm run check`：**244/244 pass**。
+
+## 65. 中文归档/删除按钮 + Menu 第一页 Bar 开关（2026-08-16，244/244）
+
+- Sessions 行内小按钮改为中文：`归档` / `删除`；页脚提示同步中文。
+- Menu 第一页新增 `💡 Bar · 显示中 / 已收起` 全宽开关（`m:bartoggle`）：
+  点击直接切换 bar 折叠态，并原地刷新菜单页显示新状态。
+- `npm run check`：**244/244 pass**。
+
+## 66. 收起后不再有返回按钮和 · 载体（2026-08-16，244/244）
+
+- 用户最终选择：收起后不要返回按钮，也不要 `·`；恢复入口用 Menu / 命令。
+- `setBarCollapsed(true)` 现在只删除原生 bar 载体，**不发送任何替代消息**；
+  聊天里只留下用户按出的“收起”消息。
+- `sendWithLiveBar` / `syncBar` 在收起态不再自动重发 bar。
+- Menu 第一页开关文案改为动作式：`💡 显示 Bar`（已收起）/ `💡 收起 Bar`（显示中）。
+- 新增 `/bar [on|off]` 命令：无参数 toggle，`on` 显示，`off` 收起。
+- `npm run check`：**244/244 pass**。

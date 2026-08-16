@@ -185,6 +185,34 @@ test('listSessionDetails marks running by agent status and carries cold cwd', as
   assert.equal(cold.title, 'Cold work');
 });
 
+test('listSessionDetails parses the real readRaw JSONL content shape for cold titles', async () => {
+  const sessions = { list: () => [] };
+  const persistence = {
+    list: async () => [{ id: 'cold', cwd: '/proj/beta' }],
+    readRaw: async (id) => (id === 'cold' ? {
+      content: [
+        JSON.stringify({ seq: 0, type: 'session', data: {} }),
+        JSON.stringify({ seq: 1, type: 'user/message', at: 500, data: { content: [{ type: 'text', text: 'build it' }] } }),
+        JSON.stringify({ seq: 2, type: 'session/title', data: { title: 'Build the bridge' } }),
+      ].join('\n'),
+    } : undefined),
+  };
+  const ctx = {
+    agents: { list: () => [], get: () => undefined },
+    get: (name) => {
+      if (name === 'sessions') return sessions;
+      if (name === 'sessionPersistence') return persistence;
+      return undefined;
+    },
+  };
+  const details = await listSessionDetails(ctx);
+  assert.equal(details.length, 1);
+  assert.equal(details[0].title, 'Build the bridge', 'title comes from the JSONL content, not events');
+  assert.equal(details[0].lastPromptAt, 500);
+  assert.equal(details[0].eventCount, 3);
+  assert.equal(details[0].cwd, '/proj/beta');
+});
+
 test('displayTitleFor mirrors the web title → cwd basename → id chain', () => {
   assert.equal(displayTitleFor('  Continue  ', '/proj/alpha', 's1'), 'Continue');
   assert.equal(displayTitleFor(undefined, '/proj/alpha/', 's1'), 'alpha');

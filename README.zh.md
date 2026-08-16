@@ -14,7 +14,7 @@
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
   <img alt="Version" src="https://img.shields.io/badge/version-0.3.0-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-229%2F229%20green-2ea44f" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-244%2F244%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
 </p>
 
@@ -51,8 +51,11 @@ DeepSeek Harness 的 Web UI 是 agent 控制面的金标准：会话、模型、
 ## 特性
 
 - **🔀 多聊天隔离** — 每 chat 独立绑定 agent；每 chat FIFO 入站路由覆盖 create→bind→deliver 全链路（快速连发首条消息绝不会建两个会话）；未绑定 chat 的展示也 fail-closed
-- **🎛️ 按钮式交互** — 常驻 10 键键盘栏（`☰ Menu · ✨ New · 🧩 Models` …）加临时内联卡片：会话、工作区、目标、技能、子代理、预设、设置、凭据、模型、宿主、任务、插件与动态清单
-- **🗂️ 按项目分组的会话** — Sessions 卡按工作区项目分类，标题同步 web（`session/title` → cwd 基名 → id），默认展示运行中项目的会话，`🔀 项目` 一键切换，保留 `🌐 全部会话` 平铺视图
+- **🎛️ 按钮式交互** — 常驻键盘栏（`☰ Menu · ✨ New · 🧩 Models` …）加临时内联卡片：会话、工作区、目标、技能、子代理、预设、设置、凭据、模型、宿主、任务、插件与动态清单
+- **🗂️ 按项目分组的会话** — Sessions 卡按工作区项目分类，标题同步 web（`session/title` → cwd 基名 → id），默认展示运行中项目的会话，`🔀 项目` 一键切换，每行直接 `归档`/`删除`，归档后隐藏并在页头显示 `🗄N`
+- **💡 Bar 开关** — Menu 第一页提供 `💡 收起 Bar / 显示 Bar`，也支持 `/bar [on|off]`；bar 上 `🗜️ 收起` 点击后不再留任何载体消息
+- **🎯 目标入口** — Goal 在 Menu 第一页（与 Capabilities 同行），卡片只做显示/编辑/暂停，`/goal <objective> [maxRounds]` 启动目标
+- **🗂️ 工作区可直接使用** — Workspace 详情卡提供 `✅ 使用此项目`（设为当前项目）与 `🧭 会话`（打开该项目会话）
 - **🌐 Web 对齐** — 适配器按 Web ApiProxy RPC 契约实现：`session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`、subagent、host、workspace、agentPreset、skills、goals、settings、credentials、llm providers/discovery
 - **⚡ Openclaw 风格实时流** — 思考/工具进度/打字机回复分层渲染，结束后折叠为摘要（`outbound.liveFeed` 热切换）
 - **📝 HTML 感知长文拆分** — 超过 4096 字符时按换行/空格边界切分，绝不切在标签或实体内部，跨切分标签逐段配平
@@ -164,9 +167,9 @@ Telegram ⇄ grammY 长轮询 ⇄ 每 chat FIFO 路由
 
 **Telegram 侧**
 
-`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
+`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /bar [on|off] /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
 
-另有 `/history [id] [limit]`、`/rename <title>`、`/fork [atSeq]`、`/use <id>`、`/archive <id>`、`/queue`、`/steer <text>`、`/cancel`、`/goalcreate <objective> [maxRounds]`、`/goaledit <text>`、`/workspacecreate <path> [title]`、`/workspacepin <workspaceId> <sessionId> [before]`、`/pluginenable|plugindisable <name>`、`/settingsdescribe [ns]`、`/settingsupdate <ns> <json>`、`/settingsreplace <ns> <json>`、`/settingsmutate <ns> <json-ops>`、`/credential|credentialset|credentialunset <REF> [value]`、`/ls [path]`、`/mkdir <path>`、`/openpath [path]`、`/pickdir [path]`、`/discover <settingsNs> [baseURL]`、`/subagentprompt <text>`、`/sessionlog [id]`、`/commands`、`/capabilities`。
+另有 `/history [id] [limit]`、`/rename <title>`、`/fork [atSeq]`、`/use <id>`、`/archive <id>`、`/queue`、`/steer <text>`、`/cancel`、`/goal <objective> [maxRounds]`、`/goalcreate <objective> [maxRounds]`、`/goaledit <text>`、`/workspacecreate <path> [title]`、`/workspacepin <workspaceId> <sessionId> [before]`、`/pluginenable|plugindisable <name>`、`/settingsdescribe [ns]`、`/settingsupdate <ns> <json>`、`/settingsreplace <ns> <json>`、`/settingsmutate <ns> <json-ops>`、`/credential|credentialset|credentialunset <REF> [value]`、`/ls [path]`、`/mkdir <path>`、`/openpath [path]`、`/pickdir [path]`、`/discover <settingsNs> [baseURL]`、`/subagentprompt <text>`、`/sessionlog [id]`、`/commands`、`/capabilities`。
 
 ## 工作原理
 
@@ -182,7 +185,7 @@ Telegram ⇄ grammY 长轮询 ⇄ 每 chat FIFO 路由
 ## 测试
 
 ```bash
-npm run check          # tsc 构建 + node --test：229/228 green
+npm run check          # tsc 构建 + node --test：244/244 green
 npm audit --omit=dev   # 0 漏洞
 npm pack --dry-run     # 发布载荷：dist + README + README.zh + CHANGELOG + LICENSE
 ```

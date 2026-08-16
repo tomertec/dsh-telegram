@@ -48,7 +48,7 @@ import {
   releaseAllModelSelections,
 } from "./harness/adapters/sessions.js";
 import { listWorkspaces, createWorkspace, renameWorkspace, deleteWorkspace, insertWorkspaceBefore, insertSessionBefore, archiveSession } from "./harness/adapters/workspace.js";
-import { getGoal, createGoal, editGoal, pauseGoal, resumeGoal, completeGoal, clearGoal } from "./harness/adapters/goals.js";
+import { getGoal, createGoal, editGoal, pauseGoal, resumeGoal } from "./harness/adapters/goals.js";
 import { listFeedback, putFeedback, deleteFeedback } from "./harness/adapters/feedback.js";
 import { listSkills } from "./harness/adapters/skills.js";
 import { listSubagents, promptSubagent, interruptSubagent, subagentHistory } from "./harness/adapters/subagents.js";
@@ -72,6 +72,7 @@ import { plain, truncate } from "./telegram/html.js";
 import {
   buildBackKeyboard,
   buildBarKeyboard,
+  buildCollapsedBarKeyboard,
   buildConfirmKeyboard,
   buildHistoryKeyboard,
   buildMenuPage,
@@ -102,14 +103,17 @@ import {
   buildDynamicCordisKeyboard,
   buildCapabilitiesKeyboard,
   CALLBACK_RE,
+  COLLAPSE_BTN,
   COMPACT_BTN,
   decodeCallbackValue,
+  GOAL_BTN,
   MENU_BTN,
   MODELS_BTN,
   MODE_BTN,
   NEW_BTN,
   PLUGINS_BTN,
   PRESETS_BTN,
+  RETURN_BTN,
   THINKING_BTN,
   REASONING_BTN,
   QUEUE_BTN,
@@ -148,6 +152,8 @@ interface State {
   barTimers: Map<number, ReturnType<typeof setTimeout>>;
   /** Last project key shown on the per-chat Sessions card (back navigation). */
   lastSessionsProject: Map<number, string>;
+  /** Chats whose bar is collapsed to the single return button. */
+  barCollapsed: Map<number, boolean>;
 }
 
 /** Web `ApiProxy.events.host` also forwards these remote-service events. */
@@ -182,6 +188,7 @@ const state: State = {
   barCarriers: new Map(),
   barTimers: new Map(),
   lastSessionsProject: new Map(),
+  barCollapsed: new Map(),
 };
 
 /** Disposers for the refresh-only cordis event subscriptions above. */
@@ -218,6 +225,7 @@ function teardownMount(): void {
   for (const timer of state.barTimers.values()) clearTimeout(timer);
   state.barTimers.clear();
   state.lastSessionsProject.clear();
+  state.barCollapsed.clear();
   state.barCounts.clear();
   state.barCarriers.clear();
   releaseAllModelSelections();
@@ -575,16 +583,17 @@ async function openMenuAt(chatId: number, page: number): Promise<void> {
     [
       { label: `\u2728 New session \u00B7 ${project}`, cb: "m:new", full: true },
       { label: `\u{1F4C1} Project \u00B7 ${project}`, cb: "m:project", full: true },
+      { label: state.barCollapsed.get(chatId) === true ? "\u{1F4A1} \u663E\u793A Bar" : "\u{1F4A1} \u6536\u8D77 Bar", cb: "m:bartoggle", full: true },
       ...extensions.flatMap((extension) => extension.menuItems?.(buildExtensionHost()) ?? []),
-      { label: "\u{1F3AF} Goals", cb: "m:goals" },
       { label: "\u{1F5C2} Workspaces", cb: "m:workspaces" },
       { label: "\u{1F9EC} Skills", cb: "m:skills" },
       { label: "\u{1F916} Subagents", cb: "m:subagents" },
       { label: "\u{1F4CB} Jobs", cb: "m:jobs" },
       { label: "\u269B\uFE0F Dynamic", cb: "m:dynamic" },
       { label: "\u{1F4BB} Host", cb: "m:host" },
+      // Goals and Capabilities share one half-width row, as requested.
+      { label: "\u{1F3AF} Goals", cb: "m:goals" },
       { label: "\u{1F9EC} Capabilities", cb: "m:capabilities" },
-      { label: "\u{1F4E1} Watch", cb: "m:watch" },
     ],
     [
       { label: `\u231B Queue \u00B7 ${snapshot.queue}`, cb: "m:queue" },
@@ -601,6 +610,7 @@ async function openMenuAt(chatId: number, page: number): Promise<void> {
       { label: "\u2699\uFE0F Settings", cb: "m:settings" },
       { label: "\u2139\uFE0F About", cb: "m:about" },
       { label: "\u{1F3AD} Presets", cb: "m:presets" },
+      { label: "\u{1F4E1} Watch", cb: "m:watch" },
     ],
   ];
   const safe = Math.max(0, Math.min(page, pages.length - 1));
@@ -747,21 +757,21 @@ async function openSessionsCard(chatId: number, projectKey?: string, page = 0): 
   const requestedKey = projectKey ?? groups[0]?.key ?? ALL_PROJECTS_KEY;
   const group = requestedKey === ALL_PROJECTS_KEY ? undefined : groups.find((candidate) => candidate.key === requestedKey) ?? groups[0];
   const key = group?.key ?? ALL_PROJECTS_KEY;
-  const sessions = group?.sessions ?? details;
+  const sessions = (group?.sessions ?? details).filter((session) => !session.archived);
+  const archivedCount = (group?.sessions ?? details).length - sessions.length;
   const totalPages = Math.max(1, Math.ceil(sessions.length / SESSIONS_PAGE_SIZE));
   const safe = Math.max(0, Math.min(page, totalPages - 1));
   const pageItems = sessions.slice(safe * SESSIONS_PAGE_SIZE, (safe + 1) * SESSIONS_PAGE_SIZE);
-  const runningCount = group?.runningCount ?? details.filter((session) => session.running).length;
+  const runningCount = sessions.filter((session) => session.running).length;
   const label = group?.label ?? "\u5168\u90E8\u4F1A\u8BDD";
   state.lastSessionsProject.set(chatId, key);
   const lines = [
-    `\u{1F9ED} Sessions \u00B7 ${plain(truncate(label, 26))} \u00B7 \u25B6${runningCount}/${sessions.length} \u00B7 page ${safe + 1}/${totalPages}`,
+    `\u{1F9ED} Sessions \u00B7 ${plain(truncate(label, 26))} \u00B7 \u25B6${runningCount}/${sessions.length}${archivedCount > 0 ? ` \u00B7 \u{1F5C4}${archivedCount}` : ""} \u00B7 page ${safe + 1}/${totalPages}`,
     "",
   ];
   if (sessions.length === 0) lines.push("(\u8BE5\u9879\u76EE\u6682\u65E0\u4F1A\u8BDD)", "");
   for (const session of pageItems) {
     const flags = [session.live ? "live" : "cold", session.running ? "running" : "idle"];
-    if (session.archived) flags.push("archived");
     const title = displayTitleFor(session.title, session.cwd, session.id);
     const hasTitle = session.title !== undefined && session.title.trim() !== "";
     lines.push(
@@ -769,11 +779,13 @@ async function openSessionsCard(chatId: number, projectKey?: string, page = 0): 
     );
     if (session.lastPromptAt !== undefined) lines.push(`   last prompt: ${plain(new Date(session.lastPromptAt).toLocaleString())}`);
   }
-  lines.push("", "Tap a session for Use/History/Rename/Fork/Archive/Model/Queue.");
+  lines.push("", "\u4F1A\u8BDD\u6309\u94AE\u6253\u5F00\u8BE6\u60C5 \u00B7 \u5F52\u6863 / \u5220\u9664 \u76F4\u63A5\u64CD\u4F5C\u3002");
   await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => ({
     id: session.id,
     title: displayTitleFor(session.title, session.cwd, session.id),
     running: session.running,
+    archiveCb: token({ action: "session-archive", sessionId: session.id }),
+    deleteCb: token({ action: "session-delete", sessionId: session.id }),
   })), {
     projectCount: groups.length,
     projectsCb: token({ action: "sessions-projects" }),
@@ -942,7 +954,10 @@ async function openWorkspaceDetailCard(chatId: number, workspaceId: string): Pro
     workspace.createdAt !== undefined ? `created: ${plain(new Date(workspace.createdAt).toLocaleString())}` : "",
     workspace.updatedAt !== undefined ? `updated: ${plain(new Date(workspace.updatedAt).toLocaleString())}` : "",
   ].filter((line) => line !== "");
-  await openCard(chatId, lines.join("\n"), buildWorkspaceDetailKeyboard(workspaceId));
+  await openCard(chatId, lines.join("\n"), buildWorkspaceDetailKeyboard(workspaceId, {
+    use: token({ action: "workspace-use", workspaceId }),
+    sessions: token({ action: "sessions-project", projectKey: workspaceId }),
+  }));
 }
 
 /** Codex-style project picker: browse folders inline, then use one as the
@@ -1069,10 +1084,12 @@ async function openGoalsCard(chatId: number): Promise<void> {
   const agent = currentAgent(chatId);
   const lines = ["\u{1F3AF} Goal", ""];
   let hasGoal = false;
+  let paused = false;
   if (agent) {
     const goal = getGoal(requireCtx(), agent.id);
     if (goal) {
       hasGoal = true;
+      paused = goal.phase === "paused";
       lines.push(`phase: ${goal.phase} \u00B7 activation: ${goal.activation} \u00B7 rounds: ${goal.roundsStarted}${goal.maxGoalRounds !== undefined ? `/${goal.maxGoalRounds}` : ""}`);
       lines.push(`objective: ${plain(truncate(goal.objective, 120))}`);
       lines.push(`revision: ${goal.revision} \u00B7 created: ${plain(new Date(goal.createdAt).toLocaleString())}`);
@@ -1084,15 +1101,14 @@ async function openGoalsCard(chatId: number): Promise<void> {
   }
   const goalPayload = agent ? { action: "goal", agentId: agent.id } : { action: "goal", agentId: "" };
   const callbacks = {
-    create: token({ ...goalPayload, op: "create" }),
-    edit: token({ ...goalPayload, op: "edit" }),
-    pause: token({ ...goalPayload, op: "pause" }),
-    resume: token({ ...goalPayload, op: "resume" }),
-    complete: token({ ...goalPayload, op: "complete" }),
-    clear: token({ ...goalPayload, op: "clear" }),
+    ...(hasGoal ? {
+      edit: token({ ...goalPayload, op: "edit" }),
+      toggle: token({ ...goalPayload, op: paused ? "resume" : "pause" }),
+    } : {}),
   };
-  lines.push("", "Edit: /goaledit &lt;text&gt; \u00B7 Create: /goalcreate &lt;objective&gt; [maxRounds]");
-  await openCard(chatId, lines.join("\n"), buildGoalsKeyboard(hasGoal, callbacks));
+  lines.push("", "Start: /goal &lt;objective&gt; [maxRounds]");
+  if (hasGoal) lines.push("Edit: /goaledit &lt;objective&gt; [maxRounds]");
+  await openCard(chatId, lines.join("\n"), buildGoalsKeyboard(hasGoal, callbacks, paused));
 }
 
 async function openSkillsCard(chatId: number): Promise<void> {
@@ -1513,22 +1529,18 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const op = payload["op"] ?? "";
       const goal = getGoal(requireCtx(), agent.id);
       const t = requireTransport();
-      if (op === "create") {
-        await t.sendText(chatId, "/goalcreate &lt;objective&gt; [maxRounds]", { parse_mode: "HTML" });
-      } else if (!goal) {
-        await t.sendText(chatId, "\u274C No current goal.", { parse_mode: "HTML" });
-      } else {
-        let res;
-        if (op === "pause") res = await pauseGoal(requireCtx(), agent.id, goal.id, goal.revision);
-        else if (op === "resume") res = await resumeGoal(requireCtx(), agent.id, goal.id, goal.revision);
-        else if (op === "complete") res = await completeGoal(requireCtx(), agent.id, goal.id, goal.revision);
-        else if (op === "clear") res = await clearGoal(requireCtx(), agent.id, goal.id, goal.revision);
-        else if (op === "edit") {
-          await t.sendText(chatId, "/goaledit &lt;new objective&gt;", { parse_mode: "HTML" });
-          return;
-        }
-        if (res) await t.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      if (!goal) {
+        await t.sendText(chatId, "\u274C No current goal \u2014 start one with /goal &lt;objective&gt; [maxRounds].", { parse_mode: "HTML" });
+        return openGoalsCard(chatId);
       }
+      if (op === "edit") {
+        await t.sendText(chatId, "/goaledit &lt;new objective&gt; [maxRounds]", { parse_mode: "HTML" });
+        return;
+      }
+      const res = op === "resume"
+        ? await resumeGoal(requireCtx(), agent.id, goal.id, goal.revision)
+        : await pauseGoal(requireCtx(), agent.id, goal.id, goal.revision);
+      await t.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openGoalsCard(chatId);
     }
     case "subagent":
@@ -1626,6 +1638,21 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openPresetsCard(chatId);
     }
+    case "session-archive": {
+      const sessionId = payload["sessionId"] ?? "";
+      const res = await archiveSession(requireCtx(), sessionId);
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      return openSessionsCard(chatId, lastProjectKey(chatId));
+    }
+    case "session-delete": {
+      const sessionId = payload["sessionId"] ?? "";
+      return askConfirm(
+        chatId,
+        `\u{1F5D1} Delete session ${plain(truncate(sessionId, 24))}?`,
+        { action: "session-delete-confirm", sessionId },
+        { action: "session-delete-cancel", sessionId },
+      );
+    }
     case "session-delete-confirm": {
       const sessionId = payload["sessionId"] ?? "";
       const res = await deleteSession(requireCtx(), sessionId);
@@ -1714,6 +1741,14 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const res = openAgentPresetDocument(requireCtx(), payload["presetId"] ?? "");
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
+    }
+    case "workspace-use": {
+      const workspace = listWorkspaces(requireCtx()).items.find((candidate) => candidate.workspaceId === payload["workspaceId"]);
+      if (!workspace) {
+        await requireTransport().sendText(chatId, "\u274C Workspace not found \u2014 reopen the Workspaces card.", { parse_mode: "HTML" });
+        return openWorkspacesCard(chatId);
+      }
+      return applyProjectPath(chatId, workspace.path);
     }
     case "workspace-delete-confirm": {
       const res = await deleteWorkspace(requireCtx(), payload["id"] ?? "");
@@ -2007,6 +2042,13 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
     }
+    case "collapsebar":
+      return setBarCollapsed(chatId, true);
+    case "returnbar":
+      return setBarCollapsed(chatId, false);
+    case "bartoggle":
+      await setBarCollapsed(chatId, state.barCollapsed.get(chatId) !== true);
+      return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
     case "project":
       return openProjectCard(chatId);
     case "models":
@@ -2148,6 +2190,8 @@ const TELEGRAM_COMMANDS = [
   { command: "workspacecreate", description: "Create a workspace" },
   { command: "project", description: "Pick the active project folder" },
   { command: "goals", description: "Current goal" },
+  { command: "bar", description: "Show or hide the button bar" },
+  { command: "goal", description: "Start a goal: /goal <objective> [maxRounds]" },
   { command: "goalcreate", description: "Create a goal" },
   { command: "skills", description: "Skills list" },
   { command: "subagents", description: "Subagents list" },
@@ -2207,10 +2251,16 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
       return;
     case QUEUE_BTN:
       return openQueueCard(chatId);
+    case GOAL_BTN:
+      return openGoalsCard(chatId);
     case PRESETS_BTN:
       return openPresetsCard(chatId);
     case THINKING_BTN:
       return dispatchBarButton(chatId, REASONING_BTN);
+    case COLLAPSE_BTN:
+      return setBarCollapsed(chatId, true);
+    case RETURN_BTN:
+      return setBarCollapsed(chatId, false);
     case STOP_BTN: {
       const res = sessionLifecycle.stop(requireCtx(), boundAgentId(chatId));
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
@@ -2318,6 +2368,17 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
     }
     case "sessions":
       return openSessionsCard(chatId, lastProjectKey(chatId));
+    case "bar": {
+      const target = args.trim().toLowerCase();
+      const collapsed = target === "on"
+        ? false
+        : target === "off"
+          ? true
+          : state.barCollapsed.get(chatId) !== true;
+      await setBarCollapsed(chatId, collapsed);
+      await send(collapsed ? "Bar hidden \u2014 use /bar or Menu \u2192 \u{1F4A1} \u663E\u793A Bar to restore." : "Bar shown.");
+      return;
+    }
     case "workspaces":
       return openWorkspacesCard(chatId);
     case "project":
@@ -2512,12 +2573,17 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       await send(res.text, res.ok);
       return;
     }
+    case "goal":
     case "goalcreate": {
       const parts = args.trim().split(/\s+/);
       const maxRounds = parts.length > 1 ? Number(parts[parts.length - 1]) : undefined;
       const objective = Number.isFinite(maxRounds) ? parts.slice(0, -1).join(" ") : parts.join(" ");
       if (!agent) {
         await send("No live agent \u2014 goals are per-agent.");
+        return;
+      }
+      if (!objective) {
+        await send("usage: /goal <objective> [maxRounds]");
         return;
       }
       const res = await createGoal(ctx, agent.id, objective, Number.isFinite(maxRounds) ? maxRounds : undefined);
@@ -2872,6 +2938,9 @@ async function sendWithLiveBar(chatId: number, text: string, options: Parameters
   if (!t) return undefined;
   const count = currentQueueCount(chatId);
   state.barCounts.set(chatId, count);
+  // Collapsed means no bar at all: the Menu first-page switch or `/bar`
+  // restores it. Normal replies stay keyboard-free instead of re-asserting.
+  if (state.barCollapsed.get(chatId) === true) return t.sendText(chatId, text, options);
   await dropBarCarrier(chatId, t);
   return t.sendText(chatId, text, { ...options, reply_markup: buildBarKeyboard(count) });
 }
@@ -2890,14 +2959,8 @@ function scheduleBarSync(chatId: number, delayMs = 1500): void {
   state.barTimers.set(chatId, timer);
 }
 
-/** Swap the dedicated bar carrier in place when the queue count changed. */
-async function syncBar(chatId: number): Promise<void> {
-  const t = state.transport;
-  if (!t) return;
-  const count = currentQueueCount(chatId);
-  log(`bar sync chatId=${chatId} count=${count} last=${state.barCounts.get(chatId)}`);
-  if (count === state.barCounts.get(chatId)) return;
-  state.barCounts.set(chatId, count);
+/** Delete the current carrier and pin one fresh native bar message. */
+async function replaceBarCarrier(chatId: number, t: TelegramTransport, count: number): Promise<void> {
   await dropBarCarrier(chatId, t);
   const id = await t.sendText(chatId, queueBarLabel(count), {
     parse_mode: "HTML",
@@ -2905,6 +2968,35 @@ async function syncBar(chatId: number): Promise<void> {
     reply_markup: buildBarKeyboard(count),
   });
   if (id !== undefined) state.barCarriers.set(chatId, id);
+}
+
+/** Collapse the bar: delete its carrier and leave NO replacement. Restoring
+ * is explicit through Menu's first-page Bar switch or `/bar`. */
+async function setBarCollapsed(chatId: number, collapsed: boolean): Promise<void> {
+  const t = state.transport;
+  if (!t) return;
+  if (collapsed) {
+    state.barCollapsed.set(chatId, true);
+    await dropBarCarrier(chatId, t);
+    return;
+  }
+  const count = currentQueueCount(chatId);
+  state.barCounts.set(chatId, count);
+  state.barCollapsed.delete(chatId);
+  await replaceBarCarrier(chatId, t, count);
+}
+
+/** Swap the dedicated bar carrier in place when the queue count changed. */
+async function syncBar(chatId: number): Promise<void> {
+  const t = state.transport;
+  if (!t) return;
+  const count = currentQueueCount(chatId);
+  log(`bar sync chatId=${chatId} count=${count} last=${state.barCounts.get(chatId)}`);
+  // A collapsed bar stays gone until explicitly restored.
+  if (state.barCollapsed.get(chatId) === true) return;
+  if (count === state.barCounts.get(chatId)) return;
+  state.barCounts.set(chatId, count);
+  await replaceBarCarrier(chatId, t, count);
 }
 
 export function apply(ctx: Context, loaderConfig?: unknown): void {

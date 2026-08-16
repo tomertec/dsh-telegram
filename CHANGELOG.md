@@ -3,6 +3,31 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.0
+
+Final release of the web-parity Telegram bridge: workspace-grouped sessions, goal/menu/bar ergonomics, direct session management, and release hardening.
+
+### Sessions & workspaces
+
+- Sessions grouped by workspace project; running project opens first; `🔀 项目` switcher plus `🌐 全部会话` flat view.
+- Session titles follow the web chain exactly: `session/title` → cwd basename → id (cold-session JSONL parsing fixed).
+- `running` mirrors `agent.status === 'running'`; cold sessions keep their header cwd.
+- Per-row `归档` / `删除` actions on the Sessions card; archived sessions hide with a `🗄N` count.
+- Workspace detail adds `✅ 使用此项目` and `🧭 会话`; the broken `w:create` callback dispatch is fixed.
+
+### Goal & menu
+
+- Goal is a display/edit/pause card (no Create button); `/goal <objective> [maxRounds]` starts it.
+- Menu page 1 keeps Goal beside Capabilities; Watch moved to page 2.
+- Menu page 1 adds a `💡 收起 Bar / 显示 Bar` switch; `/bar [on|off]` toggles the keyboard.
+- Bar layout is `Menu/New/Models · Sessions/Plugins/Status · Goal/Queue/Compact · Stop/收起`.
+
+### Bar & transport
+
+- `🗜️ 收起` hides the bar without leaving a carrier message; restoring is explicit via Menu or `/bar`.
+- The tapped collapse/return message stays in the chat.
+- Exponential backoff for `getUpdates` 409 conflicts instead of retry spam.
+
 ## 0.3.0-rc.1
 
 Telegram-first production hardening on top of the v0.2.0 web-parity baseline.

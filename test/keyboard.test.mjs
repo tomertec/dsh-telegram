@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSessionProjectsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, decodeCallbackValue, encodedCallback, inputPromptKeyboard, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildCollapsedBarKeyboard, buildConfirmKeyboard, buildGoalsKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSessionProjectsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, buildWorkspaceKeyboard, buildWorkspaceDetailKeyboard, CALLBACK_RE, COLLAPSE_BTN, decodeCallbackValue, encodedCallback, GOAL_BTN, inputPromptKeyboard, LEGACY_COLLAPSE_BTN, LEGACY_RETURN_BTN, normalizeBarLabel, PRESETS_BTN, queueBarLabel, RETURN_BTN } from '../dist/telegram/keyboard.js';
 
-test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
+test('reply bar layout is Menu/New/Models, Sessions/Plugins/Status, Goal/Queue/Compact, Stop/收起', () => {
   const bar = buildBarKeyboard();
   assert.equal(bar.keyboard.length, 4);
   assert.deepEqual(
@@ -10,12 +10,30 @@ test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Pr
     [
       ['\u2630 Menu', '\u2728 New', '\u{1F9E9} Models'],
       ['\u{1F9ED} Sessions', '\u{1F50C} Plugins', '\u{1F4CA} Status'],
-      ['\u{1F3AD} Presets', '\u231B Queue', '\u{1F9F9} Compact'],
-      ['\u23F9 Stop'],
+      ['\u{1F3AF} Goal', '\u231B Queue', '\u{1F9F9} Compact'],
+      ['\u23F9 Stop', '\u{1F5DC}\uFE0F \u6536\u8D77'],
     ],
   );
   assert.equal(bar.is_persistent, true);
   assert.equal(bar.resize_keyboard, true);
+});
+
+test('collapsed bar leaves only the single return button', () => {
+  const collapsed = buildCollapsedBarKeyboard();
+  assert.deepEqual(
+    collapsed.keyboard.map((row) => row.map((button) => button.text)),
+    [['\u8FD4\u56DE']],
+  );
+  assert.equal(collapsed.is_persistent, true);
+});
+
+test('collapse/return labels normalize including legacy bars', () => {
+  assert.equal(normalizeBarLabel(RETURN_BTN), RETURN_BTN);
+  assert.equal(normalizeBarLabel(COLLAPSE_BTN), COLLAPSE_BTN);
+  assert.equal(normalizeBarLabel(GOAL_BTN), GOAL_BTN);
+  assert.equal(normalizeBarLabel(PRESETS_BTN), PRESETS_BTN, 'stale bars keep Presets working');
+  assert.equal(normalizeBarLabel(LEGACY_COLLAPSE_BTN), COLLAPSE_BTN, 'stale monkey collapse label still maps');
+  assert.equal(normalizeBarLabel(LEGACY_RETURN_BTN), RETURN_BTN, 'stale emoji return label still maps');
 });
 
 test('queue card offers delete/resend and run-now, never inline edit', () => {
@@ -43,13 +61,14 @@ test('BAR_LABELS keeps the old New label for stale persisted bars', () => {
 test('bar embeds the live queue count without changing the rest of the layout', () => {
   const bar = buildBarKeyboard(7);
   assert.equal(bar.keyboard.length, 4);
-  assert.deepEqual(bar.keyboard.map((row) => row.length), [3, 3, 3, 1]);
+  assert.deepEqual(bar.keyboard.map((row) => row.length), [3, 3, 3, 2]);
   const texts = bar.keyboard.flat().map((b) => b.text);
   assert.ok(texts.includes(queueBarLabel(7)));
   assert.ok(texts.includes('\u231B Queue') === false);
-  for (const label of ['\u2630 Menu', '\u2728 New', '\u{1F9E9} Models', '\u{1F9ED} Sessions', '\u{1F50C} Plugins', '\u{1F4CA} Status', '\u{1F3AD} Presets', '\u{1F9F9} Compact', '\u23F9 Stop']) {
+  for (const label of ['\u2630 Menu', '\u2728 New', '\u{1F9E9} Models', '\u{1F9ED} Sessions', '\u{1F50C} Plugins', '\u{1F4CA} Status', '\u{1F3AF} Goal', '\u{1F9F9} Compact', '\u23F9 Stop', '\u{1F5DC}\uFE0F \u6536\u8D77']) {
     assert.ok(texts.includes(label), `bar missing ${label}`);
   }
+  assert.ok(texts.includes('\u{1F3AD} Presets') === false, 'Presets no longer renders on the bar');
   assert.ok(texts.includes('\u{1F9E0} Reasoning') === false);
   assert.equal(bar.is_persistent, true);
   assert.equal(bar.resize_keyboard, true);
@@ -178,6 +197,53 @@ test('buildSessionsKeyboard paginates ids, shows titles, and adds the project sw
   const last = buildSessionsKeyboard(items.slice(10), { paging: { previous: 't:prev', next: 't:next2' } });
   assert.ok(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:prev')));
   assert.equal(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:projects')), false, 'no project button without a callback');
+});
+
+test('buildSessionsKeyboard adds inline archive/delete buttons when callbacks are provided', () => {
+  const kb = buildSessionsKeyboard([
+    { id: 'session-a', title: 'Alpha', archiveCb: 't:archive-a', deleteCb: 't:delete-a' },
+    { id: 'session-b', title: 'Beta' },
+  ]);
+  const rows = kb.inline_keyboard.filter((row) => row.some((button) => button.text.startsWith('🧭')));
+  assert.equal(rows[0].some((button) => button.callback_data === 't:archive-a' && button.text === '归档'), true);
+  assert.equal(rows[0].some((button) => button.callback_data === 't:delete-a' && button.text === '删除'), true);
+  assert.equal(rows[1].some((button) => button.callback_data === 't:archive-a'), false);
+});
+
+test('buildWorkspaceKeyboard keeps the legacy w:create action that the callback router special-cases', () => {
+  const kb = buildWorkspaceKeyboard([
+    { id: 'ws-1', title: 'One' },
+    { id: 'ws-2', title: 'Two' },
+  ]);
+  const callbacks = kb.inline_keyboard.flat().map((button) => button.callback_data);
+  assert.ok(callbacks.includes('w:ws-1'));
+  assert.ok(callbacks.includes('w:create'), 'Create must stay w:create — w:<id>:<sub> parsing misreads it as a workspace id');
+  assert.equal(callbacks.includes('w:create:create'), false);
+});
+
+test('buildGoalsKeyboard is display/edit/pause only and never offers Create', () => {
+  const empty = buildGoalsKeyboard(false, {});
+  const emptyTexts = empty.inline_keyboard.flat().map((button) => button.text).join(' ');
+  assert.equal(emptyTexts.includes('Create'), false, 'no goal = display-only; /goal starts it');
+  const active = buildGoalsKeyboard(true, { edit: 't:edit', toggle: 't:toggle' }, false);
+  const activeCallbacks = active.inline_keyboard.flat().map((button) => button.callback_data);
+  assert.ok(activeCallbacks.includes('t:edit'));
+  assert.ok(activeCallbacks.includes('t:toggle'));
+  assert.ok(active.inline_keyboard.flat().some((button) => button.text.startsWith('⏸ Pause')));
+  const paused = buildGoalsKeyboard(true, { edit: 't:edit', toggle: 't:toggle' }, true);
+  assert.ok(paused.inline_keyboard.flat().some((button) => button.text.startsWith('▶ Resume')));
+});
+
+test('buildWorkspaceDetailKeyboard adds Use/Sessions actions only when provided', () => {
+  const withActions = buildWorkspaceDetailKeyboard('ws-1', { use: 't:use', sessions: 't:sessions' });
+  const callbacks = withActions.inline_keyboard.flat().map((button) => button.callback_data);
+  assert.ok(callbacks.includes('t:use'));
+  assert.ok(callbacks.includes('t:sessions'));
+  assert.ok(callbacks.includes('w:ws-1:rename'));
+  const bare = buildWorkspaceDetailKeyboard('ws-1');
+  const bareCallbacks = bare.inline_keyboard.flat().map((button) => button.callback_data);
+  assert.equal(bareCallbacks.includes('t:use'), false);
+  assert.ok(bareCallbacks.includes('w:ws-1:rename'));
 });
 
 test('buildSessionProjectsKeyboard lists all/projects with running counts and paging', () => {
