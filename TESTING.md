@@ -541,3 +541,26 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 2. 发送语音/视频 → 同样得到指引，而非无响应。
 3. 未授权 chat 发照片或文档 → 收到 `This chat is not allowed yet` + Allow 按钮。
 4. 发照片 → 仍按原路径作为 attachment 交给当前会话。
+
+## 23. Round 9：credentials 批量 + Host 版本（2026-08-16，198/198）
+
+### 改动
+
+1. **`/credential` 支持批量（web `refs[]` 语义）**：
+   - 新增 `describeCredentials(ctx, refs)`：去重、≤64、POSIX shell 名称校验，逐 ref fan-out 到单 ref host seam，合并输出；
+   - `/credential <REF> [REF...]`、Credentials 卡与 /help 文案同步。
+2. **Host 卡版本真实化**：`describeHost` 增加可选 `version` 参数，index 传入插件 `version`（0.2.0），不再显示假的 `0.0.1`。
+3. **新增 `test/credentials.test.mjs`（3 例）**：单 ref 视图无值、批量去重/上限/校验、set 空值拒绝与 unset 委托；host test 增加版本断言。
+
+### 验证
+
+- `npm run check`：**198/198 pass**（新增 4 例）。
+- round 1–8 的 194 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步 credentials.describe 与 host.describe 状态。
+
+### Telegram 人工复核
+
+1. `/credential OPENCODE_GO_API_KEY UNKNOWN_REF` → 两行结果：一个 configured/source/writable，一个 not configured。
+2. `/credential REF REF` → 去重后只显示一行。
+3. `/credential bad-ref!` → POSIX 名称错误提示。
+4. Host 卡 version 显示 `0.2.0`（与 package.json 一致）。

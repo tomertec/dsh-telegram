@@ -39,6 +39,32 @@ export async function describeCredential(ctx: Context, ref: string): Promise<Ada
   }
 }
 
+/** credentials.describe batch: web accepts up to 64 refs; Telegram mirrors
+ * that by fanning out the single-ref host seam and combining the views. */
+export async function describeCredentials(ctx: Context, refs: readonly string[]): Promise<AdapterResult & { views?: CredentialView[] }> {
+  const credentials = credentialsOf(ctx);
+  if (!credentials) return fail("credentials service is unavailable in this profile");
+  const unique = [...new Set(refs.map((ref) => ref.trim()).filter((ref) => ref !== ""))];
+  if (unique.length === 0) return fail("usage: /credential <REF> [REF...]");
+  if (unique.length > 64) return fail("at most 64 credential refs per request (web contract)");
+  const invalid = unique.find((ref) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref));
+  if (invalid !== undefined) return fail(`credential ref must be a POSIX shell identifier: ${invalid}`);
+  try {
+    const views = await Promise.all(
+      unique.map(async (ref) => {
+        const info = await credentials.describe(ref);
+        return { ref, ...info };
+      }),
+    );
+    const text = views
+      .map((view) => `\u{1F511} ${view.ref}: ${view.configured ? `configured (${view.source ?? "unknown source"})` : "not configured"} \u00B7 writable: ${view.writable}`)
+      .join("\n");
+    return { ok: true, text, views };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
 export async function setCredential(ctx: Context, ref: string, value: string): Promise<AdapterResult> {
   const credentials = credentialsOf(ctx);
   if (!credentials) return fail("credentials service is unavailable in this profile");

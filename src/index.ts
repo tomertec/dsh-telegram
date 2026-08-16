@@ -47,7 +47,7 @@ import { listSkills } from "./harness/adapters/skills.js";
 import { listSubagents, promptSubagent, interruptSubagent, subagentHistory } from "./harness/adapters/subagents.js";
 import { listAgentPresets, selectAgentPreset, setDefaultAgentPreset, readAgentPreset, copyAgentPreset, removeAgentPreset, openAgentPresetDocument, switchAgentPresetMidSession, sessionHasStarted } from "./harness/adapters/presets.js";
 import { describeSettings, updateSettings, replaceSettings, mutateSettings } from "./harness/adapters/settings.js";
-import { describeCredential, setCredential, unsetCredential } from "./harness/adapters/credentials.js";
+import { describeCredential, describeCredentials, setCredential, unsetCredential } from "./harness/adapters/credentials.js";
 import { modelCatalog, discoverModels } from "./harness/adapters/llm.js";
 import { REASONING_DEFAULT, isReasoningEffort, reasoningLabel } from "./reasoning.js";
 import { reasoningExtension } from "./extensions/reasoning.js";
@@ -1026,7 +1026,7 @@ async function openCredentialsCard(chatId: number): Promise<void> {
   const lines = [
     "\u{1F511} Credentials",
     "",
-    "Describe: /credential <REF> (configured/source/writable, value never shown)",
+    "Describe: /credential <REF> [REF...] (configured/source/writable, value never shown)",
     "Set: /credentialset <REF> <value> \u00B7 Unset: /credentialunset <REF>",
     "",
     "The secret value never rides back \u2014 same as the web form.",
@@ -1035,7 +1035,7 @@ async function openCredentialsCard(chatId: number): Promise<void> {
 }
 
 async function openHostCard(chatId: number): Promise<void> {
-  const host = describeHost(requireCtx(), state.workspaceRoot);
+  const host = describeHost(requireCtx(), state.workspaceRoot, version);
   const lines = [
     "\u{1F5A5} Host",
     "",
@@ -1800,7 +1800,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       await requireTransport().sendText(chatId, "/discover <settingsNs> [baseURL]", { parse_mode: "HTML" });
       return;
     case "cred-describe":
-      await requireTransport().sendText(chatId, "/credential <REF>", { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, "/credential <REF> [REF...]", { parse_mode: "HTML" });
       return;
     default:
       return;
@@ -1938,7 +1938,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
           "/goalcreate <objective> [maxRounds] \u00B7 /goaledit <text>",
           "/workspacecreate <path> [title] \u00B7 /workspacepin <workspaceId> <sessionId> [beforeSessionId]",
           "/pluginenable <name> \u00B7 /plugindisable <name> \u00B7 /settingsdescribe [ns] \u00B7 /settingsupdate <ns> <json> \u00B7 /settingsreplace <ns> <json> \u00B7 /settingsmutate <ns> <json ops>",
-          "/credential <REF> \u00B7 /credentialset <REF> <value> \u00B7 /credentialunset <REF> \u00B7 /answer <id> <question-number> <text>",
+          "/credential <REF> [REF...] \u00B7 /credentialset <REF> <value> \u00B7 /credentialunset <REF> \u00B7 /answer <id> <question-number> <text>",
           "/ls [path] \u00B7 /mkdir <path> \u00B7 /pickdir [path] \u00B7 /openpath [path] \u00B7 /discover <settingsNs> [baseURL] \u00B7 /subagentprompt <text>",
           "/sessionlog [sessionId] \u00B7 /commands \u00B7 /capabilities \u00B7 /config get|set <path> [json]",
           "/menucheck \u00B7 self-checks every menu card's data source",
@@ -2341,7 +2341,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       return;
     }
     case "credential": {
-      const res = await describeCredential(ctx, args.trim());
+      const res = await describeCredentials(ctx, args.trim().split(/\s+/));
       await send(res.text, res.ok);
       return;
     }

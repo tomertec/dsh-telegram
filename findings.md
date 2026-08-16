@@ -74,3 +74,9 @@
 - 未授权 photo/document 同样静默；router 改为与文本一致地发 allow 提示。
 - downloads 动态 seam 缺失路径没有测试；补 50MB 常量与 fail-closed 指引测试。
 - 明确平台限制：web session.prompt 只接受 text/image（权威 schema 证据），文档/语音/视频不做假附件。
+
+## Round 9 发现与修复
+
+- web `credentials.describe` 是批量 `refs[]` 契约，TG 只能查一个；新增批量适配（≤64/去重/校验）。
+- Host 卡 version 写死 0.0.1，误导用户；改为传入插件真实 version（0.2.0）。
+- 权威确认：credentials 无枚举 seam，web 也不列出 ref 列表；卡片保持命令指引是正确的。

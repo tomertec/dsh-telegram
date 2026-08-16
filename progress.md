@@ -36,14 +36,18 @@
 - Subagents 对齐 web 目录语义并 gating continuable。
 - 190/190 tests；提交 `f805d65`；详见 TESTING.md §21。
 
-## 2026-08-16 Round 8（本轮）
+## 2026-08-16 Round 8（已完成）
 
-- document/voice/video 明确指引；未授权 photo/media 发 allow 提示。
-- downloads 单测；README 平台限制同步。
-- `npm run check`：**194/194 pass**。
-- 文档已同步 TESTING.md §22 与 WEB_PARITY_AUDIT.md。
+- document/voice/video 明确指引；downloads 单测；README 平台限制同步。
+- 194/194 tests；提交 `8d77095`；详见 TESTING.md §22。
+
+## 2026-08-16 Round 9（本轮）
+
+- `/credential` 批量 ≤64 refs；Host 卡显示真实 0.2.0 版本。
+- `npm run check`：**198/198 pass**。
+- 文档已同步 TESTING.md §23 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 9 候选）
+## 下一步（Round 10 候选）
 
 Telegram 实机回归、审计剩余 🟡 收敛、发布前最终复测与 README 复核。

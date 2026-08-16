@@ -18,10 +18,10 @@ export interface HostView {
   canOpenPath: boolean;
 }
 
-export function describeHost(ctx: Context, activeCwd: string = process.cwd()): HostView {
+export function describeHost(ctx: Context, activeCwd: string = process.cwd(), version = "0.0.1"): HostView {
   const agent = ctx.agents?.list()[0];
   return {
-    version: "0.0.1",
+    version,
     cwd: activeCwd,
     provider: agent?.options.provider,
     model: agent?.options.model,

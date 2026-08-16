@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listDirectory, createDirectory, isDirectory, openPath, pickDirectoryHint, parentOf } from '../dist/harness/adapters/host.js';
+import { describeHost, listDirectory, createDirectory, isDirectory, openPath, pickDirectoryHint, parentOf } from '../dist/harness/adapters/host.js';
 
 test('listDirectory sorts directories before files and returns entries', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-host-list-'));
@@ -49,4 +49,12 @@ test('host path helpers resolve, degrade, and walk up', async () => {
   assert.equal(parentOf('/a/b/c'), '/a/b');
   assert.equal(parentOf('/'), '/');
   assert.equal(await isDirectory('/definitely/not/here/dsh-telegram'), false);
+});
+
+
+test('describeHost reports the bridge version instead of a fake host version', () => {
+  const view = describeHost({ agents: { list: () => [] } }, '/tmp', '0.2.0');
+  assert.equal(view.version, '0.2.0');
+  assert.equal(view.cwd, '/tmp');
+  assert.equal(view.attachedSessions, 0);
 });

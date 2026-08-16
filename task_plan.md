@@ -13,7 +13,8 @@
 - [x] Round 6：Skills 按 session 查询 + Search 结果分页（187/187）
 - [x] Round 7：Subagents 对齐 web 目录语义（190/190）
 - [x] Round 8：非图片媒体明确指引 + downloads 单测（194/194）
-- [ ] Round 9+：继续收敛剩余项（见下），每轮回归 `npm run check` + pack
+- [x] Round 9：credentials 批量 + Host 版本真实化（198/198）
+- [ ] Round 10+：继续收敛剩余项（见下），每轮回归 `npm run check` + pack
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -26,7 +27,7 @@
 ## 剩余候选（按性价比排序）
 
 1. Telegram 实机回归 + 最终上线复测记录。
-2. 审计剩余 🟡 收敛（session history message 边界、credentials batch、host version 等）。
+2. 审计剩余 🟡 收敛（session history message 边界、host 默认 model seam、settings 边界等）。
 3. 发布前最终 `npm pack` / README 复核。
 
 ## 错误记录
@@ -74,3 +75,9 @@
 - document/voice/video 路由到明确指引；未授权 photo/media 也发 allow 提示。
 - downloads 单测：50MB 常量 + seam 缺失降级。
 - README 平台限制同步。
+
+## Round 9 已完成
+
+- `describeCredentials` 批量 ≤64 refs（去重 + POSIX 校验）；/credential 与文案同步。
+- `describeHost` version 参数：Host 卡显示插件 0.2.0。
+- 新增 credentials.test.mjs（3 例）+ host 版本断言。

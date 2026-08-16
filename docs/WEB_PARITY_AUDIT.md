@@ -77,7 +77,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | subagent.history | 详情 History | 🟡 | 复用通用 history，缺分页/projections/tool view |
 | subagent.prompt | 详情 Prompt → 回复文本 | 🟡 | 已做 continuable 校验（非 continuable 只读 history）；仍缺时区、AbortSignal |
 | subagent.interrupt | 详情 Interrupt | ✅ | 仅 continuable 显示；二次确认；错误纯文本 |
-| host.describe | Host 卡 | 🟡 | `version` 写死 `0.0.1`；provider/model 取第一个 agent，不是宿主默认 seam |
+| host.describe | Host 卡 | 🟡 | `version` 已显示 dsh-telegram 版本（0.2.0）；provider/model 仍取第一个 live agent，不是宿主默认 seam |
 | host.pickDirectory | /pickdir、Project 选择器 | ✅ | 平台限制下用路径式选择代替原生对话框；无参数时给提示并打开 Project 卡 |
 | host.listDirectory | /ls（文本）、Host 卡 `Browse cwd` 逐级浏览 | ✅ | 点击文件夹进入、Up/~// 导航、目录 20/页、文件只计数；`/ls` 保留文本形式 |
 | host.createDirectory | /mkdir | 🟡 | 只接受完整路径；web 语义是 parent+name；没有浏览卡里“New folder”按钮 |
@@ -104,7 +104,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | settings.update | /settingsupdate `<ns> <json>` | 🟡 | 无按钮流、无 expectedRevision |
 | settings.replace | /settingsreplace `<ns> <json section>` | ✅ | 无按钮流、无 expectedRevision |
 | settings.mutate | /settingsmutate `<ns> <json ops>` | ✅ | 无按钮流、无 expectedRevision |
-| credentials.describe | /credential `<REF>` | 🟡 | web 接受 `refs[]` 批量查询；TG 只能一次一个；卡上没有可点选的 ref 列表 |
+| credentials.describe | /credential `<REF> [REF...]` | ✅ | 批量查询（≤64 ref、去重、校验）与 web `refs[]` 语义一致；无枚举 seam，所以卡上仍无 ref 列表（web 同样不枚举） |
 | credentials.set | /credentialset `<REF> <value>` | 🟡 | 命令原消息在 500ms 后自动删除，值不回显；Telegram 服务端短期缓存仍非本项目可控 |
 | credentials.unset | /credentialunset `<REF>` | ✅ | |
 | llm.providers | Models 卡（间接） | 🟡 | 缺 `settingsNs` / `settingsPath` / `active` / `declared` 展示；没有单独 Providers 卡 |
@@ -322,6 +322,7 @@ Map<chatId, {
 - [x] Subagents 卡/详情补 web 字段（mode/label/hasChildren/reason）；Prompt/Interrupt 只对 continuable 子代理开放。
 - [x] document/voice/video 入站不再静默丢弃：transport/router 提取并白名单检查后回明确指引；未授权媒体也会收到 allow 提示。
 - [x] downloads 单测（50MB 常量 + seam 缺失降级指引）。
+- [x] credentials.describe 支持批量 refs（≤64、去重、POSIX 校验）；Host 卡显示真实 bridge version。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。
