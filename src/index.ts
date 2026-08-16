@@ -768,20 +768,36 @@ async function openQueueCard(chatId: number): Promise<void> {
   const snapshot = statusSnapshot(ctx, boundAgentId(chatId), false);
   const items = agent ? listQueue(ctx, agent.id) : [];
   const lines = [`\u231B Queue`, "", `Agent inbox: ${snapshot.queue} \u00B7 Outbound sends pending: ${state.transport?.pending() ?? 0}`, ""];
-  for (const item of items.slice(0, 12)) {
-    lines.push(`\u2022 ${item.target === "next-turn" ? "turn" : "step"} [${item.itemId.slice(0, 8)}] ${plain(truncate(item.text, 40))}`);
-  }
+  items.slice(0, 12).forEach((item, index) => {
+    const kind = item.target === "next-turn" ? "turn" : "step";
+    const preview = item.text.trim().replace(/\s+/g, " ") || "(no text)";
+    lines.push(`#${index + 1} \u00B7 ${kind} \u00B7 ${plain(truncate(preview, 60))}`);
+  });
   if (items.length === 0) {
     lines.push("(nothing pending)", "", "\u{1F4A1} \u8FDE\u7EED\u53D1\u4E24\u6761\u6D88\u606F\uFF0C\u7B2C\u4E8C\u6761\u4F1A\u6392\u961F\uFF0C\u6BCF\u6761\u90FD\u6709 \u270F/\u{1F5D1}/\u26A1 \u6309\u94AE\u3002");
   } else {
     lines.push("", "\u270F \u7F16\u8F91 \u00B7 \u{1F5D1} \u5220\u9664 \u00B7 \u26A1 \u7ACB\u5373\u6267\u884C(\u4EC5 next-turn) \u2014 \u6309\u4E0B\u65B9\u6309\u94AE\u64CD\u4F5C");
   }
-  await openCard(chatId, lines.join("\n"), buildQueueKeyboard(items.map((item) => ({ itemId: item.itemId, kind: item.target }))));
+  await openCard(
+    chatId,
+    lines.join("\n"),
+    buildQueueKeyboard(items.map((item, index) => ({ itemId: item.itemId, kind: item.target, index }))),
+  );
 }
 
 async function openWorkspacesCard(chatId: number): Promise<void> {
-  const { items, archivedSessionIds } = listWorkspaces(requireCtx());
+  let items: { workspaceId: string; path: string; title: string; sessionIds: string[]; createdAt?: number; updatedAt?: number }[] = [];
+  let archivedSessionIds: string[] = [];
+  let error = "";
+  try {
+    const listed = listWorkspaces(requireCtx());
+    items = listed.items;
+    archivedSessionIds = listed.archivedSessionIds;
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
   const lines = [`\u{1F5C2} Workspaces (${items.length})`, ""];
+  if (error !== "") lines.push(`\u26A0\uFE0F ${plain(truncate(error, 80))}`, "");
   for (const workspace of items.slice(0, 15)) {
     lines.push(`\u2022 ${plain(truncate(workspace.title, 28))} \u00B7 ${plain(truncate(workspace.path, 24))}`);
     lines.push(`  sessions: ${workspace.sessionIds.length} \u00B7 id: ${plain(truncate(workspace.workspaceId, 20))}`);
@@ -824,6 +840,7 @@ async function openProjectCard(chatId: number, target?: string, offset = 0): Pro
       up: path === "/" ? undefined : token({ action: "project-up", path }),
       home: path === homedir() ? undefined : token({ action: "project-open", path: homedir() }),
       root: path === "/" ? undefined : token({ action: "project-open", path: "/" }),
+      menu: "m:back",
       close: "m:close",
       quick,
   };
@@ -1664,7 +1681,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
         return openSessionsCard(chatId);
       }
       const items = listQueue(requireCtx(), id);
-      await openCard(chatId, `\u231B Queue \u00B7 ${plain(truncate(id, 24))} (${items.length})`, buildQueueKeyboard(items.map((item) => ({ itemId: item.itemId, kind: item.target }))));
+      await openCard(chatId, `\u231B Queue \u00B7 ${plain(truncate(id, 24))} (${items.length})`, buildQueueKeyboard(items.map((item, index) => ({ itemId: item.itemId, kind: item.target, index }))));
       return;
     }
     return openSessionDetailCard(chatId, id);
@@ -1714,8 +1731,11 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     }
     let res;
     if (kind === "e") {
-      pendingQueueEdit = { chatId, itemId };
-      await requireTransport().sendText(chatId, `\u270F Edit queued item ${itemId.slice(0, 8)} \u2014 send the new text now (or /cancel).`, { parse_mode: "HTML" });
+      const queued = listQueue(requireCtx(), agent.id);
+      const position = queued.findIndex((entry) => entry.itemId === itemId);
+      const label = position >= 0 ? `#${position + 1}` : itemId.slice(0, 8);
+      pendingQueueEdit = { chatId, itemId, label };
+      await requireTransport().sendText(chatId, `\u270F Edit queued item ${label} \u2014 send the new text now (or /cancel).`, { parse_mode: "HTML" });
       return;
     }
     if (kind === "r") res = updateQueueItem(requireCtx(), agent.id, itemId, { kind: "remove" });
@@ -1869,7 +1889,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
 }
 
 let pendingRename: { chatId: number; sessionId: string } | undefined;
-let pendingQueueEdit: { chatId: number; itemId: string } | undefined;
+let pendingQueueEdit: { chatId: number; itemId: string; label: string } | undefined;
 /** Chats whose first touch was `/start` while unauthorized: once they tap
  * Allow, replay the welcome instead of making them resend the command. */
 const pendingStartAfterAllow = new Set<number>();
@@ -1890,7 +1910,6 @@ const TELEGRAM_COMMANDS = [
   { command: "status", description: "Live status card" },
   { command: "queue", description: "Inspect or edit the agent inbox" },
   { command: "sessions", description: "Sessions list" },
-  { command: "search", description: "Search session history" },
   { command: "history", description: "Read session history" },
   { command: "rename", description: "Rename the current session" },
   { command: "fork", description: "Fork the current session" },
@@ -1998,7 +2017,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
         [
           "Commands:",
           "/new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /menu",
-          "/history [sessionId] [limit] \u00B7 /search <query> \u00B7 /rename <title> \u00B7 /fork [atSeq] \u00B7 /use <sessionId> \u00B7 /archive <sessionId>",
+          "/history [sessionId] [limit] \u00B7 /rename <title> \u00B7 /fork [atSeq] \u00B7 /use <sessionId> \u00B7 /archive <sessionId>",
           "/queue \u00B7 /queueedit <itemId> <text> \u00B7 /steer <text> \u00B7 /cancel",
           "/goalcreate <objective> [maxRounds] \u00B7 /goaledit <text>",
           "/workspacecreate <path> [title] \u00B7 /workspacepin <workspaceId> <sessionId> [beforeSessionId]",
@@ -2886,7 +2905,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           return;
         }
         if (pendingQueueEdit && pendingQueueEdit.chatId === chatId) {
-          const { itemId } = pendingQueueEdit;
+          const { itemId, label } = pendingQueueEdit;
           pendingQueueEdit = undefined;
           const queueAgent = currentAgent(chatId);
           if (!queueAgent) {
@@ -2894,7 +2913,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
             return;
           }
           const editRes = updateQueueItem(requireCtx(), queueAgent.id, itemId, { kind: "edit", content: text });
-          void state.transport?.sendText(chatId, editRes.ok ? plain(editRes.text) : `\u274C ${plain(editRes.text)}`, { parse_mode: "HTML" });
+          void state.transport?.sendText(chatId, editRes.ok ? `${plain(editRes.text)} \u00B7 queued item ${label}` : `\u274C ${plain(editRes.text)}`, { parse_mode: "HTML" });
           refreshAllPanels();
           scheduleBarSync(chatId, 0);
           void openQueueCard(chatId);

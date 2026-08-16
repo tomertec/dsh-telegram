@@ -173,3 +173,7 @@
 
 - main + v0.3.0-rc.1 tag 已推送 GitHub；pre-release 已创建并附 tgz。
 - 真实 npm publish 未执行：本机无 npm 登录凭据；用户选择暂不发布 npm。
+
+## Round 25 追加：用户实机 UX 反馈
+
+- Workspaces 卡缺字段防抖、Project 增加 Menu 返回、Queue 条目编号+预览、移除 Sessions Search 按钮。

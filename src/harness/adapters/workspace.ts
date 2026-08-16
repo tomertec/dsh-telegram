@@ -46,7 +46,9 @@ function view(workspace: WorkspaceLike): WorkspaceView {
     workspaceId: workspace.id,
     path: workspace.path,
     title: workspace.title,
-    sessionIds: [...workspace.sessionIds],
+    // Older/alternate registry entries may omit the list; a card render must
+    // never dead-button because of a missing field.
+    sessionIds: Array.isArray(workspace.sessionIds) ? [...workspace.sessionIds] : [],
     ...(workspace.createdAt === undefined ? {} : { createdAt: workspace.createdAt }),
     ...(workspace.updatedAt === undefined ? {} : { updatedAt: workspace.updatedAt }),
   };
@@ -56,7 +58,8 @@ function view(workspace: WorkspaceLike): WorkspaceView {
 export function listWorkspaces(ctx: Context): { items: WorkspaceView[]; archivedSessionIds: string[] } {
   const registry = registryOf(ctx);
   if (!registry) return { items: [], archivedSessionIds: [] };
-  return { items: registry.list().map(view), archivedSessionIds: [...registry.archivedSessionIds].map(String) };
+  const archived = Array.isArray(registry.archivedSessionIds) ? registry.archivedSessionIds : [];
+  return { items: registry.list().map(view), archivedSessionIds: archived.map(String) };
 }
 
 export async function createWorkspace(ctx: Context, path: string, title?: string): Promise<AdapterResult & { workspace?: WorkspaceView }> {

@@ -19,11 +19,12 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 ### Human-friendly Telegram UX
 
 - Clickable Host directory browser (`Browse cwd`) with Up/Home/Root and 20-dir paging.
-- Sessions card sorted by latest prompt, 10/page; History `Load older`.
-- Models provider card 12/page; Plugins 20/page; Jobs 20/page; Search results 10/page.
+- Sessions card sorted by latest prompt, 10/page; History `Load older`; no search clutter.
+- Models provider card 12/page; Plugins 20/page; Jobs 20/page.
 - Confirm-before-destructive for session/workspace delete, preset remove, subagent interrupt.
 - Approval/question settlements edit the original card in place and remove its dead buttons.
 - A first `/start` from an unauthorized chat replays the welcome automatically after the Allow tap.
+- Project browser has an explicit `☰ Menu` return; Queue items are numbered with text previews.
 - Preset copy asks for a custom id; `/goaledit` supports maxGoalRounds.
 - Skills card is session-scoped and user-invocable-only; subagent cards show mode/label/hasChildren/reason.
 - `/attachment <id>` reads a photo back through its exact durable ref and sends it as a Telegram photo.
@@ -50,7 +51,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 ### Tests
 
-- `npm run check`: 227/227 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
+- `npm run check`: 228/228 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
 - ESM smoke imports for `dist/index.js`, `dist/extensions/openclaw.js`, `dist/extensions/reasoning.js`.
 
 ## 0.2.0

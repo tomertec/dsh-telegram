@@ -199,6 +199,7 @@ export interface ProjectActions {
   root?: string;
   use?: string;
   close?: string;
+  menu?: string;
   newFolder?: string;
   quick?: readonly ProjectRow[];
   paging?: readonly { text: string; cb: string }[];
@@ -233,6 +234,7 @@ export function buildProjectKeyboard(dirs: readonly ProjectRow[], actions: Proje
   }
   if (paging.length > 0) rows.push(paging);
   if (actions.newFolder !== undefined) rows.push([{ text: "\u{1F4C1} New folder", callback_data: actions.newFolder }]);
+  if (actions.menu !== undefined) rows.push([{ text: "\u2630 Menu", callback_data: actions.menu }]);
   const footer: { text: string; callback_data: string }[] = [];
   if (actions.use !== undefined) footer.push({ text: "\u2705 Use this folder", callback_data: actions.use });
   if (actions.close !== undefined) footer.push({ text: "\u2716 Close", callback_data: actions.close });
@@ -283,7 +285,6 @@ export function buildSearchKeyboard(ids: readonly string[], paging?: SessionsPag
 export function buildSessionsKeyboard(ids: readonly string[], paging?: SessionsPaging): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [
     [{ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" }],
-    [{ text: "\u{1F50D} Search", callback_data: "m:search" }],
   ];
   for (const id of ids.slice(0, 10)) {
     rows.push([{ text: `\u{1F9ED} ${id.slice(0, 30)}`, callback_data: `s:${id}`.slice(0, 64) }]);
@@ -334,15 +335,23 @@ export function buildWorkspaceDetailKeyboard(id: string): InlineKeyboard {
   return kb.row().text("\u2190 Workspaces", "m:workspaces");
 }
 
-export function buildQueueKeyboard(items: readonly { itemId: string; kind: "next-turn" | "next-step" }[]): InlineKeyboard {
+export interface QueueRow {
+  itemId: string;
+  kind: "next-turn" | "next-step";
+  /** 0-based position in the combined inbox list; rendered as `#1`, `#2`, … */
+  index?: number;
+}
+
+export function buildQueueKeyboard(items: readonly QueueRow[]): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [];
   for (const item of items.slice(0, 24)) {
     const prefix = `q:${item.itemId}`.slice(0, 52);
+    const label = item.index === undefined ? item.itemId.slice(0, 8) : `#${item.index + 1}`;
     const row: { text: string; callback_data: string }[] = [
-      { text: `\u270F ${item.itemId.slice(0, 8)}`, callback_data: `${prefix}:e`.slice(0, 64) },
-      { text: `\u{1F5D1} ${item.itemId.slice(0, 8)}`, callback_data: `${prefix}:r`.slice(0, 64) },
+      { text: `\u270F ${label}`, callback_data: `${prefix}:e`.slice(0, 64) },
+      { text: `\u{1F5D1} ${label}`, callback_data: `${prefix}:r`.slice(0, 64) },
     ];
-    if (item.kind === "next-turn") row.push({ text: `\u26A1 ${item.itemId.slice(0, 8)}`, callback_data: `${prefix}:s`.slice(0, 64) });
+    if (item.kind === "next-turn") row.push({ text: `\u26A1 ${label}`, callback_data: `${prefix}:s`.slice(0, 64) });
     rows.push(row);
   }
   rows.push([{ text: "\u2190 Back", callback_data: "m:back" }]);

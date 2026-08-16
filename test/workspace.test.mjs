@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensurePiDir, findWorkspaceRoot, hasWorkspaceRoot, piDir } from '../dist/workspace.js';
+import { listWorkspaces } from '../dist/harness/adapters/workspace.js';
 
 test('findWorkspaceRoot walks up to the nearest .pi ancestor', () => {
   const base = mkdtempSync(join(tmpdir(), 'dsh-telegram-ws-'));
@@ -44,4 +45,16 @@ test('ensurePiDir creates the marker directory', () => {
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('listWorkspaces tolerates registry entries missing optional fields', () => {
+  const registry = {
+    list: () => [{ id: 'w1', path: '/tmp/w1', title: 'One' }],
+    archivedSessionIds: undefined,
+  };
+  const ctx = { get: (name) => (name === 'workspaceRegistry' ? registry : undefined) };
+  const listed = listWorkspaces(ctx);
+  assert.equal(listed.items.length, 1);
+  assert.deepEqual(listed.items[0].sessionIds, []);
+  assert.deepEqual(listed.archivedSessionIds, []);
 });

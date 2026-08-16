@@ -14,7 +14,7 @@
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
   <img alt="Version" src="https://img.shields.io/badge/version-0.3.0-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-227%2F227%20green-2ea44f" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-228%2F228%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
 </p>
 
@@ -165,7 +165,7 @@ Telegram ⇄ grammY long polling ⇄ per-chat FIFO router
 
 `/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
 
-Plus `/history [id] [limit]`, `/search <query>`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/queueedit <itemId> <text>`, `/steer <text>`, `/cancel`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/settingsreplace <ns> <json>`, `/settingsmutate <ns> <json-ops>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/openpath [path]`, `/pickdir [path]`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
+Plus `/history [id] [limit]`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/queueedit <itemId> <text>`, `/steer <text>`, `/cancel`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/settingsreplace <ns> <json>`, `/settingsmutate <ns> <json-ops>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/openpath [path]`, `/pickdir [path]`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
 
 ## How It Works
 
@@ -181,7 +181,7 @@ A turn's full lifecycle:
 ## Tests
 
 ```bash
-npm run check          # tsc build + node --test: 227/227 green
+npm run check          # tsc build + node --test: 228/228 green
 npm audit --omit=dev   # 0 vulnerabilities
 npm pack --dry-run     # publish payload: dist + README + README.zh + CHANGELOG + LICENSE
 ```

@@ -18,20 +18,21 @@ test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Pr
   assert.equal(bar.resize_keyboard, true);
 });
 
-test('queue card renders real edit/delete/steer buttons per item', () => {
+test('queue card renders numbered edit/delete/steer buttons per item', () => {
   const kb = buildQueueKeyboard([
-    { itemId: 'item-a', kind: 'next-turn' },
-    { itemId: 'item-b', kind: 'next-step' },
+    { itemId: 'item-a', kind: 'next-turn', index: 0 },
+    { itemId: 'item-b', kind: 'next-step', index: 1 },
   ]);
   const rows = kb.inline_keyboard;
   assert.equal(rows.length, 3);
-  assert.ok(rows[0][0].text.startsWith('\u270F'));
+  assert.ok(rows[0][0].text.startsWith('\u270F #1'));
   assert.equal(rows[0][0].callback_data, 'q:item-a:e');
-  assert.ok(rows[0][1].text.startsWith('\u{1F5D1}'));
+  assert.ok(rows[0][1].text.startsWith('\u{1F5D1} #1'));
   assert.equal(rows[0][1].callback_data, 'q:item-a:r');
-  assert.ok(rows[0][2].text.startsWith('\u26A1'));
+  assert.ok(rows[0][2].text.startsWith('\u26A1 #1'));
   assert.equal(rows[0][2].callback_data, 'q:item-a:s');
   assert.equal(rows[1].length, 2);
+  assert.ok(rows[1][0].text.startsWith('\u270F #2'));
   assert.equal(rows[1][0].callback_data, 'q:item-b:e');
   assert.equal(rows[1][1].callback_data, 'q:item-b:r');
   assert.deepEqual(rows[2].map((b) => b.callback_data), ['m:back']);
@@ -170,6 +171,7 @@ test('buildSessionsKeyboard paginates ids and adds nav callbacks', () => {
   const ids = Array.from({ length: 25 }, (_, i) => `session-${i}`);
   const first = buildSessionsKeyboard(ids, { next: 't:next' });
   assert.equal(first.inline_keyboard.filter((row) => row.some((b) => b.text.startsWith('🧭'))).length, 10);
+  assert.equal(first.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:search')), false, 'the Sessions card no longer advertises search');
   const nav = first.inline_keyboard.find((row) => row.some((b) => b.callback_data === 't:next'));
   assert.ok(nav);
   const last = buildSessionsKeyboard(ids.slice(10), { previous: 't:prev', next: 't:next2' });
@@ -219,9 +221,10 @@ test('buildSubagentDetailKeyboard hides prompt/interrupt for non-continuable chi
   assert.ok(full.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:i')));
 });
 
-test('buildProjectKeyboard renders a New folder action when provided', () => {
-  const kb = buildProjectKeyboard([], { newFolder: 't:mkdir', close: 'm:host' });
+test('buildProjectKeyboard renders a New folder action and a Menu return', () => {
+  const kb = buildProjectKeyboard([], { newFolder: 't:mkdir', menu: 'm:back', close: 'm:host' });
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:mkdir')));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:back' && b.text === '☰ Menu')));
   const without = buildProjectKeyboard([], { close: 'm:host' });
   assert.equal(without.inline_keyboard.some((row) => row.some((b) => b.text === '📁 New folder')), false);
 });

@@ -960,3 +960,26 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - `npm publish --dry-run` 通过；真实 npm publish 需要机器上的 npm 登录
   （`npm whoami` → need auth）。用户已明确选择「暂不发布 npm」，以 GitHub
   pre-release v0.3.0-rc.1（含 tgz）作为当前交付物。
+
+## 42. Round 25 追加：按用户实机反馈的 UX 修正（2026-08-19，228/228）
+
+### 用户反馈与修复
+
+1. **Menu 里的 Workspaces 点不开** — 根因：workspace registry 条目可能缺 `sessionIds` /
+   `archivedSessionIds` 可选字段，`listWorkspaces` 展开时抛错，卡片被 dispatch 的 catch 吞掉。
+   - adapter 对缺失字段做空数组降级；
+   - `openWorkspacesCard` 增加 try/catch，即使 registry 抛错也展示可读错误卡与 Create/Back。
+2. **进入 Project 后回不了 Menu** — Project 卡只有 `✖ Close`。新增独立 `☰ Menu` 按钮（`m:back`），
+   Up/Home/Root 与目录浏览保持不变。
+3. **Queue 条目标识混乱** — 卡片文本原来是 `turn [f64f7aa1]`，按钮也是 hash 前 8 位。
+   - 列表改为 `#1 · turn · <文本预览 60 字>`；
+   - 按钮改为 `✏ #1` / `🗑 #1` / `⚡ #1`；
+   - 编辑提示与完成回执也带 `#N`（`pendingQueueEdit.label`）。
+4. **Sessions 的 Search 完全没必要** — Sessions 卡移除 Search 按钮；`/search` 不再注册到
+   Telegram 命令菜单与 `/help`，README 命令列表同步移除（旧卡片的 search 回调仍兼容）。
+
+### 测试
+
+- keyboard 单测更新：queue 编号按钮、Sessions 无 Search、Project 有 Menu 返回。
+- workspace 单测新增：registry 条目缺可选字段不抛错。
+- `npm run check`：**228/228 pass**。
