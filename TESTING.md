@@ -1041,3 +1041,18 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 ### 测试
 
 - `npm run check`：**229/229 pass**（新增 ForceReply helper 测试、更新 Queue 按钮测试）。
+
+## 45. Round 2（交互逻辑迭代）：菜单导航收口（2026-08-19，229/229）
+
+### 修复
+
+1. **移除菜单里假死的 `1/2` 页数按钮**：`buildMenuPage` 不再生成 `m:page` 无动作按钮，
+   页码信息保留在卡片头部，底部只剩真正可点的 Prev/More/Close。
+2. **Back 回到上次所在页**：`m:back` 之前固定回第 0 页；现在返回 `menuPageIndex` 记录页。
+   从第 2 页进入任一卡片后点 Back，会回到第 2 页而不是跳回第 1 页。
+3. 上轮已修：command/bar/callback/photo dispatch 真正 await（per-chat FIFO）。
+
+### 测试
+
+- 更新 `keyboard.test.mjs` 与 `menu.test.mjs`：断言没有页数假按钮、导航按钮组合正确。
+- `npm run check`：**229/229 pass**。

@@ -2,20 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildMenuPage } from '../dist/telegram/keyboard.js';
 
-test('menu page 1 shows More but no Prev', () => {
+test('menu page 1 shows More but no Prev and no dead page button', () => {
   const kb = buildMenuPage([{ label: 'A', cb: 'm:a' }, { label: 'B', cb: 'm:b' }], 0, 2);
   const texts = kb.inline_keyboard.flat().map((b) => b.text);
-  assert.ok(texts.includes('1/2'));
   assert.ok(texts.includes('More ➡️'));
   assert.ok(!texts.some((t) => t.startsWith('Prev')));
+  assert.ok(!texts.some((t) => /^\d+\/\d+$/.test(t)));
 });
 
 test('menu page 2 shows Prev but no More', () => {
   const kb = buildMenuPage([{ label: 'C', cb: 'm:c' }], 1, 2);
   const texts = kb.inline_keyboard.flat().map((b) => b.text);
-  assert.ok(texts.includes('2/2'));
   assert.ok(texts.some((t) => t.includes('Prev')));
   assert.ok(!texts.some((t) => t.includes('More')));
+  assert.ok(!texts.some((t) => /^\d+\/\d+$/.test(t)));
 });
 
 test('full-width items occupy their own row', () => {

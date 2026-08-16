@@ -167,7 +167,8 @@ export function buildMenuPage(items: readonly MenuItem[], page: number, total: n
   flush();
   const nav: { text: string; cb: string }[] = [];
   if (page > 0) nav.push({ text: "\u2B05\uFE0F Prev", cb: "m:prev" });
-  nav.push({ text: `${page + 1}/${total}`, cb: "m:page" });
+  // The header already carries `page X/Y`; a tappable page-number button is a
+  // dead-looking control, so it is deliberately omitted.
   if (page < total - 1) nav.push({ text: "More \u27A1\uFE0F", cb: "m:more" });
   if (nav.length > 0) {
     rows.push(nav.map((button) => ({ text: button.text, callback_data: button.cb })));

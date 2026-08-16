@@ -186,3 +186,8 @@
 
 - router 对 command/bar/callback/photo 的 dispatch 未 await（fire-and-forget），已修复为真正 FIFO。
 - Queue 编辑改为删除+ForceReply 重发；所有回复式输入用 ForceReply；/start 设置官方 MenuButtonCommands。
+
+## 交互逻辑 Round 2
+
+- buildMenuPage 的 m:page 页数按钮是无动作按钮，点击只有 spinner；已移除。
+- m:back 固定回第 0 页不符合直觉；改为回到 menuPageIndex 记录的上一页。

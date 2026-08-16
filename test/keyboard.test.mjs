@@ -81,18 +81,18 @@ test('menu page renders full rows, pairs, nav, and close', () => {
   assert.deepEqual(rows[0].map((b) => b.callback_data), ['m:new']);
   assert.equal(rows[1].length, 2);
   assert.deepEqual(rows[1].map((b) => b.callback_data), ['m:queue', 'm:goals']);
-  assert.deepEqual(rows[2].map((b) => b.callback_data), ['m:page', 'm:more']);
+  assert.deepEqual(rows[2].map((b) => b.callback_data), ['m:more']);
   assert.deepEqual(rows[3].map((b) => b.callback_data), ['m:close']);
 });
 
 test('menu page nav adapts to first, middle, and last pages', () => {
   const items = [{ label: 'x', cb: 'm:x' }];
   const first = buildMenuPage(items, 0, 4).inline_keyboard;
-  assert.deepEqual(first[1].map((b) => b.callback_data), ['m:page', 'm:more']);
+  assert.deepEqual(first[1].map((b) => b.callback_data), ['m:more']);
   const middle = buildMenuPage(items, 1, 4).inline_keyboard;
-  assert.deepEqual(middle[1].map((b) => b.callback_data), ['m:prev', 'm:page', 'm:more']);
+  assert.deepEqual(middle[1].map((b) => b.callback_data), ['m:prev', 'm:more']);
   const last = buildMenuPage(items, 3, 4).inline_keyboard;
-  assert.deepEqual(last[1].map((b) => b.callback_data), ['m:prev', 'm:page']);
+  assert.deepEqual(last[1].map((b) => b.callback_data), ['m:prev']);
 });
 
 test('back keyboard is a single m:back row', () => {

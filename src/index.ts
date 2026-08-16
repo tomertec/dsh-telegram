@@ -1844,7 +1844,9 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       await ephemeral.clear(chatId, requireTransport());
       return;
     case "back":
-      return openMenuAt(chatId, 0);
+      // Return to the menu page the user was last on (Back from page 2 must
+      // not yank them back to page 1).
+      return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
     case "more":
       return openMenuAt(chatId, (menuPageIndex.get(chatId) ?? 0) + 1);
     case "prev":
