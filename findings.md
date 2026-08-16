@@ -181,3 +181,8 @@
 ## Round 25 追加：workspace/preset/status 对齐
 
 - Workspaces 全卡防死；Presets/Workspaces/Sessions 卡片在 web 侧事件后原地重读；Status 增加 router/subagents/jobs 计数。
+
+## 交互逻辑迭代 Round 1
+
+- router 对 command/bar/callback/photo 的 dispatch 未 await（fire-and-forget），已修复为真正 FIFO。
+- Queue 编辑改为删除+ForceReply 重发；所有回复式输入用 ForceReply；/start 设置官方 MenuButtonCommands。

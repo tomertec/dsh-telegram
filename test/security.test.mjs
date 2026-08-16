@@ -36,6 +36,7 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
   const originalEditText = TelegramTransport.prototype.editText;
   const originalDeleteMessage = TelegramTransport.prototype.deleteMessage;
   const originalSetCommands = TelegramTransport.prototype.setCommands;
+  const originalSetMenuButton = TelegramTransport.prototype.setMenuButtonToCommands;
   TelegramTransport.prototype.setHandlers = function (value) {
     handlers = value;
     return originalSetHandlers.call(this, value);
@@ -47,6 +48,7 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
   TelegramTransport.prototype.editText = async () => true;
   TelegramTransport.prototype.deleteMessage = async () => {};
   TelegramTransport.prototype.setCommands = async () => {};
+  TelegramTransport.prototype.setMenuButtonToCommands = async () => {};
 
   try {
     mkdirSync(join(base, '.pi'));
@@ -111,6 +113,7 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
     TelegramTransport.prototype.editText = originalEditText;
     TelegramTransport.prototype.deleteMessage = originalDeleteMessage;
     TelegramTransport.prototype.setCommands = originalSetCommands;
+    TelegramTransport.prototype.setMenuButtonToCommands = originalSetMenuButton;
     rmSync(base, { recursive: true, force: true });
   }
 });

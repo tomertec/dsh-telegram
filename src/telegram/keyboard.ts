@@ -342,16 +342,26 @@ export interface QueueRow {
   index?: number;
 }
 
+/** ForceReply keyboard for step-by-step text prompts: Telegram opens the
+ * reply input automatically, which is much friendlier on a phone than asking
+ * the user to find and quote a message manually. */
+export function inputPromptKeyboard(placeholder: string): { force_reply: true; input_field_placeholder: string } {
+  return { force_reply: true, input_field_placeholder: placeholder.slice(0, 64) };
+}
+
 export function buildQueueKeyboard(items: readonly QueueRow[]): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [];
   for (const item of items.slice(0, 24)) {
     const prefix = `q:${item.itemId}`.slice(0, 52);
     const label = item.index === undefined ? item.itemId.slice(0, 8) : `#${item.index + 1}`;
+    const kind = item.kind === "next-turn" ? "turn" : "step";
+    // Editing text on a phone is the worst part of the queue UX. Instead of
+    // asking for a reply-edited replacement, this card only offers delete
+    // (then resend your message) and, for next-turn items, run-now.
     const row: { text: string; callback_data: string }[] = [
-      { text: `\u270F ${label}`, callback_data: `${prefix}:e`.slice(0, 64) },
-      { text: `\u{1F5D1} ${label}`, callback_data: `${prefix}:r`.slice(0, 64) },
+      { text: `\u{1F5D1} Delete ${label} \u00B7 ${kind}`, callback_data: `${prefix}:r`.slice(0, 64) },
     ];
-    if (item.kind === "next-turn") row.push({ text: `\u26A1 ${label}`, callback_data: `${prefix}:s`.slice(0, 64) });
+    if (item.kind === "next-turn") row.push({ text: `\u26A1 Run ${label} now`, callback_data: `${prefix}:s`.slice(0, 64) });
     rows.push(row);
   }
   rows.push([{ text: "\u2190 Back", callback_data: "m:back" }]);

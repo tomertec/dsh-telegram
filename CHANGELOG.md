@@ -25,6 +25,8 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Approval/question settlements edit the original card in place and remove its dead buttons.
 - A first `/start` from an unauthorized chat replays the welcome automatically after the Allow tap.
 - Project browser has an explicit `☰ Menu` return; Queue items are numbered with text previews.
+- Queue actions are delete-and-resend (`🗑 Delete #N`) or `⚡ Run #N now` — no inline text editing.
+- Step-by-step text prompts use Telegram ForceReply (input opens automatically); `/start` sets the official MenuButtonCommands.
 - Presets/Workspaces/Sessions cards re-read their data in place when web-side settings/plugin events fire.
 - Status card mirrors the web top bar: `router-<preset>`, subagent count, and running background jobs.
 - Assistant replies stay clean: no 👍/👎/📋 feedback keyboard is attached (web feedback adapters remain for parity).
@@ -40,6 +42,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 - Agent-tool `telegram_send`/`telegram_broadcast` targets are restricted to the allowed roster.
 - Callback chat id reads the Bot API shape (`callback_query.message.chat`).
+- Router dispatch promises are awaited, so command/bar-button/callback/photo handling is truly per-chat FIFO (no concurrent tap races).
 - Malformed assistant events cannot throw the bridge listener; openclaw timers cancel on new turns.
 - State-change panel refresh is forwarded exactly once and failures log the real `message + stack`.
 - Long messages are split HTML-aware: never inside a tag or entity, with tags rebalanced per part.
@@ -54,7 +57,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 ### Tests
 
-- `npm run check`: 228/228 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
+- `npm run check`: 229/228 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
 - ESM smoke imports for `dist/index.js`, `dist/extensions/openclaw.js`, `dist/extensions/reasoning.js`.
 
 ## 0.2.0

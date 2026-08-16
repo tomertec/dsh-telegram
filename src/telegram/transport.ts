@@ -289,6 +289,16 @@ export class TelegramTransport {
     await this.api.setMyCommands(commands).catch((err) => this.log("setMyCommands failed", err));
   }
 
+  /** Telegram's native menu button (next to the input field) opens the bot
+   * command list in supported clients — a second, official entry point that
+   * does not depend on the persistent reply-keyboard bar. */
+  async setMenuButtonToCommands(chatId: number): Promise<void> {
+    await withTimeout(
+      this.api.setChatMenuButton({ chat_id: chatId, menu_button: { type: "commands" } } as never),
+      20_000,
+    ).catch((err) => this.log("setChatMenuButton failed", err));
+  }
+
   sendText(chatId: number, text: string, options: SendOptions = {}): Promise<number | undefined> {
     const parts = splitText(text, this.maxMessageLength);
     return this.queue.push(chatId, async () => {

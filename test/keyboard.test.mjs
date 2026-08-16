@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, decodeCallbackValue, encodedCallback, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, decodeCallbackValue, encodedCallback, inputPromptKeyboard, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -18,23 +18,21 @@ test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Pr
   assert.equal(bar.resize_keyboard, true);
 });
 
-test('queue card renders numbered edit/delete/steer buttons per item', () => {
+test('queue card offers delete/resend and run-now, never inline edit', () => {
   const kb = buildQueueKeyboard([
     { itemId: 'item-a', kind: 'next-turn', index: 0 },
     { itemId: 'item-b', kind: 'next-step', index: 1 },
   ]);
   const rows = kb.inline_keyboard;
   assert.equal(rows.length, 3);
-  assert.ok(rows[0][0].text.startsWith('\u270F #1'));
-  assert.equal(rows[0][0].callback_data, 'q:item-a:e');
-  assert.ok(rows[0][1].text.startsWith('\u{1F5D1} #1'));
-  assert.equal(rows[0][1].callback_data, 'q:item-a:r');
-  assert.ok(rows[0][2].text.startsWith('\u26A1 #1'));
-  assert.equal(rows[0][2].callback_data, 'q:item-a:s');
-  assert.equal(rows[1].length, 2);
-  assert.ok(rows[1][0].text.startsWith('\u270F #2'));
-  assert.equal(rows[1][0].callback_data, 'q:item-b:e');
-  assert.equal(rows[1][1].callback_data, 'q:item-b:r');
+  assert.ok(rows[0][0].text.startsWith('\u{1F5D1} Delete #1'));
+  assert.equal(rows[0][0].callback_data, 'q:item-a:r');
+  assert.ok(rows[0][1].text.startsWith('\u26A1 Run #1 now'));
+  assert.equal(rows[0][1].callback_data, 'q:item-a:s');
+  assert.equal(rows[1].length, 1);
+  assert.ok(rows[1][0].text.startsWith('\u{1F5D1} Delete #2'));
+  assert.equal(rows[1][0].callback_data, 'q:item-b:r');
+  assert.equal(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'q:item-a:e')), false);
   assert.deepEqual(rows[2].map((b) => b.callback_data), ['m:back']);
 });
 
@@ -249,4 +247,12 @@ test('encodedCallback keeps payloads within 64 bytes as valid percent-encoding',
   assert.ok(cb.startsWith('mo:'));
   assert.doesNotThrow(() => decodeCallbackValue(cb.slice(3)));
   assert.ok(decodeCallbackValue(cb.slice(3)).length > 0);
+});
+
+test('inputPromptKeyboard uses Telegram ForceReply with a placeholder', () => {
+  assert.deepEqual(inputPromptKeyboard('Send the corrected message\u2026'), {
+    force_reply: true,
+    input_field_placeholder: 'Send the corrected message\u2026',
+  });
+  assert.equal(inputPromptKeyboard('x'.repeat(100)).input_field_placeholder.length, 64);
 });

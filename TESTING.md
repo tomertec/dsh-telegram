@@ -1011,3 +1011,33 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 ### 验证
 
 - `npm run check`：**228/228 pass**（workspace 缺字段防抖等既有回归保持绿色）。
+
+## 44. Round 1（交互逻辑迭代）：Telegram 原生交互收口（2026-08-19，229/229）
+
+### 调研结论（core.telegram.org/bots/api）
+
+- 回调必须尽快 `answerCallbackQuery`（已在 transport 层最先应答）。
+- `editMessageText`/`editMessageReplyMarkup` 只应改卡片本身；不要为「编辑一条已排队消息」
+  做二次文本编辑，手机端改文字远不如删除重发。
+- `ForceReply`（`reply_markup: {force_reply, input_field_placeholder}`）会自动拉起回复输入框，
+  是官方推荐的 step-by-step 输入方式；`setChatMenuButton(commands)` 提供输入框旁的官方菜单按钮。
+
+### 修复
+
+1. **交互处理不再 fire-and-forget**：`onCommand`/`onBarButton`/`onCallback`/`onPhoto`
+   原来把 dispatch Promise `void` 掉，router 的 per-chat FIFO 实际上没有覆盖这些路径，
+   快速连续点按会并发执行（实机测试正是因此出现回调竞态）。
+   现在返回 Promise，命令/按钮/回调真正按 chat 串行；新增/调整 apply 集成测试覆盖。
+2. **Queue 编辑改为「删除 + 重发」**：
+   - 移除 `✏ 编辑` 按钮与 `pendingQueueEdit` 流程（`/queueedit` 不再出现在帮助/README）；
+   - 每项显示 `#N · turn/step · <文本预览>`，按钮为 `🗑 Delete #N · turn` 与
+     `⚡ Run #N now`（仅 next-turn）；
+   - 删除后立即发送 `ForceReply` 提示「发送更正后的消息即可重新入队」。
+3. **输入提示全面 ForceReply**：新建文件夹、subagent prompt、preset copy、rename、
+   steer、search 等回复式输入都用 `inputPromptKeyboard(placeholder)`，Telegram 自动拉起回复框。
+4. **官方菜单按钮**：`/start` 时调用 `setChatMenuButton(chat_id, MenuButtonCommands)`，
+   输入框旁出现官方 ☰ 命令菜单，不依赖常驻键盘栏。
+
+### 测试
+
+- `npm run check`：**229/229 pass**（新增 ForceReply helper 测试、更新 Queue 按钮测试）。

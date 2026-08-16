@@ -80,6 +80,7 @@ import {
   buildWorkspaceKeyboard,
   buildWorkspaceDetailKeyboard,
   buildQueueKeyboard,
+  inputPromptKeyboard,
   buildModelsKeyboard,
   buildModelDetailKeyboard,
   buildThinkingKeyboard,
@@ -197,7 +198,6 @@ function teardownMount(): void {
   state.context = null;
   pendingRename = undefined;
   pendingSubagentPrompt = undefined;
-  pendingQueueEdit = undefined;
   pendingSteer = undefined;
   pendingSearch = undefined;
   pendingPresetCopy = undefined;
@@ -1325,7 +1325,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "host-mkdir-prompt": {
       const path = payload["path"] ?? state.workspaceRoot;
       pendingMkdir = { chatId, path };
-      await requireTransport().sendText(chatId, `\u{1F4C1} Reply with the new folder name under ${plain(truncate(path, 48))} (or /cancel):`, { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, `\u{1F4C1} Reply with the new folder name under ${plain(truncate(path, 48))} (or /cancel):`, {
+        parse_mode: "HTML",
+        reply_markup: inputPromptKeyboard("New folder name\u2026"),
+      });
       return;
     }
     case "host-page": {
@@ -1407,7 +1410,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
         return openSubagentDetailCard(chatId, parentId, childId);
       }
       const t = requireTransport();
-      await t.sendText(chatId, "Reply with the prompt text:", { parse_mode: "HTML" });
+      await t.sendText(chatId, "Reply with the prompt text:", {
+        parse_mode: "HTML",
+        reply_markup: inputPromptKeyboard("Prompt for subagent\u2026"),
+      });
       pendingSubagentPrompt = { chatId, parentId, childId };
       return;
     }
@@ -1534,7 +1540,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "preset-copy": {
       const sourceId = payload["presetId"] ?? "";
       pendingPresetCopy = { chatId, sourceId };
-      await requireTransport().sendText(chatId, `\u{1F4CB} Reply with the new preset id for a copy of ${plain(truncate(sourceId, 32))} (or /cancel):`, { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, `\u{1F4CB} Reply with the new preset id for a copy of ${plain(truncate(sourceId, 32))} (or /cancel):`, {
+        parse_mode: "HTML",
+        reply_markup: inputPromptKeyboard("New preset id\u2026"),
+      });
       return;
     }
     case "preset-remove": {
@@ -1667,7 +1676,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     if (sub === "history") return openHistoryCard(chatId, id);
     if (sub === "rename") {
       const t = requireTransport();
-      await t.sendText(chatId, `/rename <title> \u2014 reply with just the title to rename ${plain(truncate(id, 24))}:`, { parse_mode: "HTML" });
+      await t.sendText(chatId, `/rename <title> \u2014 reply with just the title to rename ${plain(truncate(id, 24))}:`, {
+        parse_mode: "HTML",
+        reply_markup: inputPromptKeyboard("New session title\u2026"),
+      });
       pendingRename = { chatId, sessionId: id };
       return;
     }
@@ -1697,7 +1709,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     }
     if (sub === "steer") {
       pendingSteer = { chatId, sessionId: id };
-      await requireTransport().sendText(chatId, `\u{1F3AF} Steer ${plain(truncate(id, 24))} \u2014 send the steer text:`, { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, `\u{1F3AF} Steer ${plain(truncate(id, 24))} \u2014 send the steer text:`, {
+        parse_mode: "HTML",
+        reply_markup: inputPromptKeyboard("Steer text\u2026"),
+      });
       return;
     }
     if (sub === "log") {
@@ -1765,24 +1780,40 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       await requireTransport().sendText(chatId, "\u274C No live agent owns the queue.", { parse_mode: "HTML" });
       return openQueueCard(chatId);
     }
-    let res;
     if (kind === "e") {
+      // Legacy edit button from an older card: the edit flow is gone. Point
+      // the user at the delete-and-resend path instead of half-editing text.
+      await requireTransport().sendText(
+        chatId,
+        "\u270F Inline queue editing was removed \u2014 use \u{1F5D1} Delete, then send your message again.",
+        { parse_mode: "HTML" },
+      );
+      return openQueueCard(chatId);
+    }
+    if (kind === "r") {
       const queued = listQueue(requireCtx(), agent.id);
       const position = queued.findIndex((entry) => entry.itemId === itemId);
       const label = position >= 0 ? `#${position + 1}` : itemId.slice(0, 8);
-      pendingQueueEdit = { chatId, itemId, label };
-      await requireTransport().sendText(chatId, `\u270F Edit queued item ${label} \u2014 send the new text now (or /cancel).`, { parse_mode: "HTML" });
-      return;
+      const res = updateQueueItem(requireCtx(), agent.id, itemId, { kind: "remove" });
+      await requireTransport().sendText(chatId, res.ok ? `${plain(res.text)} \u00B7 ${label}` : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      if (res.ok) {
+        await requireTransport().sendText(chatId, `\u{1F5D1} ${label} removed \u2014 send your corrected message again to re-queue it.`, {
+          parse_mode: "HTML",
+          reply_markup: inputPromptKeyboard("Send the corrected message\u2026"),
+        });
+      }
+      refreshAllPanels();
+      scheduleBarSync(chatId, 0);
+      return openQueueCard(chatId);
     }
-    if (kind === "r") res = updateQueueItem(requireCtx(), agent.id, itemId, { kind: "remove" });
-    else if (kind === "s") res = updateQueueItem(requireCtx(), agent.id, itemId, { kind: "steer" });
-    else {
-      await requireTransport().sendText(chatId, `/queueedit <itemId> <text>`, { parse_mode: "HTML" });
-      return;
+    if (kind === "s") {
+      const res = updateQueueItem(requireCtx(), agent.id, itemId, { kind: "steer" });
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      refreshAllPanels();
+      scheduleBarSync(chatId, 0);
+      return openQueueCard(chatId);
     }
-    await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-    refreshAllPanels();
-    scheduleBarSync(chatId, 0);
+    await requireTransport().sendText(chatId, "\u274C Unknown queue action \u2014 reopen the Queue card.", { parse_mode: "HTML" });
     return openQueueCard(chatId);
   }
   if (data.startsWith("mo:")) {
@@ -1835,7 +1866,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openSessionsCard(chatId);
     case "search": {
       pendingSearch = { chatId };
-      await requireTransport().sendText(chatId, "\u{1F50D} Reply with the search query:", { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, "\u{1F50D} Reply with the search query:", {
+        parse_mode: "HTML",
+        reply_markup: inputPromptKeyboard("Search query\u2026"),
+      });
       return;
     }
 
@@ -1926,7 +1960,6 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
 }
 
 let pendingRename: { chatId: number; sessionId: string } | undefined;
-let pendingQueueEdit: { chatId: number; itemId: string; label: string } | undefined;
 /** Chats whose first touch was `/start` while unauthorized: once they tap
  * Allow, replay the welcome instead of making them resend the command. */
 const pendingStartAfterAllow = new Set<number>();
@@ -2044,6 +2077,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
     case "start":
       state.chats.add(chatId);
       await t.setCommands(TELEGRAM_COMMANDS);
+      await t.setMenuButtonToCommands(chatId);
       await sendWithLiveBar(chatId, `\u{1F916} dsh-telegram ${version} ready. Send a message to talk to the agent; the bar below carries all functions.`, {
         parse_mode: "HTML",
         ...(messageId === undefined ? {} : { reply_parameters: { message_id: messageId } }),
@@ -2055,7 +2089,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
           "Commands:",
           "/new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /menu",
           "/history [sessionId] [limit] \u00B7 /rename <title> \u00B7 /fork [atSeq] \u00B7 /use <sessionId> \u00B7 /archive <sessionId>",
-          "/queue \u00B7 /queueedit <itemId> <text> \u00B7 /steer <text> \u00B7 /cancel",
+          "/queue \u00B7 /steer <text> \u00B7 /cancel",
           "/goalcreate <objective> [maxRounds] \u00B7 /goaledit <text>",
           "/workspacecreate <path> [title] \u00B7 /workspacepin <workspaceId> <sessionId> [beforeSessionId]",
           "/pluginenable <name> \u00B7 /plugindisable <name> \u00B7 /settingsdescribe [ns] \u00B7 /settingsupdate <ns> <json> \u00B7 /settingsreplace <ns> <json> \u00B7 /settingsmutate <ns> <json ops>",
@@ -2087,10 +2121,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       return;
     }
     case "cancel": {
-      if (pendingQueueEdit && pendingQueueEdit.chatId === chatId) {
-        pendingQueueEdit = undefined;
-        await send("Queue edit cancelled.");
-      } else if (pendingPresetCopy && pendingPresetCopy.chatId === chatId) {
+      if (pendingPresetCopy && pendingPresetCopy.chatId === chatId) {
         pendingPresetCopy = undefined;
         await send("Preset copy cancelled.");
       } else if (pendingMkdir && pendingMkdir.chatId === chatId) {
@@ -2875,10 +2906,10 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         if (allowed) state.chats.add(chatId);
         return allowed;
       },
-      onCommand: (chatId, command, args, messageId) => void dispatchCommand(chatId, command, args, messageId).catch((err) => log("command failed", err)),
-      onBarButton: (chatId, label) => void dispatchBarButton(chatId, label).catch((err) => log("bar button failed", err)),
-      onCallback: (chatId, data) => void dispatchCallback(chatId, data).catch((err) => log("callback failed", err)),
-      onPhoto: (chatId, fileId, caption, messageId) => void dispatchPhoto(chatId, fileId, caption, messageId).catch((err) => log("photo failed", err)),
+      onCommand: (chatId, command, args, messageId) => dispatchCommand(chatId, command, args, messageId).catch((err) => log("command failed", err)),
+      onBarButton: (chatId, label) => dispatchBarButton(chatId, label).catch((err) => log("bar button failed", err)),
+      onCallback: (chatId, data) => dispatchCallback(chatId, data).catch((err) => log("callback failed", err)),
+      onPhoto: (chatId, fileId, caption, messageId) => dispatchPhoto(chatId, fileId, caption, messageId).catch((err) => log("photo failed", err)),
       onDocument: (chatId, kind, _fileId, name, _mimeType) => {
         void state.transport?.sendText(
           chatId,
@@ -2952,21 +2983,6 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
               if (res.ok) void openPresetsCard(chatId);
             })
             .catch(() => {});
-          return;
-        }
-        if (pendingQueueEdit && pendingQueueEdit.chatId === chatId) {
-          const { itemId, label } = pendingQueueEdit;
-          pendingQueueEdit = undefined;
-          const queueAgent = currentAgent(chatId);
-          if (!queueAgent) {
-            void state.transport?.sendText(chatId, "\u274C No live agent owns the queue.", { parse_mode: "HTML" });
-            return;
-          }
-          const editRes = updateQueueItem(requireCtx(), queueAgent.id, itemId, { kind: "edit", content: text });
-          void state.transport?.sendText(chatId, editRes.ok ? `${plain(editRes.text)} \u00B7 queued item ${label}` : `\u274C ${plain(editRes.text)}`, { parse_mode: "HTML" });
-          refreshAllPanels();
-          scheduleBarSync(chatId, 0);
-          void openQueueCard(chatId);
           return;
         }
         // Per-chat binding: this chat's first message creates its own
