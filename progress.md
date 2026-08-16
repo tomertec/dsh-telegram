@@ -146,3 +146,7 @@
 
 - 收集到真实 Telegram 实机验收证据：单会话竞态、回调闭环、真实 LLM 轮次。
 - 发布门满足，下一步 push main/tags + release。
+
+## Round 25 发布动作
+
+- GitHub push + pre-release 完成；npm 真实发布缺 auth，待用户登录或提供 token。

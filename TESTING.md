@@ -950,3 +950,12 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - 真实 Telegram → LLM 轮次、快速首消息单会话、bar/Menu/Models/Queue/approval 回调
   全部有实机证据；自动化 227/227、audit 0、pack/publish dry-run 通过。
 - 发布门满足：进入 push tag + GitHub Release / npm publish 收尾。
+
+## 41. Round 25：发布动作（2026-08-19）
+
+- `git push origin main --tags`：main `831bc75` 与 tag `v0.3.0-rc.1` 已推送到
+  `https://github.com/xqicxx/dsh-telegram`。
+- GitHub Release（pre-release）已创建并附带 `dsh-telegram-0.3.0.tgz`：
+  https://github.com/xqicxx/dsh-telegram/releases/tag/v0.3.0-rc.1
+- `npm publish --dry-run` 通过；真实 npm publish 需要机器上的 npm 登录
+  （`npm whoami` → need auth），未执行。

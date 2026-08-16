@@ -168,3 +168,8 @@
 
 - 快速连发 1/2：仅一个 telegram 会话，第二条进同一 inbox（竞态修复实机通过）。
 - Menu/Models/Queue/approval 回调全部真实走通；menucheck 等价探测 0 ❌。
+
+## Round 25 发布动作
+
+- main + v0.3.0-rc.1 tag 已推送 GitHub；pre-release 已创建并附 tgz。
+- 真实 npm publish 未执行：本机无 npm 登录凭据。
