@@ -177,3 +177,7 @@
 ## Round 25 追加：用户实机 UX 反馈
 
 - Workspaces 卡缺字段防抖、Project 增加 Menu 返回、Queue 条目编号+预览、移除 Sessions Search 按钮。
+
+## Round 25 追加：workspace/preset/status 对齐
+
+- Workspaces 全卡防死；Presets/Workspaces/Sessions 卡片在 web 侧事件后原地重读；Status 增加 router/subagents/jobs 计数。

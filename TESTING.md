@@ -990,3 +990,24 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
   `ExtensionHost.attachFeedback` 保留为空实现（openclaw 等扩展调用无害）。
 - README/CHANGELOG 已同步：最终回复保持干净，不附 👍/👎/📋 按钮；web feedback 适配器与
   旧按钮的兼容分发保留，但不再产生任何新反馈入口。
+
+## 43. Round 25 追加：Workspace/Preset/Status 与 web 对齐（2026-08-19，228/228）
+
+### 用户反馈与修复
+
+1. **Workspaces 仍打不开** — 在上一轮空字段降级基础上，把整张 Workspace 卡的渲染
+   （list → view 映射 → keyboard 构建 → openCard）放进防死卡路径；`view()` 对
+   `sessionIds` 缺失降级为空数组，registry 异常也会渲染出可读错误卡而不是静默失败。
+2. **Presets 没有随 web 更新** — 现在 `openCard` 支持可选的 `refresh` 回调：
+   Presets / Workspaces / Sessions 卡打开时注册自己的重渲染器；`settings/document-updated`、
+   `commands/change`、`cordis/dynamic-package`、`domain/changed` 等 web 侧事件触发时，
+   打开的卡片原地重新读取数据源（`m:close` 时注销），web 装插件/改 preset 后卡片会跟着变。
+3. **Status 缺 web 顶栏信息** — `renderStatus` 增加：
+   - `Router: router-<preset>`（例如 `router-standard`）；
+   - `Subagents: N`（后台异步刷新 `subagents.listChildren` 计数，事件共享同一刷新 Promise）；
+   - `Background jobs running: N`（`jobs.list` 中 `status === "running"`）。
+   `refreshAllPanels` 先刷新 subagent 计数再原位更新 Status 卡，避免慢一拍。
+
+### 验证
+
+- `npm run check`：**228/228 pass**（workspace 缺字段防抖等既有回归保持绿色）。

@@ -25,6 +25,8 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Approval/question settlements edit the original card in place and remove its dead buttons.
 - A first `/start` from an unauthorized chat replays the welcome automatically after the Allow tap.
 - Project browser has an explicit `☰ Menu` return; Queue items are numbered with text previews.
+- Presets/Workspaces/Sessions cards re-read their data in place when web-side settings/plugin events fire.
+- Status card mirrors the web top bar: `router-<preset>`, subagent count, and running background jobs.
 - Assistant replies stay clean: no 👍/👎/📋 feedback keyboard is attached (web feedback adapters remain for parity).
 - Preset copy asks for a custom id; `/goaledit` supports maxGoalRounds.
 - Skills card is session-scoped and user-invocable-only; subagent cards show mode/label/hasChildren/reason.

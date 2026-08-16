@@ -212,6 +212,9 @@ function teardownMount(): void {
   releaseAllModelSelections();
   releaseSavedAttachments();
   tokens.reset();
+  statusSubagentCounts.clear();
+  statusSubagentSync = undefined;
+  activeCardRenderers.clear();
   menuPageIndex.clear();
   void sessionLifecycle.dispose().catch(() => {});
   ephemeral.reset();
@@ -414,20 +417,50 @@ function stopTyping(chatId: number): void {
 
 import { renderStatsStrip } from "./harness/adapters/status.js";
 export { renderStatsStrip };
+
+/** Live subagent counts per agent id. `subagents.listChildren` is async, so
+ * the Status card renders the latest snapshot and refreshAllPanels updates it
+ * before the next in-place edit. */
+const statusSubagentCounts = new Map<string, number>();
+let statusSubagentSync: Promise<void> | undefined;
+
+async function refreshStatusSubagents(): Promise<void> {
+  const ctx = requireCtx();
+  const agents = ctx.agents?.list() ?? [];
+  await Promise.all(
+    agents.map(async (agent) => {
+      const id = String(agent.id);
+      try {
+        const entries = await listSubagents(ctx, id);
+        statusSubagentCounts.set(id, entries.length);
+      } catch {
+        statusSubagentCounts.delete(id);
+      }
+    }),
+  );
+}
+
 function renderStatus(chatId?: number): string {
-  const snapshot = statusSnapshot(requireCtx(), boundAgentId(chatId), chatId === undefined);
+  const ctx = requireCtx();
+  const agentId = boundAgentId(chatId);
+  const snapshot = statusSnapshot(ctx, agentId, chatId === undefined);
   const profile = modeSummary().profile ?? "?";
   const workspace = state.workspaceRoot;
+  const jobs = listJobs(ctx, agentId);
+  const runningJobs = jobs.filter((job) => job.status === "running").length;
+  const subagents = agentId === undefined ? 0 : (statusSubagentCounts.get(agentId) ?? 0);
+  const preset = snapshot.preset ? plain(snapshot.preset) : "default";
   const lines = [
     `\u{1F916} dsh \u00B7 ${plain(profile)} \u00B7 ${snapshot.status}`,
     "",
     `\u{1F4C1} Project: ${plain(truncate(workspace, 32))}`,
-    `\u{1F3AD} Preset: ${snapshot.preset ? plain(snapshot.preset) : "default"}`,
+    `\u{1F3AD} Router: router-${preset}`,
     `\u{1F9E0} Reasoning: ${plain(reasoningLabel(currentReasoningEffort()))}`,
     `\u{1F9E9} Model: ${snapshot.provider ? `${plain(snapshot.provider)}/` : ""}${snapshot.model ? plain(snapshot.model) : "default"}`,
-    `\u{1F916} Agent: ${snapshot.agentId ? plain(truncate(snapshot.agentId, 28)) : "none"}`,
+    `\u{1F916} Agent: ${snapshot.agentId ? plain(truncate(snapshot.agentId, 28)) : "none"} \u00B7 Subagents: ${subagents}`,
     "",
     `\u{1F4CA} Queue: ${snapshot.queue} \u00B7 Sessions: ${snapshot.sessions}`,
+    `\u{1F4CB} Background jobs running: ${runningJobs}`,
     `\u{1F4E1} Bot: ${state.watching ? "polling" : state.transport ? "standby" : "offline"} \u00B7 Pending: ${state.transport?.pending() ?? 0}`,
   ];
   if (snapshot.stats) {
@@ -483,12 +516,24 @@ async function createSessionForChat(
   });
 }
 
-async function openCard(chatId: number, text: string, keyboard: unknown): Promise<void> {
+/** Cards that should re-read their data source when web-side settings/plugin
+ * events fire (presets, workspaces, sessions). Keyed by chat. */
+const activeCardRenderers = new Map<number, () => Promise<void>>();
+
+async function openCard(chatId: number, text: string, keyboard: unknown, refresh?: () => Promise<void>): Promise<void> {
   const t = requireTransport();
+  if (refresh === undefined) activeCardRenderers.delete(chatId);
+  else activeCardRenderers.set(chatId, refresh);
   await ephemeral.replace(chatId, t, text, {
     parse_mode: "HTML",
     reply_markup: keyboard,
   });
+}
+
+function refreshActiveCards(): void {
+  for (const render of activeCardRenderers.values()) {
+    void render().catch((err) => log("active card refresh failed", err));
+  }
 }
 
 /** Replace the current card with a destructive-action confirmation. */
@@ -688,7 +733,7 @@ async function openSessionsCard(chatId: number, page = 0): Promise<void> {
   await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => session.id), {
     ...(safe > 0 ? { previous: token({ action: "sessions-page", page: String(safe - 1) }) } : {}),
     ...(safe + 1 < totalPages ? { next: token({ action: "sessions-page", page: String(safe + 1) }) } : {}),
-  }));
+  }), () => openSessionsCard(chatId, safe));
 }
 
 async function openSessionDetailCard(chatId: number, sessionId: string): Promise<void> {
@@ -787,7 +832,7 @@ async function openWorkspacesCard(chatId: number): Promise<void> {
   }
   if (items.length === 0) lines.push("No workspaces registered \u2014 /workspacecreate <path> [title]");
   if (archivedSessionIds.length > 0) lines.push("", `Archived sessions: ${archivedSessionIds.length}`);
-  await openCard(chatId, lines.join("\n"), buildWorkspaceKeyboard(items.map((workspace) => ({ id: workspace.workspaceId, title: workspace.title }))));
+  await openCard(chatId, lines.join("\n"), buildWorkspaceKeyboard(items.map((workspace) => ({ id: workspace.workspaceId, title: workspace.title }))), () => openWorkspacesCard(chatId));
 }
 
 async function openWorkspaceDetailCard(chatId: number, workspaceId: string): Promise<void> {
@@ -1002,7 +1047,7 @@ async function openPresetsCard(chatId: number): Promise<void> {
   }
   if (presets.length === 0) lines.push("This profile composes no agent presets.");
   const rows = presets.slice(0, 12).map((preset) => ({ id: preset.id, cb: token({ action: "preset", presetId: preset.id }) }));
-  await openCard(chatId, lines.join("\n"), buildPresetsKeyboard(rows));
+  await openCard(chatId, lines.join("\n"), buildPresetsKeyboard(rows), () => openPresetsCard(chatId));
 }
 
 async function openPresetDetailCard(chatId: number, presetId: string): Promise<void> {
@@ -1756,6 +1801,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   const payload = match[2] !== undefined ? decodeCallbackValue(match[2]) : undefined;
   switch (action) {
     case "close":
+      activeCardRenderers.delete(chatId);
       await ephemeral.clear(chatId, requireTransport());
       return;
     case "back":
@@ -2584,10 +2630,22 @@ async function stopWatching(): Promise<void> {
 
 function refreshAllPanels(): void {
   if (!state.transport) return;
-  for (const chatId of state.chats) {
-    void statusPanel.refresh(chatId, state.transport, renderStatus(chatId));
-    scheduleBarSync(chatId);
+  const transport = state.transport;
+  // Share one subagent-count refresh across event bursts; the panel rerender
+  // waits for it so `Subagents: N` is current instead of one event behind.
+  if (statusSubagentSync === undefined) {
+    statusSubagentSync = refreshStatusSubagents()
+      .catch((err) => log("status subagent refresh failed", err))
+      .finally(() => {
+        statusSubagentSync = undefined;
+      });
   }
+  void statusSubagentSync.then(() => {
+    for (const chatId of state.chats) {
+      void statusPanel.refresh(chatId, transport, renderStatus(chatId));
+      scheduleBarSync(chatId);
+    }
+  });
 }
 
 /** Live agent inbox size for one chat — the web's `status.queue` value. */
@@ -2751,6 +2809,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       refreshEventDisposers.push(
         onRefreshEvent(name, () => {
           refreshAllPanels();
+          refreshActiveCards();
         }),
       );
     }
@@ -2758,6 +2817,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       refreshEventDisposers.push(
         onRefreshEvent(name, () => {
           refreshAllPanels();
+          refreshActiveCards();
         }),
       );
     }
