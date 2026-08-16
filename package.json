@@ -50,7 +50,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ben7am1n/dsh-telegram.git"
+    "url": "git+https://github.com/xqicxx/dsh-telegram.git"
   },
   "publishConfig": {
     "access": "public"

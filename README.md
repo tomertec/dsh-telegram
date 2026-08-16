@@ -1,166 +1,209 @@
 # dsh-telegram
 
-A native Telegram bridge plugin for [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) (dsh `0.1.0-rc.6`): chat with your dsh agent from a phone, watch its status, and drive sessions/models/plugins/compaction through button menus — without slowing the agent down.
+<p align="center">
+  <strong>Recreate the web-app control experience for <a href="https://www.npmjs.com/package/@deepseek-ai/dsh">DeepSeek Harness</a> agents on Telegram.</strong><br/>
+  🤖 Chat with dsh agents from a phone · 🗂️ Drive sessions/models/presets/workspaces with buttons · 🔧 Live status & queue counts · 🛡️ Multi-chat isolation and fail-closed routing
+</p>
 
-- Fully async: long polling, a global rate-limit + per-chat FIFO send queue, and exponential backoff all run outside the agent loop.
-- Button-first UX modeled on `codex-telegram-bot` / `pi-telegram`: a persistent reply-keyboard bar plus ephemeral inline cards.
-- Covers most of the web UI's exposed surface: sessions (create/search/history/rename/fork/resume/prompt/queue/model/attachment), workspaces, goals, message feedback, skills, subagents, agent presets, host settings, credentials, models/discovery, host filesystem, commands, jobs, session-log downloads, plugin inventory + enable/disable, dynamic plugin inventory, and inline approval/question answering. **Per-method gaps and the Telegram UX plan are tracked in [`docs/WEB_PARITY_AUDIT.md`](docs/WEB_PARITY_AUDIT.md).**
-- HTML parse mode with strict escaping everywhere — user content is never parsed as markup.
+<p align="center">
+  <b>English</b> |
+  <a href="README.zh.md">简体中文</a>
+</p>
 
-## Requirements
+<p align="center">
+  <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.0-2ea44f" />
+  <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-227%2F227%20green-2ea44f" />
+  <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
+</p>
 
-- Node.js ≥ 22
-- dsh `0.1.0-rc.6` with a profile that includes `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-tools` and `@deepseek-ai/dsh-commands` (every shipped bundle does)
-- A Telegram bot token (create one with [@BotFather](https://t.me/BotFather))
+<p align="center">
+  <a href="#why">Why</a> &bull;
+  <a href="#features">Features</a> &bull;
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#configuration">Configuration</a> &bull;
+  <a href="#architecture">Architecture</a> &bull;
+  <a href="#commands">Commands</a> &bull;
+  <a href="#how-it-works">How It Works</a> &bull;
+  <a href="#tests">Tests</a> &bull;
+  <a href="#docs">Docs</a> &bull;
+  <a href="#safety">Safety</a>
+</p>
 
-## Install
+---
+
+## Why?
+
+DeepSeek Harness's web UI is the gold standard for controlling an agent: sessions, models, workspaces, goals, presets, approvals. This plugin brings that surface to Telegram with the messaging ergonomics humans actually expect from a phone bot:
+
+| Dimension | Typical Telegram bot | dsh-telegram |
+|---|---|---|
+| 🤖 Chat | One global session, implicit state | One agent per chat, bound sessions, fail-closed routing |
+| 🧭 Navigation | Long slash-command lists | Persistent reply-keyboard bar + paginated inline cards |
+| 🧩 Models | Text config or guesswork | Provider cards, 12/page paging, per-session reasoning picker |
+| 📬 Queue | Invisible inbox | Live `⌛ Queue · N` count embedded in the bar key |
+| 🛡️ Approval | No path on mobile | Inline Allow/Reject cards settled in place (buttons removed) |
+| 📎 Attachments | Dropped silently | Photos enter the session; documents/voice/video get clear guidance |
+| 💬 Replies | Plain messages | Native reply-quote to the triggering message + feedback buttons |
+| 📈 Streaming | Everything at once | Openclaw-style live draft (thinking / tool lines / typewriter answer) |
+
+## Features
+
+- **🔀 Multi-chat isolation** — per-chat agent bindings, per-chat FIFO inbound router that spans the whole create→bind→deliver path (two rapid first messages can never create two sessions), unbound chats fail closed for display too
+- **🎛️ Button-first UX** — persistent 10-key reply bar (`☰ Menu · ✨ New · 🧩 Models` …) plus ephemeral inline cards for sessions, workspaces, goals, skills, subagents, presets, settings, credentials, llm/models, host, jobs, plugins and dynamic inventory
+- **🌐 Web-parity surface** — adapters mirror the web ApiProxy RPC contract: `session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`, subagents, host, workspace, agent presets, skills, goals, settings, credentials, llm providers/discovery
+- **⚡ Openclaw-style live feed** — separate thinking lane, live tool progress, typewriter answer draft, collapse summary on delivery (`outbound.liveFeed`, hot-toggleable)
+- **📝 HTML-aware long sends** — messages over 4096 chars are split on newline/space boundaries, never inside tags or entities, with tags rebalanced per part
+- **♻️ Reliability-first queue** — per-chat FIFO + global sliding-window rate limit; retries only 429/5xx/network/timeout, permanent 4xx fails once; restart-safe long polling with offset preservation
+- **🔁 Hot update & hot plug** — `internal/update` live-applies whitelist/rules/rate/length/watch without restart; teardown reverses every mount effect and re-apply is idempotent
+- **🛡️ Safe by default** — chat allowlist (`empty = deny all`), agent tools restricted to the roster, callback payloads percent-encoded, callback tokens single-use and bounded, secrets never ride back
+- **🤖 Agent tools** — `telegram_send` / `telegram_reply` / `telegram_broadcast` / `telegram_status` / `telegram_mark_no_reply`, all routed through the same audited send pipeline
+
+## Quick Start
+
+### 1. Create a Telegram bot
+
+Open [@BotFather](https://t.me/BotFather), send `/newbot`, and keep the returned token. The token is read from `TELEGRAM_BOT_TOKEN` only — it is never written to disk or the profile.
+
+### 2. Install the plugin
 
 ```sh
-# 1. install into a profile (forwards to pnpm in the profile directory)
+# install into a dsh profile (forwards to pnpm in the profile directory)
 dsh plugin --profile <name> add dsh-telegram
 
-# 2. add the loader entry to <profile>/cordis.patch.yml (user layer)
-#    - insert:
-#        - id: telegram
-#          name: dsh-telegram
+# add the loader entry to <profile>/cordis.patch.yml (user layer)
+#   - insert:
+#       - id: telegram
+#         name: dsh-telegram
 
-# 3. provide the token (never written to disk)
+# provide the token
 export TELEGRAM_BOT_TOKEN='123456:ABC...'
 ```
 
-Start the profile, then in the dsh UI run:
+### 3. Configure `telegram.json`
 
-```sh
-/telegram start        # begin long polling (or set watch.autoStart: true)
-/telegram allow <id>   # whitelist your chat id (or tap "Allow this chat" once polled)
-```
-
-From then on, send `/start` to the bot in Telegram to see the welcome message and the persistent button bar.
-
-## Buttons
-
-Persistent reply-keyboard bar (10 keys; the Queue key embeds the live inbox
-count as `⌛ Queue · N`):
-
-```text
-☰ Menu    ✨ New     🧩 Models
-🧭 Sessions 🔌 Plugins 📊 Status
-🎭 Presets ⌛ Queue   🧹 Compact
-⏹ Stop
-```
-
-`☰ Menu` opens a paginated core card. Page 1 carries New/Project (full-width),
-the Reasoning picker, Goals, Workspaces, Skills, Subagents, Jobs, Dynamic,
-Host, Capabilities and Watch. Page 2 carries Queue, Models, Mode, Sessions,
-Status, Plugins, Compact, Stop, Host settings, Credentials, Allowed, Settings,
-About and Presets. `More ›` / `‹ Prev` flip pages and `m:back` always returns
-to page 1.
-
-Final agent replies are sent as native Telegram replies to the triggering
-message. When the profile has the `messageFeedback` seam, each final reply also
-carries `👍 👎 📋` inline buttons; the feedback list supports per-item delete.
-
-The authoritative per-method audit and rollout plan are in
-[`docs/WEB_PARITY_AUDIT.md`](docs/WEB_PARITY_AUDIT.md); the mapping summary lives in
-[`PLAN.md`](PLAN.md) (sections A–D). `/capabilities` shows which seams are live in the running profile.
-
-## Configuration
-
-The plugin reads `<workspace>/.pi/telegram.json`, where the workspace is the nearest ancestor directory containing `.pi`. All fields are optional:
+At `<workspace>/.pi/telegram.json` (the nearest ancestor directory containing `.pi`):
 
 ```json
 {
   "security": { "allowedChatIds": [123456789] },
-  "watch": { "autoStart": false },
-  "inbound": {
-    "defaultMode": "auto-handle",
-    "rules": [{ "chatId": 123456789, "pattern": "urgent", "mode": "queue-only" }]
-  },
-  "outbound": {
-    "parseMode": "HTML",
-    "disableNotification": false,
-    "maxRetries": 3,
-    "sendRatePerSecond": 20,
-    "maxMessageLength": 4096,
-    "liveFeed": true
-  },
-  "workspace": { "activePath": "/abs/project" },
-  "mode": { "name": "headless" },
-  "model": { "provider": "opencode-go", "model": "deepseek-v4-pro" },
-  "reasoning": { "effort": "medium" }
+  "watch": { "autoStart": true },
+  "outbound": { "liveFeed": true }
 }
 ```
 
-- `security.allowedChatIds` — inbound whitelist; **empty denies all inbound traffic**. Only whitelisted chats are added to the broadcast/panel roster.
-- `inbound.defaultMode` — `auto-handle` (agent followup turn), `queue-only` (parked in the inbox without waking the agent), or `muted` (ignored). `rules` match in order (first match wins) on `chatId` and/or case-insensitive substring `pattern`.
-- `watch.autoStart` — start polling as soon as an agent is created.
-- `outbound.liveFeed` — enable the Openclaw-style streaming thinking/tool draft when the extension is mounted.
-- `workspace.activePath` — active project folder picked via `/project`; new sessions are created under it.
-- `model` — Telegram-owned default provider/model, persisted by the Models card and inherited by `/new` and `✨ New`.
-- `reasoning.effort` — `minimal | low | medium | high | max` directive prepended to inbound text.
-- The token comes **only** from `TELEGRAM_BOT_TOKEN`; it is never persisted.
+All fields are optional; `security.allowedChatIds` empty means **deny all inbound traffic**.
 
-## Agent tools
+### 4. Start and allow
 
-The plugin registers five tools the model can call:
+```sh
+/telegram start        # begin long polling (or rely on watch.autoStart)
+/telegram allow <id>   # whitelist your chat id
+```
 
-| Tool | Purpose |
-| --- | --- |
-| `telegram_send` | Send HTML to one chat id |
-| `telegram_reply` | Reply to the current inbound Telegram message |
-| `telegram_broadcast` | Send one HTML message to several chats |
-| `telegram_status` | Report bridge/agent/inbox state |
-| `telegram_mark_no_reply` | Mark the inbound message as intentionally unanswered |
+Then send `/start` to the bot in Telegram. An unauthorized chat that sends `/start` first gets an Allow button — after tapping it, the welcome message is replayed automatically.
 
-## Slash commands (dsh side)
+### 5. Chat
+
+Send a message. The bot binds the chat to its own dsh session, streams the turn (when the Openclaw extension is mounted), and replies as a native Telegram quote with `👍 👎 📋` feedback buttons when the profile has the `messageFeedback` seam.
+
+## Configuration
+
+| Field | Default | Description |
+|---|---|---|
+| `security.allowedChatIds` | `[]` | Inbound whitelist; empty denies all inbound traffic |
+| `watch.autoStart` | `false` | Start long polling when an agent is created |
+| `inbound.defaultMode` | `auto-handle` | `auto-handle` / `queue-only` / `muted` |
+| `inbound.rules` | `[]` | Ordered rules on `chatId` and/or case-insensitive `pattern` |
+| `outbound.parseMode` | `HTML` | Outbound parse mode (HTML with strict escaping) |
+| `outbound.disableNotification` | `false` | Send silently |
+| `outbound.maxRetries` | `3` | Retry attempts for transient failures only |
+| `outbound.sendRatePerSecond` | `20` | Global sliding-window rate limit |
+| `outbound.maxMessageLength` | `4096` | Telegram HTML message limit, used by the splitter |
+| `outbound.liveFeed` | `true` | Openclaw-style streaming draft (needs the openclaw extension) |
+| `workspace.activePath` | — | Active project folder for new sessions |
+| `mode.name` | — | Profile mode label |
+| `model.provider` / `model.model` | — | Telegram-owned default model, inherited by `/new` and `✨ New` |
+| `reasoning.effort` | `medium` | `minimal` / `low` / `medium` / `high` / `max` directive prefix |
+
+Live updates: Telegram-side `/config get|set <path> [json]` or dsh-side `/telegram config get|set <path> <json>` hot-apply and persist any leaf (e.g. `outbound.sendRatePerSecond`).
+
+## Architecture
+
+```
+Telegram ⇄ grammY long polling ⇄ per-chat FIFO router
+                                   │
+                                   ├─ Bridge        per-chat bindings, inbound quoting, turn events, reminders
+                                   ├─ Transport     send queue, rate limit, retry classification, HTML split, stop/start generations
+                                   ├─ Cards         ephemeral menu/session/model/workspace/goal/... keyboards
+                                   ├─ Interactive   approval/question cards (settle in place)
+                                   ├─ Adapters      web ApiProxy parity over ctx services
+                                   └─ Extensions    reasoning directive + openclaw streaming draft
+```
+
+| Layer | Files | Responsibility |
+|---|---|---|
+| bridge | `src/harness/bridge.ts` | Per-chat agent routing, event fan-in, native reply quoting, live-feed gate |
+| transport | `src/telegram/transport.ts` | Long polling, send queue, timeouts, photo/document delivery |
+| queue | `src/telegram/queue.ts` | Per-chat FIFO + global sliding window + transient-only retries |
+| router | `src/telegram/router.ts` | Per-chat FIFO for commands/bar/text/callback/media, unauthorized gating |
+| html | `src/telegram/html.ts` | Escaping helpers + HTML-aware long-message splitter |
+| keyboard | `src/telegram/keyboard.ts` | Pure builders for bar/menu/cards, encoded callback payloads |
+| tokens | `src/telegram/tokens.ts` | Bounded single-use callback token registry |
+| adapters | `src/harness/adapters/` | sessions, workspaces, goals, skills, subagents, presets, settings, credentials, llm, host, jobs, plugins, feedback, status |
+| extensions | `src/extensions/` | `reasoning` (effort directives) and `openclaw` (streaming draft) |
+| entry | `src/index.ts` | `apply/teardown`, dsh commands + agent tools, card dispatch, hot config |
+
+## Commands
+
+**dsh side**
 
 `/telegram status` · `/telegram start` · `/telegram stop` · `/telegram allow <chatId>` · `/telegram disallow <chatId>` · `/telegram watch on|off` · `/telegram config auto-start` · `/telegram config get|set <path> [json]`
 
-Telegram-side commands: `/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]` plus `/history [id] [limit]`, `/search <query>`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/queueedit <itemId> <text>`, `/steer <text>`, `/cancel`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacerename <id> <title>`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/settingsreplace <ns> <json>`, `/settingsmutate <ns> <json-ops>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/openpath [path]`, `/pickdir [path]`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
+**Telegram side**
 
-## Platform limits (shown as guidance in chat)
+`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
 
-- `host.pickDirectory` / `host.openPath` have no phone-side native dialog — the bot guides with `/pickdir` (Project browser) and `/openpath` (resolved host path).
-- `downloads.sessionLog` streams the same ZIP as the web; files over 50 MB are handed off to the web download with a link/instruction.
-- `dynamicCordisRunner` run/stop/dependency mutations and plugin install/uninstall remain web-panel operations (read-only inventory + guidance in chat).
-- Only photos attach to a session (the web seam has an image-only attachment API); documents/voice/video receive a clear guidance reply instead of being silently dropped.
-- Long polling only (no webhook); replies are per completed assistant message (no token streaming).
-- Out-of-tree plugin packages need their optional peers `@deepseek-ai/dsh-compaction` / `@deepseek-ai/cordis-plugin-loader` only if you want the typed seam at build time; at runtime missing services degrade to readable errors.
+Plus `/history [id] [limit]`, `/search <query>`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/queueedit <itemId> <text>`, `/steer <text>`, `/cancel`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/settingsreplace <ns> <json>`, `/settingsmutate <ns> <json-ops>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/openpath [path]`, `/pickdir [path]`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
 
-## Hot update & hot plug (cordis-native)
+## How It Works
 
-- `apply(ctx, config)` consumes the loader entry config (the official config
-  channel); `.pi/telegram.json` stays the file fallback.
-- `internal/update` waterfall live-applies config changes (whitelist, inbound
-  rules, outbound rate/retry/length, watch.autoStart) and vetoes the restart,
-  following the include plugin's official pattern. `SendQueue.configure` and
-  `TelegramTransport.applyLimits` hot-adjust the running limiter.
-- Disable the entry (`loader.update` / `/plugindisable` on itself, or the
-  profile patch) or edit the source under the `hmr` plugin: `teardownMount()`
-  reverses every mount effect (transport, bridge, interactive, panels,
-  typing loops, pending text-input flows, token registry, model selections,
-  session lifecycle). Re-applying is idempotent: extension registration is
-  name-keyed and polling restarts cancel the previous generation first.
-- `ctx.provide("telegram", …)` exposes `getConfig/status/chats/sendText/
-  broadcast/start/stop` to other plugins.
-- Telegram-side `/config get|set <path> [json]` and dsh-side
-  `/telegram config get|set <path> <json>` hot-apply and persist any config
-  leaf (e.g. `outbound.sendRatePerSecond`).
+A turn's full lifecycle:
 
-## Live test
+1. Telegram delivers an update → transport answers callbacks first, then the per-chat FIFO router dispatches command / bar button / callback / text / photo / document.
+2. The first message in a chat creates and binds a chat-owned dsh session; the FIFO promise spans the whole create → bind → deliver path, so a burst of first messages still lands in one session.
+3. The bridge delivers the message as a user turn (or queues it per inbound mode) and records the Telegram message id for native reply quoting.
+4. The openclaw extension streams reasoning/tool/answer into one editable draft (when mounted and `outbound.liveFeed` is on).
+5. The final assistant text lands as a native reply to the triggering message; `👍 👎 📋` feedback buttons attach when the seam exists; a missing `telegram_reply` produces an explicit reminder instead of silence.
+6. Approval/question cards are claimed by the bridge, answered inline, and settle by editing the card in place (buttons removed).
 
-`TESTING.md` records the isolated live-bot harness (temp `DSH_HOME` +
-`test/telegram-live-overlay.yml`) and the manual acceptance checklist.
+## Tests
 
-## Development
-
-```sh
-npm install
-npm run check          # tsc build + node --test
-npm pack --dry-run     # verify the publish payload (dist + README + LICENSE)
+```bash
+npm run check          # tsc build + node --test: 227/227 green
+npm audit --omit=dev   # 0 vulnerabilities
+npm pack --dry-run     # publish payload: dist + README + README.zh + CHANGELOG + LICENSE
 ```
 
-Verified dsh seams are documented in [`docs/SEAMS.md`](docs/SEAMS.md).
+The suite covers bridge routing, multi-chat isolation, transport races, queue retry classification, HTML splitting, keyboard payload encoding, token single-use, interactive cards, config hot-update, every web-parity adapter, and apply-level integration tests (including the rapid-first-message race).
+
+## Docs
+
+- [`docs/WEB_PARITY_AUDIT.md`](docs/WEB_PARITY_AUDIT.md): per-method web-parity status and remaining gaps
+- [`docs/SEAMS.md`](docs/SEAMS.md): verified dsh service seams
+- [`PLAN.md`](PLAN.md): interface mapping and rollout plan (sections A–D)
+- [`TESTING.md`](TESTING.md): full automated/live test log and the manual Telegram acceptance checklist
+- [`CHANGELOG.md`](CHANGELOG.md): version history
+
+## Safety
+
+- Only whitelisted chats are handled; an empty allowlist denies all inbound traffic
+- Agent tools can only target chats in the allowed roster
+- Callback payloads are percent-encoded and decode safely; tokens are single-use and bounded
+- User/agent content is always HTML-escaped before wrapping; long HTML is split without breaking tags
+- The bot token comes only from `TELEGRAM_BOT_TOKEN` and is never persisted; credential values never ride back
+- Permanent Telegram 4xx errors are never retried; a per-call timeout keeps a hung request from wedging the send chain
 
 ## License
 
