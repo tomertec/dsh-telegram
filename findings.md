@@ -128,3 +128,9 @@
 - 独立审计确认 2 个 P1（telegram_reply 失败吞、stop/start 竞态）与 5 个 P2；全部修复并加回归测试。
 - npm audit --omit=dev：0 漏洞。
 - 实机冒烟：真实 bot @XosEvolvesbot 长轮询启动、openclaw 挂载、getMe 正确、bar sync 已向 chat 8753447694 投递。
+
+## Round 20 发现与修复
+
+- 实机 bug：Bridge.notifyStateChange 方法体被此前改名操作误替换为自递归（`this.notifyStateChange()`），每次状态变更栈溢出，且日志只输出 `[object Error]`。
+- 修复：改回调 `this.onStateChange()`；异常日志输出 `message + stack`；新增「回调恰好一次」与「异常含堆栈且只记录一次」两个回归测试。
+- 实机复验通过：web 49733 派发两次 `/telegram status` 无任何 state-change 错误。

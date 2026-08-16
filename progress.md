@@ -103,3 +103,11 @@
 ## 下一步（Round 20 候选）
 
 收集用户在 Telegram 的 checklist 结果；有偏差修偏差，全过则推 tag 与正式发布。
+
+## Round 20（本轮）
+
+- 实机日志发现 `state change handler failed [object Error]` 刷屏；根因是上次改名误把 `notifyStateChange()` 方法体改成自递归，RangeError 每次 turn 事件触发。
+- 修复并新增 2 个回归测试；`npm run check`：**213/213 pass**。
+- 重启隔离实机（web 49733）复验：两次 `/telegram status` turn 完成，无 state-change 错误。
+- 详见 TESTING.md §34。
+- 剩余阻塞：隔离 profile 无 `DEEPSEEK_API_KEY`，完整 agent 轮次无法验证；等待用户提供 key / 完成 §25 人工清单。

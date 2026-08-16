@@ -769,3 +769,37 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - 自动化：211/211；npm audit 0；pack 119 files。
 - 实机进程保持运行，供用户点按验收。
 - 收到用户反馈后：按现象修复 → 回归 → 通过则推 `v0.3.0-rc.1` tag 与正式发布。
+
+## 34. Round 20：实机 state-change 递归修复 + 213/213（2026-08-19）
+
+### 实机发现的 bug
+
+- 实机 `--patch` 派发 `/telegram status` 后，日志连续出现 7+ 条
+  `[dsh-telegram] state change handler failed [object Error]`。
+- 根因：此前一次全量改名把 `notifyStateChange()` 方法体内的 `this.onStateChange()`
+  误替换成了 `this.notifyStateChange()`，形成自递归；每次 turn 事件触发面板刷新都
+  递归到栈溢出（RangeError），且错误对象只按 `[object Error]` 记录，无任何线索。
+- 修复：改回调用 `this.onStateChange()`；日志改为输出 `err.message + err.stack`
+  （非 Error 对象用 `String(err)`）。
+
+### 回归测试（新增 2 个，共 213/213）
+
+1. `state-change notifications call the callback exactly once (no self-recursion)`：
+   `bindAgent` 两次状态变更必须恰好回调 2 次，自递归会被计数/栈溢出立即抓出。
+2. `a throwing state-change callback is contained and logged with its stack`：
+   面板刷新抛错只记录 1 条，且日志含 `panel boom` 与堆栈位置。
+
+### 实机复验（真实 bot，新实例）
+
+- 重启隔离实例：`dsh web: http://127.0.0.1:49733` + `long polling started` +
+  `openclaw streaming feed mounted` + `bar sync chatId=8753447694 count=0 last=-1`。
+- 通过 HTTP `session.prompt`（`mode: queue`）向持久会话派发两次 `/telegram status`：
+  turn 1/2 均完成，`bar sync ... count=0 last=0`，**无任何 state change handler failed**。
+- 阻塞项不变：隔离 profile 无 `DEEPSEEK_API_KEY`（turn 以 `MISSING_CREDENTIAL` 结束），
+  完整 agent 轮次（真实回答、telegram_reply、openclaw 流）仍需用户提供 key 或换用已配置凭据的 profile。
+- `npm run check`：213/213；`npm audit --omit=dev` 0。
+
+### 状态
+
+- 修复已验证并待提交；实机进程 `bash-31` 保持运行。
+- 发布门：等待用户在 Telegram 客户端完成 §25 清单 + 凭据到位后的完整轮次验证。

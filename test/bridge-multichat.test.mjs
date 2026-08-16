@@ -194,3 +194,43 @@ test('detach clears bindings and inbound state', async () => {
   assert.equal(bridge.chatIdForAgent('agent-1'), undefined);
   assert.equal(bridge.hasPendingInbound(7), false);
 });
+
+test('state-change notifications call the callback exactly once (no self-recursion)', async () => {
+  const transport = makeTransport();
+  const agents = [{ id: 'agent-1', send: () => {}, followup: () => {} }];
+  const ctx = makeCtx(agents);
+  let calls = 0;
+  const bridge = await import('../dist/harness/bridge.js').then(({ Bridge }) =>
+    new Bridge({
+      ctx,
+      transport,
+      getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML' } }),
+      onStateChange: () => { calls += 1; },
+      log: () => {},
+    }),
+  );
+  bridge.bindAgent(7, 'agent-1');
+  bridge.bindAgent(7, undefined);
+  assert.equal(calls, 2, 'bindAgent must forward to the callback exactly once per state change');
+});
+
+test('a throwing state-change callback is contained and logged with its stack', async () => {
+  const transport = makeTransport();
+  const agents = [{ id: 'agent-1', send: () => {}, followup: () => {} }];
+  const ctx = makeCtx(agents);
+  const logs = [];
+  const bridge = await import('../dist/harness/bridge.js').then(({ Bridge }) =>
+    new Bridge({
+      ctx,
+      transport,
+      getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML' } }),
+      onStateChange: () => { throw new Error('panel boom'); },
+      log: (message, error) => { logs.push({ message, error }); },
+    }),
+  );
+  assert.doesNotThrow(() => bridge.bindAgent(7, 'agent-1'));
+  assert.equal(logs.length, 1, 'a single failure must log once instead of overflowing the stack');
+  assert.equal(logs[0].message, 'state change handler failed');
+  assert.match(String(logs[0].error), /panel boom/);
+  assert.match(String(logs[0].error), /bridge-multichat\.test\.mjs|at /);
+});

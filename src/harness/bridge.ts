@@ -120,10 +120,13 @@ export class Bridge {
 
   private notifyStateChange(): void {
     try {
-      this.notifyStateChange();
+      this.onStateChange();
     } catch (err) {
       // A throwing panel refresh must never escape a cordis event listener.
-      this.log("state change handler failed", err);
+      this.log(
+        "state change handler failed",
+        err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err),
+      );
     }
   }
 

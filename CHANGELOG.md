@@ -34,12 +34,13 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Agent-tool `telegram_send`/`telegram_broadcast` targets are restricted to the allowed roster.
 - Callback chat id reads the Bot API shape (`callback_query.message.chat`).
 - Malformed assistant events cannot throw the bridge listener; openclaw timers cancel on new turns.
+- State-change panel refresh is forwarded exactly once and failures log the real `message + stack`.
 - Long-poll restart aborts the previous generation; offset survives stop/start; token registry bounded.
 - Unauthorized photos/media receive the allow prompt like text.
 
 ### Tests
 
-- `npm run check`: 201/201 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools).
+- `npm run check`: 213/213 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools).
 - ESM smoke imports for `dist/index.js`, `dist/extensions/openclaw.js`, `dist/extensions/reasoning.js`.
 
 ## 0.2.0
