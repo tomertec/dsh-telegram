@@ -2,6 +2,7 @@
  * Jobs domain (web events.mux `session/jobs` frame) over ctx.jobs.
  */
 import type { Context } from "@deepseek-ai/cordis";
+import { SessionId } from "@deepseek-ai/dsh-session";
 
 export interface JobView {
   id: string;
@@ -25,7 +26,7 @@ export function listJobs(ctx: Context, agentId?: string): JobView[] {
   const jobs = jobsOf(ctx);
   if (!jobs) return [];
   try {
-    const caller = agentId === undefined ? undefined : ctx.agents?.get(agentId as never);
+    const caller = agentId === undefined ? undefined : ctx.agents?.get(SessionId(agentId));
     return jobs.list(caller);
   } catch {
     return [];

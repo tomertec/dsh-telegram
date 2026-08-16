@@ -270,6 +270,15 @@ function snippetOf(event: SessionEventLike): string | undefined {
     const text = textOfContent((event.data as { content?: unknown } | undefined)?.content);
     if (text) return text;
   }
+  if (event.type === "tool/call") {
+    const data = event.data as { name?: unknown; arguments?: unknown; args?: unknown } | undefined;
+    const name = typeof data?.name === "string" && data.name !== "" ? data.name : "tool";
+    const raw = data?.arguments ?? data?.args;
+    let detail = "";
+    if (typeof raw === "string" && raw.trim() !== "") detail = ` ${raw.trim()}`;
+    else if (raw !== undefined) detail = ` ${JSON.stringify(raw)}`;
+    return `\u{1F6E0}\uFE0F ${name}${detail}`;
+  }
   if (event.type === "tool/result") {
     const text = String((event.data as { output?: unknown } | undefined)?.output ?? "");
     if (text.trim()) return text.trim();

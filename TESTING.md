@@ -1119,3 +1119,20 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 2. **Workspace Create 目录选择器**：`w:create` 不再要求输入抽象路径，改为
    Project 式浏览（Up/Home/Root/翻页），选中目录点 `✅ Create here` 即注册。
    `/workspacecreate <path>` 命令保留为高级路径。
+
+## 53. Round 2 追加：状态计数、日志导出、轨迹（2026-08-19，230/230）
+
+### 修复
+
+1. **后台任务计数**：`listJobs` 用 `SessionId(agentId)` 包装再查 live agent（之前裸字符串
+   导致 `agents.get` 拿不到 caller、`jobs.list(undefined)` 返回空，Status 上运行任务恒为 0）。
+2. **Session 日志导出**：`loadExportSeam` 之前只从插件自身 node_modules 解析
+   `@deepseek-ai/dsh-host-apiproxy`，而它是 profile 依赖，导致 Telegram 里 Log 永远提示
+   “profile cannot build archive”。现在从 workspace cwd / DSH_HOME / 每个 profile 目录多根解析。
+3. **轨迹（History）**：`snippetOf` 补充 `tool/call` 渲染（`🛠 工具名 + 参数`），
+   之前 tool call 行空白；History 卡现在能看到完整轨迹（用户/助手/工具调用/结果）。
+
+### 状态计数说明
+
+- `Subagents: N` 与 `Background jobs running: N` 显示在 Status 卡与第 0 页 Menu 头部；
+  按当前 bound 会话统计（与 web 顶栏同一会话口径）。

@@ -5,6 +5,8 @@
  */
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { fail, ok, type AdapterResult } from "./types.js";
@@ -21,20 +23,38 @@ interface ExportDepsLike {
 type StreamZip = (deps: ExportDepsLike, root: unknown, sessionId: string, includeDescendants: boolean, level: number, signal: AbortSignal) => ReadableStream<Uint8Array>;
 
 async function loadExportSeam(): Promise<{ streamSessionLogZip: StreamZip; sessionLogExportDeps(ctx: Context): ExportDepsLike; flushLiveSessionLog(deps: ExportDepsLike, id: string, signal: AbortSignal): Promise<void> } | undefined> {
-  try {
-    const require = createRequire(import.meta.url);
-    const pkg = require.resolve("@deepseek-ai/dsh-host-apiproxy/package.json");
-    const moduleUrl = pathToFileURL(pkg.replace(/package\.json$/, "lib/types/session-export.js")).href;
-    const seam = (await import(moduleUrl)) as {
-      streamSessionLogZip: StreamZip;
-      sessionLogExportDeps(ctx: Context): ExportDepsLike;
-      flushLiveSessionLog(deps: ExportDepsLike, id: string, signal: AbortSignal): Promise<void>;
-    };
-    if (typeof seam.streamSessionLogZip !== "function") return undefined;
-    return seam;
-  } catch {
-    return undefined;
+  // The web session-export seam lives inside `@deepseek-ai/dsh-host-apiproxy`,
+  // which is a PROFILE dependency, not a dependency of this plugin. Resolve it
+  // from plausible profile roots (workspace cwd, DSH_HOME, each profile dir)
+  // instead of only this plugin's node_modules.
+  const bases = new Set<string>([process.cwd()]);
+  const home = process.env.DSH_HOME;
+  if (home !== undefined && home !== "") bases.add(home);
+  if (home !== undefined) {
+    try {
+      for (const entry of readdirSync(join(home, "profiles"))) {
+        bases.add(join(home, "profiles", entry));
+      }
+    } catch {
+      /* no profiles dir */
+    }
   }
+  for (const base of bases) {
+    try {
+      const require = createRequire(join(base, "noop.js"));
+      const pkg = require.resolve("@deepseek-ai/dsh-host-apiproxy/package.json");
+      const moduleUrl = pathToFileURL(pkg.replace(/package\.json$/, "lib/types/session-export.js")).href;
+      const seam = (await import(moduleUrl)) as {
+        streamSessionLogZip: StreamZip;
+        sessionLogExportDeps(ctx: Context): ExportDepsLike;
+        flushLiveSessionLog(deps: ExportDepsLike, id: string, signal: AbortSignal): Promise<void>;
+      };
+      if (typeof seam.streamSessionLogZip === "function") return seam;
+    } catch {
+      /* try the next profile root */
+    }
+  }
+  return undefined;
 }
 
 export interface SessionLogExport {

@@ -201,3 +201,7 @@
 
 - Session 标题来自 session/title 事件，已补齐扫描；Cold session 也有名字。
 - Workspace Create 改为目录浏览选择器，去掉抽象路径输入。
+
+## Round 2 追加
+
+- listJobs 用 SessionId 修正 caller；loadExportSeam 多根解析 profile 依赖；tool/call 片断渲染补齐。
