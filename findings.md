@@ -103,3 +103,8 @@
 - `modelCatalog` 缺 web `SessionModels.routable`；按 web routeServed 语义补上（无 llm 时 true），Models 卡显示。
 - provider 卡的 Thinking 行是死能力（builder 支持但从未传参）；接入 per-session 五档 picker 与 `selectSessionModel(effort)`。
 - settings.describe 审计描述曾称 web 只暴露部分 namespace；权威源码显示 web 列出全部注册 namespace，修正审计。
+
+## Round 14 发现与修复
+
+- `ctx.settings.describe` 的 schema envelope 被 adapter 丢弃；补透传并在 namespace 卡展示。
+- settings.describe 审计状态进一步收敛（web 同语义：全部 namespace + schema）。

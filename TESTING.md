@@ -658,3 +658,21 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 1. Models 卡标题含 `routable: yes/no`；无 llm registry 时显示 yes 且卡片优雅降级。
 2. 当前 provider 卡选中模型后出现 `🧠 Thinking · Medium`；点开选 High → 回执 Model switched（含 reasoning）并回到 provider 卡。
 3. 再次打开 Thinking 行应显示 High。
+
+## 28. Round 14：Settings schema envelope（2026-08-16，207/207）
+
+### 改动
+
+1. `SettingsNamespaceView` / `describeSettings` 透传 provider 返回的 `schema`（serialized schemastery envelope）；
+2. Settings namespace 卡显示 `schema: <json>`（截断 300 字符），无 schema 时显示 `(not declared)`；
+3. 新增 settings schema 单测 1 例。
+
+### 验证
+
+- `npm run check`：**207/207 pass**。
+- round 1–13 的 206 个用例全部保持绿色。
+
+### Telegram 人工复核
+
+1. Host settings → 点任一 namespace → 应看到 `schema: …` 与 value/user/secrets。
+2. 未声明 schema 的 provider → 显示 `schema: (not declared)` 且不报错。

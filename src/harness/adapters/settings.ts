@@ -7,6 +7,8 @@ import { fail, ok, type AdapterResult } from "./types.js";
 
 export interface SettingsNamespaceView {
   ns: string;
+  /** Serialized schemastery envelope, when the registrant declared one. */
+  schema?: unknown;
   value: unknown;
   base?: unknown;
   user?: unknown;
@@ -25,6 +27,7 @@ export interface SettingsDescription {
 
 interface SettingsDescriptorLike {
   ns: string;
+  schema?: unknown;
   value: unknown;
   base?: unknown;
   user?: unknown;
@@ -56,6 +59,7 @@ export function describeSettings(ctx: Context): SettingsDescription {
       ...(settings.documentPath === undefined ? {} : { documentPath: settings.documentPath }),
       namespaces: settings.describe({ redactSecrets: true }).map((descriptor) => ({
         ns: String(descriptor.ns),
+        ...(descriptor.schema === undefined ? {} : { schema: descriptor.schema }),
         value: descriptor.value,
         ...(descriptor.base === undefined ? {} : { base: descriptor.base }),
         ...(descriptor.user === undefined ? {} : { user: descriptor.user }),

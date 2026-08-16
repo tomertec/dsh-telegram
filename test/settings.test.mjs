@@ -45,3 +45,14 @@ test('replace/mutate degrade without the settings service', async () => {
   assert.equal((await mutateSettings(ctxWith(undefined), 'llm', [])).ok, false);
   assert.equal(describeSettings(ctxWith(undefined)).writable, false);
 });
+
+test('describeSettings carries the serialized schema envelope', () => {
+  const schema = { type: 'object', properties: { provider: { type: 'string' } } };
+  const ctx = ctxWith({
+    writable: true,
+    describe: () => [{ ns: 'llm', schema, value: {}, applies: 'live', revision: 1 }],
+  });
+  const description = describeSettings(ctx);
+  assert.deepEqual(description.namespaces[0].schema, schema);
+  assert.equal(description.hasDocument, false);
+});

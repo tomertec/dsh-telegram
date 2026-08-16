@@ -18,7 +18,8 @@
 - [x] Round 11：v0.3.0 release candidate（版本/CHANGELOG/preset hasDocument/202 tests）
 - [x] Round 12：Host 浏览卡 New folder + 审计状态修正（203/203）
 - [x] Round 13：Models routable + per-session thinking（206/206）
-- [ ] Round 14+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
+- [x] Round 14：Settings schema envelope（207/207）
+- [ ] Round 15+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -108,3 +109,7 @@
 - `modelCatalog.routable` + llm.test.mjs（3 例）。
 - provider 卡 Thinking 行接入五档 per-session picker。
 - settings.describe 审计修正。
+
+## Round 14 已完成
+
+- settings schema 透传与卡片展示；settings 单测 +1。

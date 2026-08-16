@@ -1042,6 +1042,7 @@ async function openSettingsNamespaceCard(chatId: number, ns: string): Promise<vo
     `\u2699\uFE0F ${plain(truncate(ns, 40))}`,
     "",
     `applies: ${view.applies} \u00B7 revision: ${view.revision}`,
+    view.schema !== undefined ? `schema: ${plain(truncate(JSON.stringify(view.schema), 300))}` : "schema: (not declared)",
     `value: ${plain(truncate(JSON.stringify(view.value), 300))}`,
     view.user !== undefined ? `user: ${plain(truncate(JSON.stringify(view.user), 200))}` : "",
     `secrets: ${view.secrets.map((secret) => `${secret.path.join(".")}=${secret.set ? "set" : "unset"}`).join(", ") || "none"}`,

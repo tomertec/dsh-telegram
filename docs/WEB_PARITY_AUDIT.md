@@ -99,7 +99,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | goal.create | Goals 卡、/goalcreate | ✅ | |
 | goal.edit | Goals 卡、/goaledit | ✅ | `/goaledit <objective> [maxRounds]` 同时支持 maxGoalRounds |
 | goal.pause/resume/complete/clear | Goals 卡按钮 | ✅ | |
-| settings.describe | Host settings 卡、/settingsdescribe | 🟡 | web 同样列出全部注册 namespace；仍缺 schema envelope 展示与按钮表单 |
+| settings.describe | Host settings 卡、/settingsdescribe | 🟡 | 已展示 schema envelope；缺按钮表单与 expectedRevision 流程（命令仍可用） |
 | settings.openDocument | 卡片显示 documentPath | ➖ | 只显示路径（可接受） |
 | settings.update | /settingsupdate `<ns> <json>` | 🟡 | 无按钮流、无 expectedRevision |
 | settings.replace | /settingsreplace `<ns> <json section>` | ✅ | 无按钮流、无 expectedRevision |
@@ -329,6 +329,7 @@ Map<chatId, {
 - [x] 版本升至 0.3.0，新增 CHANGELOG.md 并纳入 npm 包 files。
 - [x] Host 浏览卡新增 `New folder`：回复单段目录名在当前目录创建并原地刷新（/cancel 可中止）；/mkdir 快速通道保留。
 - [x] `session.models.routable` 接入 Models 卡；per-session reasoningEffort 五档选择（Thinking 行 → picker → selectSessionModel）。
+- [x] settings namespace 卡透出 serialized schema envelope。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。
