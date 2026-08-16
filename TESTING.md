@@ -795,11 +795,17 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
   `openclaw streaming feed mounted` + `bar sync chatId=8753447694 count=0 last=-1`。
 - 通过 HTTP `session.prompt`（`mode: queue`）向持久会话派发两次 `/telegram status`：
   turn 1/2 均完成，`bar sync ... count=0 last=0`，**无任何 state change handler failed**。
-- 阻塞项不变：隔离 profile 无 `DEEPSEEK_API_KEY`（turn 以 `MISSING_CREDENTIAL` 结束），
-  完整 agent 轮次（真实回答、telegram_reply、openclaw 流）仍需用户提供 key 或换用已配置凭据的 profile。
+- 进一步尝试打通完整轮次：把主 profile 的 `.credentials.yaml`（600 权限）复制进隔离
+  `DSH_HOME` 后重启（`dsh web: http://127.0.0.1:49803`），`credentials.describe` 确认
+  `DEEPSEEK_API_KEY`/`OPENCODE_GO_API_KEY` 均为 `configured: true`。
+- 再派发 `/telegram status`：`MISSING_CREDENTIAL` 消除，但 deepseek-official 返回
+  `Authentication Fails, Your api key: ****2dbe is invalid`（401 AUTH）。即主 profile
+  中已存的 deepseek key 本身已失效；live profile 仅路由 deepseek-official。
+- **待用户**：在 live web（49803）或主 profile 更新为有效的 `DEEPSEEK_API_KEY`，再在
+  Telegram chat 发一条消息跑完整轮次。
 - `npm run check`：213/213；`npm audit --omit=dev` 0。
 
 ### 状态
 
-- 修复已验证并待提交；实机进程 `bash-31` 保持运行。
-- 发布门：等待用户在 Telegram 客户端完成 §25 清单 + 凭据到位后的完整轮次验证。
+- 修复已提交 `ed94dee`，tag `v0.3.0-rc.1` 已重建；实机进程 `bash-32` 保持运行。
+- 发布门：等待用户更新有效凭据 + 在 Telegram 客户端完成 §25 清单与一条完整 agent 轮次。

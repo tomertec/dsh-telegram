@@ -111,3 +111,7 @@
 - 重启隔离实机（web 49733）复验：两次 `/telegram status` turn 完成，无 state-change 错误。
 - 详见 TESTING.md §34。
 - 剩余阻塞：隔离 profile 无 `DEEPSEEK_API_KEY`，完整 agent 轮次无法验证；等待用户提供 key / 完成 §25 人工清单。
+
+### Round 20 追加
+
+- 复制主 profile 凭据到隔离 DSH_HOME 后重启（web 49803）：`MISSING_CREDENTIAL` 消除，但现有 `DEEPSEEK_API_KEY` 已失效（401 AUTH）。等待用户更新有效 key 后跑完整 Telegram 轮次。

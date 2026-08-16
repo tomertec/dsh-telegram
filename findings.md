@@ -134,3 +134,7 @@
 - 实机 bug：Bridge.notifyStateChange 方法体被此前改名操作误替换为自递归（`this.notifyStateChange()`），每次状态变更栈溢出，且日志只输出 `[object Error]`。
 - 修复：改回调 `this.onStateChange()`；异常日志输出 `message + stack`；新增「回调恰好一次」与「异常含堆栈且只记录一次」两个回归测试。
 - 实机复验通过：web 49733 派发两次 `/telegram status` 无任何 state-change 错误。
+
+### Round 20 追加
+
+- 主 profile 已配置的 `DEEPSEEK_API_KEY` 对 deepseek-official 返回 401（`****2dbe` invalid）；live profile 仅路由 deepseek-official。需用户更新有效 key。
