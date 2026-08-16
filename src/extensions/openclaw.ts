@@ -19,6 +19,7 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import { escapeHtml } from "../telegram/html.js";
+import { markdownToHtml } from "../telegram/markdown.js";
 import type { ExtensionHost } from "./types.js";
 
 const MAX_LINES = 8;
@@ -420,7 +421,7 @@ export function apply(ctx: Context, _config?: unknown): void {
       const answer = answers.get(chatId);
       answers.delete(chatId);
       if (host.pendingInbound(chatId)) {
-        const text = answer !== undefined ? escapeHtml(answer.text) : NO_REPLY_REMINDER;
+        const text = answer !== undefined ? markdownToHtml(answer.text) : NO_REPLY_REMINDER;
         const inboundMessageId = host.inboundMessageId(chatId);
         const agentId = host.agentIdForChat(chatId);
         const assistantMessageId = answer?.assistantMessageId;

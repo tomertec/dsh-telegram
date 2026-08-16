@@ -271,6 +271,18 @@ test('turn end delivers the buffered answer even when no live draft was created'
   assert.equal(host.inboundRepliedMarks, 1);
 });
 
+test('openclaw final answers are normalized from Markdown to Telegram HTML', async () => {
+  const { host, ctx } = await setup();
+  host.inboundPending = true;
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  host.consumer(7, '**bold** and *italic*', 'assistant-message-markdown');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+  const answer = host.sends.find((s) => s.text.includes('<b>bold</b>'));
+  assert.ok(answer, 'markdown is normalized in the streamed final answer');
+  assert.equal(answer.text, '<b>bold</b> and <i>italic</i>');
+});
+
 test('turn end sends the openclaw-mode reminder when nothing answered', async () => {
   const { host, ctx } = await setup();
   host.inboundPending = true;

@@ -66,6 +66,16 @@ test('legacy mode (no consumer): assistant text is forwarded immediately as a na
   assert.equal(transport.sent.length, 1, 'no reminder after a prose reply');
 });
 
+test('legacy mode normalizes model Markdown to Telegram HTML', async () => {
+  const { bridge, transport, ctx } = await setup();
+  bridge.deliver(7, 'hi', 501);
+  ctx.emit('session/event', { id: 'agent-1' }, am('**bold** and *italic*\n\n- item'));
+  await sleep(10);
+  assert.equal(transport.sent.length, 1);
+  assert.equal(transport.sent[0].text, '<b>bold</b> and <i>italic</i>\n\n\u2022 item');
+  assert.equal(transport.sent[0].extra.parse_mode, 'HTML');
+});
+
 test('legacy mode keeps the reminder when nothing answered', async () => {
   const { bridge, transport, ctx } = await setup();
   bridge.deliver(7, 'hi');

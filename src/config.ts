@@ -31,7 +31,8 @@ export interface TelegramConfig {
     rules: InboundRule[];
   };
   outbound: {
-    /** Telegram parse mode for forwarded text. Only HTML is supported in v0.1. */
+    /** Telegram parse mode for assistant output. Model Markdown is normalized
+     * to valid Telegram HTML before sending; internal cards are always HTML. */
     parseMode: 'HTML';
     disableNotification: boolean;
     /** Per-message send retries on 429 / network errors. */
@@ -211,7 +212,7 @@ export function normalizeConfig(raw: unknown): TelegramConfig {
     if (liveFeed !== undefined) base.outbound.liveFeed = liveFeed;
     const parseMode = readString(outbound, 'parseMode', 'outbound');
     if (parseMode !== undefined) {
-      if (parseMode !== 'HTML') throw new ConfigError('outbound.parseMode', "only 'HTML' is supported in v0.1");
+      if (parseMode !== 'HTML') throw new ConfigError('outbound.parseMode', "only 'HTML' is supported \u2014 assistant Markdown is normalized to HTML automatically");
       base.outbound.parseMode = 'HTML';
     }
     const disableNotification = readBoolean(outbound, 'disableNotification', 'outbound');

@@ -3,6 +3,23 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.2
+
+Issues #2 and #3: a real web-profile integration regression test proves the `tools/execute` seam settles Telegram questions end-to-end, and assistant replies now render Markdown as valid Telegram HTML.
+
+### Web-profile question regression (#2)
+
+- Added a real Cordis + ToolRuntime integration test for `web` profile + Telegram + `ask_user_question`: the web provider is never invoked, Telegram receives the card, option select, custom text, cancel, and concurrent multi-chat questions all settle the exact tool execution.
+- Cancelled/aborted question paths reject the waiting tool execution instead of hanging.
+
+### Assistant Markdown rendering (#3)
+
+- New `src/telegram/markdown.ts` normalizes model Markdown to Telegram HTML before sending, for both the built-in bridge forwarder and the openclaw final answer.
+- Supports bold/italic/strike, inline and fenced code, links (safe schemes only), ATX headings (as bold lines), unordered/ordered lists, and block quotes.
+- Word-boundary-aware emphasis keeps `snake_case` and arithmetic intact; malformed markup degrades to escaped, readable text.
+- Long normalized replies still pass through the HTML-aware splitter, so formatting stays balanced across Telegram chunks.
+- Internal cards, keyboards, approvals, questions, and the progress draft keep their own HTML pipeline unchanged.
+
 ## 0.3.1
 
 Issue #1: Telegram can now answer `ask_user_question` in the web profile and never loses early session events or final answers.

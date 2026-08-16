@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.1-2ea44f" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.2-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-244%2F244%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
@@ -121,7 +121,7 @@ export TELEGRAM_BOT_TOKEN='123456:ABC...'
 | `watch.autoStart` | `false` | agent 创建后自动开启轮询 |
 | `inbound.defaultMode` | `auto-handle` | `auto-handle` / `queue-only` / `muted` |
 | `inbound.rules` | `[]` | 按顺序匹配 `chatId` 和/或不区分大小写 `pattern` |
-| `outbound.parseMode` | `HTML` | 出站解析模式（严格转义后的 HTML） |
+| `outbound.parseMode` | `HTML` | 助手回复的 Telegram 解析模式。模型 Markdown（粗体/斜体/代码/链接/列表/标题/引用）会自动规范化为合法 HTML；内部卡片始终为 HTML |
 | `outbound.disableNotification` | `false` | 静默发送 |
 | `outbound.maxRetries` | `3` | 仅对瞬时错误的重试次数 |
 | `outbound.sendRatePerSecond` | `20` | 全局滑动窗口限速 |

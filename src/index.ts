@@ -129,7 +129,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.1";
+export const version = "0.3.2";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {

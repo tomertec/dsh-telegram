@@ -16,7 +16,7 @@ import { SessionId } from "@deepseek-ai/dsh-session";
 import { resolveInboundMode, type TelegramConfig } from "../config.js";
 import { isReasoningEffort, reasoningDirective } from "../reasoning.js";
 import { noteToolCall } from "./adapters/status.js";
-import { escapeHtml } from "../telegram/html.js";
+import { markdownToHtml } from "../telegram/markdown.js";
 import type { TelegramTransport } from "../telegram/transport.js";
 
 /** Prepend the configured reasoning directive (codex-telegram-bot semantics). */
@@ -418,7 +418,7 @@ export class Bridge {
               // reminder must not fire when the agent answered normally.
               if (inbound) inbound.replied = true;
               void this.transport
-                .sendText(chatId, escapeHtml(text), {
+                .sendText(chatId, markdownToHtml(text), {
                   parse_mode: this.getConfig().outbound.parseMode,
                   ...this.replyParametersFor(chatId),
                 })
@@ -445,7 +445,7 @@ export class Bridge {
             inbound.replied = true;
             if (state) state.reminded = true;
             void this.transport
-              .sendText(chatId, `\u274C ${escapeHtml(failure.slice(0, 900))}`, {
+              .sendText(chatId, `\u274C ${markdownToHtml(failure.slice(0, 900))}`, {
                 parse_mode: "HTML",
                 ...this.replyParametersFor(chatId),
               })

@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.1-2ea44f" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.2-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-244%2F244%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
@@ -121,7 +121,7 @@ Send a message. The bot binds the chat to its own dsh session, streams the turn 
 | `watch.autoStart` | `false` | Start long polling when an agent is created |
 | `inbound.defaultMode` | `auto-handle` | `auto-handle` / `queue-only` / `muted` |
 | `inbound.rules` | `[]` | Ordered rules on `chatId` and/or case-insensitive `pattern` |
-| `outbound.parseMode` | `HTML` | Outbound parse mode (HTML with strict escaping) |
+| `outbound.parseMode` | `HTML` | Telegram parse mode for assistant replies. Model Markdown (bold/italic/code/links/lists/headings/quotes) is normalized to valid HTML automatically; internal cards are always HTML |
 | `outbound.disableNotification` | `false` | Send silently |
 | `outbound.maxRetries` | `3` | Retry attempts for transient failures only |
 | `outbound.sendRatePerSecond` | `20` | Global sliding-window rate limit |
