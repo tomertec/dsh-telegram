@@ -391,14 +391,14 @@ export function buildSubagentsKeyboard(entries: readonly { id: string; cb: strin
   return kb.row().text("\u2190 Back", "m:back");
 }
 
-export function buildSubagentDetailKeyboard(callbacks: { prompt: string; interrupt: string; history: string }): InlineKeyboard {
-  return new InlineKeyboard()
-    .row()
-    .text("\u{1F4E8} Prompt", callbacks.prompt)
-    .text("\u23F9 Interrupt", callbacks.interrupt)
-    .text("\u{1F4DC} History", callbacks.history)
-    .row()
-    .text("\u2190 Subagents", "m:subagents");
+export function buildSubagentDetailKeyboard(callbacks: { prompt?: string; interrupt?: string; history: string }): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const actions: { text: string; callback_data: string }[] = [];
+  if (callbacks.prompt !== undefined) actions.push({ text: "\u{1F4E8} Prompt", callback_data: callbacks.prompt });
+  if (callbacks.interrupt !== undefined) actions.push({ text: "\u23F9 Interrupt", callback_data: callbacks.interrupt });
+  actions.push({ text: "\u{1F4DC} History", callback_data: callbacks.history });
+  kb.row(...actions.slice(0, 3));
+  return kb.row().text("\u2190 Subagents", "m:subagents");
 }
 
 export function buildPresetsKeyboard(entries: readonly { id: string; cb: string }[]): InlineKeyboard {

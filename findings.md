@@ -61,3 +61,9 @@
 - `listSkills` 从不传 sessionId，违背 web skill.list 的「按会话项目根解析」契约；补 session 选项并兼容无 session 调用。
 - Skills 卡把 model-only 技能和 user-invocable 混在一起；改为只展示 user-invocable 并显示隐藏数量。
 - Search 取 20 条但 UI 只显示 10 条且无法翻页；改为取 100、10/页、token 翻页。
+
+## Round 7 发现与修复
+
+- `listSubagents` 只取 `{kind,id}`，丢失 web `SubagentListEntry` 的 mode/label/hasChildren/reason；补齐投影并兼容 legacy。
+- one-shot/diagnostic 子代理详情仍显示 Prompt/Interrupt 按钮，点击会失败；改为只有 continuable 显示并在回调前二次校验。
+- Subagent 列表 activity 与 web 的「存储快照」语义不一致；现在优先透传 `entry.activity`，旧服务回退 live status。

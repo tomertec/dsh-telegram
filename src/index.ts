@@ -920,19 +920,47 @@ async function openSubagentsCard(chatId: number): Promise<void> {
   }
   const entries = await listSubagents(requireCtx(), agent.id);
   const lines = [`\u{1F916} Subagents of ${plain(truncate(agent.id, 24))} (${entries.length})`, ""];
-  for (const entry of entries.slice(0, 15)) lines.push(`\u2022 ${plain(truncate(entry.id, 28))} \u00B7 ${entry.kind} \u00B7 ${entry.activity}`);
+  for (const entry of entries.slice(0, 15)) {
+    const flags: string[] = [entry.kind, entry.activity];
+    if (entry.mode !== undefined) flags.push(entry.mode);
+    if (entry.hasChildren === true) flags.push("children");
+    lines.push(`\u2022 ${plain(truncate(entry.id, 28))} \u00B7 ${flags.join("/")}${entry.label ? ` \u00B7 ${plain(truncate(entry.label, 20))}` : ""}`);
+    if (entry.kind === "diagnostic") lines.push(`  reason: ${plain(entry.reason ?? "unavailable")}`);
+  }
   if (entries.length === 0) lines.push("(none)");
   const rows = entries.slice(0, 12).map((entry) => ({ id: entry.id, cb: token({ action: "subagent", parentId: agent.id, childId: entry.id }) }));
   await openCard(chatId, lines.join("\n"), buildSubagentsKeyboard(rows));
 }
 
+async function isContinuableSubagent(parentId: string, childId: string): Promise<boolean> {
+  const entries = await listSubagents(requireCtx(), parentId);
+  return entries.some((entry) => entry.id === childId && entry.kind === "child" && entry.mode === "continuable");
+}
+
 async function openSubagentDetailCard(chatId: number, parentId: string, childId: string): Promise<void> {
-  const lines = [`\u{1F916} ${plain(truncate(childId, 32))}`, "", `parent: ${plain(truncate(parentId, 24))}`, "", "Prompt: /subagentprompt <text>"];
+  const entries = await listSubagents(requireCtx(), parentId);
+  const entry = entries.find((candidate) => candidate.id === childId);
+  const lines = [
+    `\u{1F916} ${plain(truncate(childId, 32))}`,
+    "",
+    `parent: ${plain(truncate(parentId, 24))}`,
+    entry === undefined
+      ? "catalog entry: not listed"
+      : `kind: ${entry.kind} \u00B7 activity: ${entry.activity}${entry.mode ? ` \u00B7 mode: ${entry.mode}` : ""}${entry.hasChildren === true ? " \u00B7 has children" : ""}`,
+    entry?.label ? `label: ${plain(truncate(entry.label, 40))}` : "",
+    entry?.kind === "diagnostic" ? `reason: ${plain(entry.reason ?? "unavailable")}` : "",
+  ].filter((line) => line !== "");
+  const continuable = entry?.kind === "child" && entry.mode === "continuable";
   const callbacks = {
-    prompt: token({ action: "subagent-prompt", parentId, childId }),
-    interrupt: token({ action: "subagent-interrupt", parentId, childId }),
+    ...(continuable
+      ? {
+          prompt: token({ action: "subagent-prompt", parentId, childId }),
+          interrupt: token({ action: "subagent-interrupt", parentId, childId }),
+        }
+      : {}),
     history: token({ action: "subagent-history", parentId, childId }),
   };
+  if (!continuable) lines.push("", "This subagent is not continuable \u2014 history is read-only.");
   await openCard(chatId, lines.join("\n"), buildSubagentDetailKeyboard(callbacks));
 }
 
@@ -1270,14 +1298,24 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "subagent":
       return openSubagentDetailCard(chatId, payload["parentId"] ?? "", payload["childId"] ?? "");
     case "subagent-prompt": {
+      const parentId = payload["parentId"] ?? "";
+      const childId = payload["childId"] ?? "";
+      if (!(await isContinuableSubagent(parentId, childId))) {
+        await requireTransport().sendText(chatId, "\u274C That subagent is not continuable.", { parse_mode: "HTML" });
+        return openSubagentDetailCard(chatId, parentId, childId);
+      }
       const t = requireTransport();
       await t.sendText(chatId, "Reply with the prompt text:", { parse_mode: "HTML" });
-      pendingSubagentPrompt = { chatId, parentId: payload["parentId"] ?? "", childId: payload["childId"] ?? "" };
+      pendingSubagentPrompt = { chatId, parentId, childId };
       return;
     }
     case "subagent-interrupt": {
       const parentId = payload["parentId"] ?? "";
       const childId = payload["childId"] ?? "";
+      if (!(await isContinuableSubagent(parentId, childId))) {
+        await requireTransport().sendText(chatId, "\u274C That subagent is not continuable.", { parse_mode: "HTML" });
+        return openSubagentDetailCard(chatId, parentId, childId);
+      }
       return askConfirm(
         chatId,
         `\u23F9 Interrupt subagent ${plain(truncate(childId, 28))}?`,

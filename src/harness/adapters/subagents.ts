@@ -10,16 +10,31 @@ import { readHistory } from "./sessions.js";
 
 export interface SubagentEntry {
   id: string;
-  kind: string;
-  activity: string;
+  kind: "child" | "diagnostic";
+  activity: "running" | "inactive";
+  /** One-shot terminal child or resumable conversation (web catalog row). */
+  mode?: "one-shot" | "continuable";
+  label?: string;
+  hasChildren?: boolean;
+  reason?: "corrupt" | "unsupported" | "unavailable";
 }
 
 interface AgentLike {
   id: SessionId;
 }
 
+interface SubagentListEntryLike {
+  kind: "child" | "diagnostic";
+  id: SessionId;
+  activity?: "running" | "inactive";
+  mode?: "one-shot" | "continuable";
+  label?: string;
+  hasChildren?: boolean;
+  reason?: "corrupt" | "unsupported" | "unavailable";
+}
+
 interface SubagentRuntimeLike {
-  listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<{ kind: string; id: SessionId }[]>;
+  listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntryLike[]>;
   followup(
     parent: AgentLike,
     childId: SessionId,
@@ -41,7 +56,13 @@ export async function listSubagents(ctx: Context, parentSessionId: string): Prom
     return entries.map((entry) => ({
       id: entry.id,
       kind: entry.kind,
-      activity: ctx.agents?.get(entry.id)?.status === "running" ? "running" : "inactive",
+      // `activity` is a store snapshot on the web row; the live agent
+      // registry status only matters for legacy providers that omit it.
+      activity: entry.activity ?? (ctx.agents?.get(entry.id)?.status === "running" ? "running" : "inactive"),
+      ...(entry.mode === undefined ? {} : { mode: entry.mode }),
+      ...(entry.label === undefined ? {} : { label: entry.label }),
+      ...(entry.hasChildren === undefined ? {} : { hasChildren: entry.hasChildren }),
+      ...(entry.kind === "diagnostic" ? { reason: entry.reason ?? "unavailable" } : {}),
     }));
   } catch {
     return [];

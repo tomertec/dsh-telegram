@@ -492,3 +492,28 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 1. 打开 Skills 卡：应只列出 user-invocable 技能；标题含 `N user-invocable`；model-only 技能以隐藏数呈现。
 2. `/search` 一个在 10+ 个事件中出现的词 → 第一页 10 条 + `More ›`；翻页后 `‹ Prev` 出现。
 3. 无 live session 时打开 Skills 卡：适配器不带 sessionId 调用，仍优雅返回 catalog。
+
+## 21. Round 7：Subagents 对齐 web 目录语义（2026-08-16，190/190）
+
+### 改动
+
+1. **`listSubagents` 投影 web `SubagentListEntry`**：
+   - 完整透传 `kind(child|diagnostic)`、`activity(running|inactive)`、`mode(one-shot|continuable)`、`label`、`hasChildren`、`reason(corrupt|unsupported|unavailable)`；
+   - legacy provider 省略 `activity` 时回退 live agent status。
+2. **Subagents 卡与详情**：
+   - 列表每行显示 `kind/activity/mode/children` + label；diagnostic 显示 reason；
+   - 详情只有 `continuable` 子代理显示 `📨 Prompt`/`⏹ Interrupt`；one-shot/diagnostic 只读 History；
+   - Prompt/Interrupt 回调前再次校验 continuable，防止旧按钮或伪造 payload。
+3. **测试**：subagents 新增目录投影与降级 2 例；keyboard 新增详情按钮裁剪 1 例。
+
+### 验证
+
+- `npm run check`：**190/190 pass**（新增 3 例）。
+- round 1–6 的 187 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步 subagent.list/prompt/interrupt 状态。
+
+### Telegram 人工复核
+
+1. Subagents 卡：continuable 行应含 `mode: continuable` 与 label；diagnostic 行显示 reason。
+2. 点 continuable 子代理：有 Prompt/Interrupt/History；点 one-shot/diagnostic：只有 History。
+3. 对 one-shot 子代理发送 `/subagentprompt`（若仍有旧按钮）→ 提示 not continuable，不进入回复流程。

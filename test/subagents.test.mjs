@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { promptSubagent, interruptSubagent } from '../dist/harness/adapters/subagents.js';
+import { listSubagents, promptSubagent, interruptSubagent } from '../dist/harness/adapters/subagents.js';
 
 function makeCtx(service) {
   const parent = { id: 'parent-session' };
@@ -55,4 +55,24 @@ test('interruptSubagent addresses the child session with user authority', () => 
   assert.equal(String(captured.childId), 'child-session');
   assert.equal(captured.authority.kind, 'user');
   assert.equal(String(captured.authority.parentSessionId), 'parent-session');
+});
+
+
+test('listSubagents projects web catalog fields and legacy fallbacks', async () => {
+  const child = { id: 'child-session', kind: 'child', activity: 'running', mode: 'continuable', label: 'researcher', hasChildren: true };
+  const diagnostic = { id: 'broken-session', kind: 'diagnostic', reason: 'corrupt' };
+  const legacy = { id: 'legacy-session', kind: 'child' };
+  const ctx = {
+    agents: { get: (id) => (String(id) === 'legacy-session' ? { status: 'running' } : undefined) },
+    get: (name) => (name === 'subagents' ? { listChildren: async () => [child, diagnostic, legacy] } : undefined),
+  };
+  const entries = await listSubagents(ctx, 'parent-session');
+  assert.deepEqual(entries[0], { id: 'child-session', kind: 'child', activity: 'running', mode: 'continuable', label: 'researcher', hasChildren: true });
+  assert.deepEqual(entries[1], { id: 'broken-session', kind: 'diagnostic', activity: 'inactive', reason: 'corrupt' });
+  assert.equal(entries[2].activity, 'running', 'legacy entries fall back to the live agent status');
+});
+
+test('listSubagents degrades without the service or on listing errors', async () => {
+  assert.deepEqual(await listSubagents({ get: () => undefined }, 'parent'), []);
+  assert.deepEqual(await listSubagents({ get: () => ({ listChildren: async () => { throw new Error('boom'); } }) }, 'parent'), []);
 });

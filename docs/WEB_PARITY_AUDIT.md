@@ -73,10 +73,10 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | session.attachment | 发图片自动 `saveImage` → 进 agent | 🟡 | 只处理当前 agent；无 web 图片限制预检；`readImageAttachment`（读回附件）无 UI |
 | session.updateQueue | Queue 卡编辑/删除/立即执行、/queueedit | ✅ | |
 | session.cancel | /stop、Stop 键 | ✅ | |
-| subagent.list | Subagents 卡 | 🟡 | 只显示 id/kind/running；缺 `hasChildren`、`mode`、`label`、diagnostic reason、`parentAvailable`；只能看当前 agent 的孩子 |
+| subagent.list | Subagents 卡 | 🟡 | 已显示 kind/activity/mode/label/hasChildren/diagnostic reason；parentAvailable 由「必须有 live parent 才能开卡」隐式表达 |
 | subagent.history | 详情 History | 🟡 | 复用通用 history，缺分页/projections/tool view |
-| subagent.prompt | 详情 Prompt → 回复文本 | 🟡 | 已修复为 `ContentBlock[]` 调用；仍缺 continuable 校验、时区、AbortSignal |
-| subagent.interrupt | 详情 Interrupt | 🟡 | 无确认；错误只有纯文本 |
+| subagent.prompt | 详情 Prompt → 回复文本 | 🟡 | 已做 continuable 校验（非 continuable 只读 history）；仍缺时区、AbortSignal |
+| subagent.interrupt | 详情 Interrupt | ✅ | 仅 continuable 显示；二次确认；错误纯文本 |
 | host.describe | Host 卡 | 🟡 | `version` 写死 `0.0.1`；provider/model 取第一个 agent，不是宿主默认 seam |
 | host.pickDirectory | /pickdir、Project 选择器 | ✅ | 平台限制下用路径式选择代替原生对话框；无参数时给提示并打开 Project 卡 |
 | host.listDirectory | /ls（文本）、Host 卡 `Browse cwd` 逐级浏览 | ✅ | 点击文件夹进入、Up/~// 导航、目录 20/页、文件只计数；`/ls` 保留文本形式 |
@@ -319,6 +319,7 @@ Map<chatId, {
 - [x] host/commands/jobs/dynamic 适配器补单测（`test/host.test.mjs`、`test/commands-jobs-dynamic.test.mjs`）。
 - [x] Host 卡 `Browse cwd`：可点目录逐级浏览（Up/~//、20/页），`h:ls` 旧卡片兼容映射；Jobs 卡 20/页；Search 卡专用键盘。
 - [x] Skills 卡按 session 查询（传 `sessionId` option）并只显示 user-invocable；Search 结果 10/页分页。
+- [x] Subagents 卡/详情补 web 字段（mode/label/hasChildren/reason）；Prompt/Interrupt 只对 continuable 子代理开放。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

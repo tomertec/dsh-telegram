@@ -26,13 +26,19 @@
 - Host `Browse cwd` 目录浏览、Jobs 分页、Search 专用键盘。
 - 184/184 tests；提交 `9fe482e`；详见 TESTING.md §19。
 
-## 2026-08-16 Round 6（本轮）
+## 2026-08-16 Round 6（已完成）
 
 - Skills 按 sessionId 查询并只显示 user-invocable；Search 结果 10/页分页。
-- `npm run check`：**187/187 pass**。
-- 文档已同步 TESTING.md §20 与 WEB_PARITY_AUDIT.md。
+- 187/187 tests；提交 `d50ae7d`；详见 TESTING.md §20。
+
+## 2026-08-16 Round 7（本轮）
+
+- Subagents 对齐 web 目录语义：mode/label/hasChildren/reason 投影；
+  continuable 才可 Prompt/Interrupt，回调前二次校验。
+- `npm run check`：**190/190 pass**。
+- 文档已同步 TESTING.md §21 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 7 候选）
+## 下一步（Round 8 候选）
 
-文档/语音附件、subagent 详情字段、downloads 单测、Telegram 实测清单。
+文档/语音附件、downloads 单测、Telegram 实测清单、最终上线复测。

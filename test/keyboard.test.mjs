@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -208,4 +208,13 @@ test('buildSearchKeyboard lists hit sessions with new-search and sessions action
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:next')));
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:search')));
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:sessions')));
+});
+
+test('buildSubagentDetailKeyboard hides prompt/interrupt for non-continuable children', () => {
+  const readOnly = buildSubagentDetailKeyboard({ history: 't:h' });
+  assert.equal(readOnly.inline_keyboard.some((row) => row.some((b) => b.text === '📨 Prompt')), false);
+  assert.equal(readOnly.inline_keyboard.some((row) => row.some((b) => b.text === '⏹ Interrupt')), false);
+  const full = buildSubagentDetailKeyboard({ prompt: 't:p', interrupt: 't:i', history: 't:h' });
+  assert.ok(full.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:p')));
+  assert.ok(full.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:i')));
 });
