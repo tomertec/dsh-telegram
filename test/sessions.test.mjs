@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession, listSessionDetails, saveImageAttachment, readImageAttachment, releaseSavedAttachments } from '../dist/harness/adapters/sessions.js';
+import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession, listSessionDetails, saveImageAttachment, readImageAttachment, releaseSavedAttachments, displayTitleFor, groupSessionsByProject, orderProjectGroups, sortProjectSessions, UNGROUPED_KEY } from '../dist/harness/adapters/sessions.js';
 
 function queueAgent(id, nextTurn, nextStep, status = 'idle') {
   const make = (items) => items.map((item) => ({ id: item.id, content: [{ type: 'text', text: item.text }] }));
@@ -130,12 +130,12 @@ test('promptSession queues without waking', () => {
 });
 
 
-test('listSessionDetails sorts by most recent prompt (web updatedAt desc)', async () => {
+test('listSessionDetails sorts by most recent prompt and keeps the web title fallback chain', async () => {
   const sessions = {
     list: () => [
-      { id: 'old', events: [{ seq: 0, type: 'user/message', at: 100, data: { content: [{ type: 'text', text: 'old prompt' }] } }] },
-      { id: 'new', events: [{ seq: 0, type: 'user/message', at: 300, data: { content: [{ type: 'text', text: 'new prompt' }] } }] },
-      { id: 'never', events: [] },
+      { id: 'old', header: { cwd: '/proj/alpha' }, events: [{ seq: 0, type: 'user/message', at: 100, data: { content: [{ type: 'text', text: 'old prompt' }] } }] },
+      { id: 'new', header: { cwd: '/proj/alpha' }, events: [{ seq: 0, type: 'user/message', at: 300, data: { content: [{ type: 'text', text: 'new prompt' }] } }] },
+      { id: 'never', header: { cwd: '/proj/alpha' }, events: [] },
     ],
   };
   const ctx = {
@@ -145,8 +145,94 @@ test('listSessionDetails sorts by most recent prompt (web updatedAt desc)', asyn
   const details = await listSessionDetails(ctx);
   assert.deepEqual(details.map((d) => d.id), ['new', 'old', 'never']);
   assert.equal(details[0].lastPromptAt, 300);
-  assert.equal(details[1].title, 'old prompt');
+  assert.equal(details[1].title, undefined, 'no title event: the caller falls back to the cwd basename');
+  assert.equal(displayTitleFor(details[1].title, details[1].cwd, details[1].id), 'alpha');
   assert.equal(details[2].lastPromptAt, undefined);
+});
+
+test('listSessionDetails marks running by agent status and carries cold cwd', async () => {
+  const sessions = {
+    list: () => [
+      { id: 's-run', header: { cwd: '/proj/a' }, events: [{ seq: 0, type: 'user/message', at: 10, data: { content: [{ type: 'text', text: 'go' }] } }] },
+      { id: 's-idle', header: { cwd: '/proj/a' }, events: [{ seq: 0, type: 'user/message', at: 20, data: { content: [{ type: 'text', text: 'go' }] } }] },
+    ],
+  };
+  const agents = new Map([
+    ['s-run', { id: 's-run', status: 'running' }],
+    ['s-idle', { id: 's-idle', status: 'idle' }],
+  ]);
+  const persistence = {
+    list: async () => [{ id: 'cold', cwd: '/proj/b' }],
+    readRaw: async (id) => (id === 'cold'
+      ? { events: [{ seq: 0, type: 'session/title', data: { title: 'Cold work' } }] }
+      : undefined),
+  };
+  const ctx = {
+    agents: { list: () => [...agents.values()], get: (id) => agents.get(String(id)) },
+    get: (name) => {
+      if (name === 'sessions') return sessions;
+      if (name === 'sessionPersistence') return persistence;
+      return undefined;
+    },
+  };
+  const details = await listSessionDetails(ctx);
+  const run = details.find((detail) => detail.id === 's-run');
+  const idle = details.find((detail) => detail.id === 's-idle');
+  const cold = details.find((detail) => detail.id === 'cold');
+  assert.equal(run.running, true);
+  assert.equal(idle.running, false, 'an attached idle agent is not running');
+  assert.equal(cold.cwd, '/proj/b', 'cold cwd comes from the persistence header');
+  assert.equal(cold.title, 'Cold work');
+});
+
+test('displayTitleFor mirrors the web title → cwd basename → id chain', () => {
+  assert.equal(displayTitleFor('  Continue  ', '/proj/alpha', 's1'), 'Continue');
+  assert.equal(displayTitleFor(undefined, '/proj/alpha/', 's1'), 'alpha');
+  assert.equal(displayTitleFor('   ', '/proj/alpha/', 's1'), 'alpha');
+  assert.equal(displayTitleFor(undefined, '\\\\server\\share\\beta\\', 's1'), 'beta');
+  assert.equal(displayTitleFor(undefined, undefined, 's1'), 's1');
+});
+
+test('groupSessionsByProject groups by workspace membership then cwd pseudo-projects', () => {
+  const detail = (id, cwd, running = false, lastPromptAt = 0) => ({ id, cwd, running, lastPromptAt, live: true, title: undefined, blank: false, eventCount: 1, archived: false });
+  const details = [
+    detail('s1', '/proj/alpha', true, 10),
+    detail('s2', '/proj/beta', false, 20),
+    detail('s3', '/other/beta', false, 30),
+    detail('s4', undefined, false, 40),
+    detail('s5', '/proj/alpha', false, 50),
+  ];
+  const groups = groupSessionsByProject(details, [
+    { workspaceId: 'w1', title: 'Alpha', path: '/proj/alpha', sessionIds: ['s1', 's5'] },
+  ]);
+  assert.deepEqual(groups.map((group) => group.key), ['w1', '/proj/beta', '/other/beta', UNGROUPED_KEY]);
+  assert.equal(groups[0].runningCount, 1);
+  assert.deepEqual(groups[0].sessions.map((session) => session.id), ['s1', 's5'], 'running sessions first');
+  assert.equal(groups[1].label, 'beta');
+  assert.equal(groups[2].label, 'beta (other)', 'same-basename pseudo projects are disambiguated');
+  assert.equal(groups[3].label, '未分组');
+});
+
+test('orderProjectGroups ranks bound running, running, bound, recency, ungrouped', () => {
+  const group = (key, label, runningCount, latestPromptAt, sessionIds) => ({ key, label, runningCount, latestPromptAt, sessions: sessionIds.map((id) => ({ id, running: false })) });
+  const groups = [
+    group('w-a', 'A', 0, 100, ['s-a']),
+    group('w-b', 'B', 1, 50, ['s-b']),
+    group('w-c', 'C', 1, 200, ['s-c']),
+    group(UNGROUPED_KEY, '未分组', 0, 400, ['s-u']),
+  ];
+  const ordered = orderProjectGroups(groups, 's-b');
+  assert.deepEqual(ordered.map((g) => g.key), ['w-b', 'w-c', 'w-a', UNGROUPED_KEY]);
+});
+
+test('sortProjectSessions sorts running first then recent prompt then id', () => {
+  const session = (id, running, lastPromptAt) => ({ id, running, lastPromptAt });
+  const sorted = sortProjectSessions([
+    session('old', false, 100),
+    session('run', true, 1),
+    session('new', false, 300),
+  ]);
+  assert.deepEqual(sorted.map((s) => s.id), ['run', 'new', 'old']);
 });
 
 

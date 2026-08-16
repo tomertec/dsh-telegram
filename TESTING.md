@@ -1115,7 +1115,8 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 ### 修复
 
 1. **Session 自定义标题显示**：`titleFor` 现在优先扫描 `session/title` 事件（web 的
-   `foldSessionTitle` 同源），冷会话也保留名称；服务不可用时回退首条用户消息。
+   `foldSessionTitle` 同源），冷会话也保留名称；服务不可用时回退首条用户消息
+   （§54 起改为 web 三级回退：标题 → cwd 基名 → id）。
 2. **Workspace Create 目录选择器**：`w:create` 不再要求输入抽象路径，改为
    Project 式浏览（Up/Home/Root/翻页），选中目录点 `✅ Create here` 即注册。
    `/workspacecreate <path>` 命令保留为高级路径。
@@ -1136,3 +1137,42 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - `Subagents: N` 与 `Background jobs running: N` 显示在 Status 卡与第 0 页 Menu 头部；
   按当前 bound 会话统计（与 web 顶栏同一会话口径）。
+
+## 54. Sessions 卡按项目分组 + 运行项目优先（2026-08-16，236/236）
+
+### 需求与 web 对齐结论
+
+- 会话名直接同步 web 已写入日志的标题：`session/title` 最新事件 → cwd 基名 → id，
+  不再用首条用户消息兜底。
+- 会话按工作区项目分类；`/sessions` 默认打开运行中项目的会话页，`🔀 项目` 可切换，
+  保留 `🌐 全部会话` 平铺视图。
+- 项目内运行中的会话排最前；项目切换器按“bound 且运行 → 运行中 → bound → 最近活跃”排序。
+
+### 修复
+
+1. `listSessionDetails`：`running` 改为 `agent.status === 'running'`（原实现把挂载即当运行）；
+   冷会话从 persistence header 透传 `cwd`（此前冷会话永远进不了项目分类）。
+2. `titleFor`：删除首条用户消息兜底，新增 `displayTitleFor(title, cwd, id)` 实现 web
+   三级回退；cwd 基名解析同时支持 `/` 与 `\`。
+3. 新增 `groupSessionsByProject / orderProjectGroups / sortProjectSessions`：
+   workspace `sessionIds` 记账优先，未记账会话按 cwd 组伪项目（同基名消歧），
+   无 cwd 进“未分组”并恒排最后。
+4. Sessions 卡：`openSessionsCard(chatId, projectKey?, page)` 默认解析活跃项目；
+   `openSessionProjectsCard` 提供 12/页项目切换器；per-chat `lastSessionsProject`
+   保证详情/翻页/删除后回到原项目；回调新增 `sessions-projects`、
+   `sessions-project`、`sessions-projects-page`、`sessions-open`。
+5. 键盘：`buildSessionsKeyboard` 顶部加 `🔀 项目 (N)`、运行按钮加 `▶` 前缀；
+   新增 `buildSessionProjectsKeyboard`；`buildSessionDetailKeyboard` 支持自定义返回 token。
+
+### 测试
+
+- `test/sessions.test.mjs`：标题回退链、冷会话 cwd、agent status 判定、
+  分组/排序/活跃项目/同基名消歧共 6 个新用例，旧“首条消息当标题”断言改为 web 语义。
+- `test/keyboard.test.mjs`：项目切换按钮、运行标记、项目切换器键盘/分页。
+- `npm run check`：**236/236 pass**。
+
+## 54. Round 2 追加：409 冲突静默退避（2026-08-19，236/236）
+
+- `getUpdates` 连续 409（另一实例在轮询同一 token）时：首次只打一条诊断日志，
+  之后指数退避（2s→4s→…→30s）静默重试；对方停止后自动接管并复位计数。
+- 避免之前每次 409 刷屏、持续硬碰的局面。

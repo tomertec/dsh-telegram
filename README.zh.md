@@ -52,6 +52,7 @@ DeepSeek Harness 的 Web UI 是 agent 控制面的金标准：会话、模型、
 
 - **🔀 多聊天隔离** — 每 chat 独立绑定 agent；每 chat FIFO 入站路由覆盖 create→bind→deliver 全链路（快速连发首条消息绝不会建两个会话）；未绑定 chat 的展示也 fail-closed
 - **🎛️ 按钮式交互** — 常驻 10 键键盘栏（`☰ Menu · ✨ New · 🧩 Models` …）加临时内联卡片：会话、工作区、目标、技能、子代理、预设、设置、凭据、模型、宿主、任务、插件与动态清单
+- **🗂️ 按项目分组的会话** — Sessions 卡按工作区项目分类，标题同步 web（`session/title` → cwd 基名 → id），默认展示运行中项目的会话，`🔀 项目` 一键切换，保留 `🌐 全部会话` 平铺视图
 - **🌐 Web 对齐** — 适配器按 Web ApiProxy RPC 契约实现：`session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`、subagent、host、workspace、agentPreset、skills、goals、settings、credentials、llm providers/discovery
 - **⚡ Openclaw 风格实时流** — 思考/工具进度/打字机回复分层渲染，结束后折叠为摘要（`outbound.liveFeed` 热切换）
 - **📝 HTML 感知长文拆分** — 超过 4096 字符时按换行/空格边界切分，绝不切在标签或实体内部，跨切分标签逐段配平

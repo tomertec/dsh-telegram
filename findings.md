@@ -205,3 +205,13 @@
 ## Round 2 追加
 
 - listJobs 用 SessionId 修正 caller；loadExportSeam 多根解析 profile 依赖；tool/call 片断渲染补齐。
+
+## Sessions 按项目分组（web 对齐）
+
+- 调研 web 工作区：标题链是 `session/title` 最新事件 → cwd 基名 → id；“继续”来自首条消息
+  fallback + first-prompt LLM；workspace 分组权威是 `workspace.sessionIds`。
+- Telegram 差距：标题兜底用首条用户消息（与 web 不一致）、冷会话丢 cwd、`running`
+  误用“agent 已挂载”、Sessions 卡无项目维度。
+- 修复：`displayTitleFor` 三级回退；冷 cwd 透传；running 用 `agent.status`；
+  `groupSessionsByProject/orderProjectGroups/sortProjectSessions` 分组与排序；
+  Sessions 卡默认活跃项目 + `🔀 项目` 切换 + `🌐 全部会话` 兼容；详情返回原项目。

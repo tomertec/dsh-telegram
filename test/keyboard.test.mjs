@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, decodeCallbackValue, encodedCallback, inputPromptKeyboard, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSessionProjectsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, decodeCallbackValue, encodedCallback, inputPromptKeyboard, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -165,16 +165,32 @@ test('buildConfirmKeyboard lays out confirm and cancel side by side', () => {
   ]);
 });
 
-test('buildSessionsKeyboard paginates ids and shows custom titles', () => {
-  const items = Array.from({ length: 25 }, (_, i) => ({ id: `session-${i}`, title: i % 2 === 0 ? `My session ${i}` : undefined }));
-  const first = buildSessionsKeyboard(items, { next: 't:next' });
+test('buildSessionsKeyboard paginates ids, shows titles, and adds the project switcher', () => {
+  const items = Array.from({ length: 25 }, (_, i) => ({ id: `session-${i}`, title: i % 2 === 0 ? `My session ${i}` : undefined, running: i === 0 }));
+  const first = buildSessionsKeyboard(items, { projectCount: 3, projectsCb: 't:projects', paging: { next: 't:next' } });
   assert.equal(first.inline_keyboard.filter((row) => row.some((b) => b.text.startsWith('🧭'))).length, 10);
   assert.ok(first.inline_keyboard.some((row) => row.some((b) => b.text.includes('My session 0'))), 'button should show the custom title');
+  assert.ok(first.inline_keyboard.some((row) => row.some((b) => b.text.includes('▶ My session 0'))), 'running session button carries the running marker');
+  assert.ok(first.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:projects')), 'project switcher button present');
   assert.equal(first.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:search')), false, 'the Sessions card no longer advertises search');
   const nav = first.inline_keyboard.find((row) => row.some((b) => b.callback_data === 't:next'));
   assert.ok(nav);
-  const last = buildSessionsKeyboard(items.slice(10), { previous: 't:prev', next: 't:next2' });
+  const last = buildSessionsKeyboard(items.slice(10), { paging: { previous: 't:prev', next: 't:next2' } });
   assert.ok(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:prev')));
+  assert.equal(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:projects')), false, 'no project button without a callback');
+});
+
+test('buildSessionProjectsKeyboard lists all/projects with running counts and paging', () => {
+  const items = [
+    { label: 'Alpha', running: 2, total: 4, cb: 't:a' },
+    { label: 'Beta', running: 0, total: 1, cb: 't:b' },
+  ];
+  const kb = buildSessionProjectsKeyboard(items, { all: 't:all', paging: { next: 't:next' }, back: 't:back' });
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:all')));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:a' && b.text.includes('▶2'))));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:b' && b.text.includes('共1'))));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:next')));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:back')));
 });
 
 test('buildHistoryKeyboard adds Load older only when there is an older window', () => {

@@ -150,3 +150,12 @@
 ## Round 25 发布动作
 
 - GitHub push + pre-release 完成；用户已明确选择暂不发布 npm，发布动作以 GitHub rc release 收口。
+
+## Sessions 项目分组交互（本轮）
+
+- 按用户要求：标题直接同步 web（title → cwd 基名 → id），Sessions 卡按工作区项目分组，
+  默认打开运行中项目，`🔀 项目` 可切换，保留 `🌐 全部会话` 平铺。
+- 适配层：cold cwd 透传、`running` 改 `agent.status`、新增分组/排序纯函数。
+- UI：Sessions 卡项目页 + 项目切换器 + per-chat 返回记忆；键盘新增项目行与运行标记。
+- `npm run check`：**236/236 pass**；计划见 `docs/SESSION_UX_PLAN.md`。
+- 待办：实机冒烟（真实 bot `/sessions` 默认落运行项目、切换、返回同项目）。

@@ -52,6 +52,7 @@ DeepSeek Harness's web UI is the gold standard for controlling an agent: session
 
 - **🔀 Multi-chat isolation** — per-chat agent bindings, per-chat FIFO inbound router that spans the whole create→bind→deliver path (two rapid first messages can never create two sessions), unbound chats fail closed for display too
 - **🎛️ Button-first UX** — persistent 10-key reply bar (`☰ Menu · ✨ New · 🧩 Models` …) plus ephemeral inline cards for sessions, workspaces, goals, skills, subagents, presets, settings, credentials, llm/models, host, jobs, plugins and dynamic inventory
+- **🗂️ Project-grouped sessions** — the Sessions card mirrors the web display-title chain (`session/title` → cwd basename → id), groups sessions by workspace project, opens the running project first, and offers a `🔀 项目` switcher plus the legacy `🌐 全部会话` flat view
 - **🌐 Web-parity surface** — adapters mirror the web ApiProxy RPC contract: `session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`, subagents, host, workspace, agent presets, skills, goals, settings, credentials, llm providers/discovery
 - **⚡ Openclaw-style live feed** — separate thinking lane, live tool progress, typewriter answer draft, collapse summary on delivery (`outbound.liveFeed`, hot-toggleable)
 - **📝 HTML-aware long sends** — messages over 4096 chars are split on newline/space boundaries, never inside tags or entities, with tags rebalanced per part

@@ -71,6 +71,9 @@ export class TelegramTransport {
   /** Last confirmed update id; preserved across stop/start generations so a
    * hot restart never asks Telegram to redeliver an already-seen batch. */
   private pollOffset = 0;
+  /** Consecutive 409 "terminated by other getUpdates" failures. The loop
+   * backs off instead of spamming and stops logging every single conflict. */
+  private conflict409 = 0;
 
   constructor(options: TransportOptions) {
     this.bot = new Bot(options.token);
@@ -194,10 +197,25 @@ export class TelegramTransport {
               // (the "bot went mute" failure).
               void this.handleUpdate(update).catch((err) => this.log("update handler failed", err));
             }
+            this.conflict409 = 0;
           } catch (err) {
             if (abort.signal.aborted) return;
-            this.log("polling error (retrying in 2s)", err);
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            const code = (err as { error_code?: number } | null)?.error_code;
+            if (code === 409) {
+              this.conflict409 += 1;
+              if (this.conflict409 === 1) {
+                this.log(
+                  "polling conflict: another bot instance is polling this token — this instance stays ready and retries quietly until it stops",
+                  err,
+                );
+              }
+              const delay = Math.min(30_000, 2000 * 2 ** Math.min(this.conflict409, 4));
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            } else {
+              this.conflict409 = 0;
+              this.log("polling error (retrying in 2s)", err);
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
           }
         }
       })();

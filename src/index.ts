@@ -24,7 +24,12 @@ import { compactCurrent } from "./harness/adapters/compact.js";
 import { modeSummary } from "./harness/adapters/mode.js";
 import { listPlugins, togglePlugin, entryIdFor } from "./harness/adapters/plugins.js";
 import {
+  displayTitleFor,
+  groupSessionsByProject,
   listSessionDetails,
+  orderProjectGroups,
+  type ProjectGroup,
+  type SessionDetail,
   searchSessions,
   readHistory,
   renameSession,
@@ -77,6 +82,7 @@ import {
   buildSessionsKeyboard,
   buildSearchKeyboard,
   buildSessionDetailKeyboard,
+  buildSessionProjectsKeyboard,
   buildWorkspaceKeyboard,
   buildWorkspaceDetailKeyboard,
   buildQueueKeyboard,
@@ -140,6 +146,8 @@ interface State {
   barCarriers: Map<number, number>;
   /** Per-chat debounce timers for bar refreshes. */
   barTimers: Map<number, ReturnType<typeof setTimeout>>;
+  /** Last project key shown on the per-chat Sessions card (back navigation). */
+  lastSessionsProject: Map<number, string>;
 }
 
 /** Web `ApiProxy.events.host` also forwards these remote-service events. */
@@ -173,6 +181,7 @@ const state: State = {
   barCounts: new Map(),
   barCarriers: new Map(),
   barTimers: new Map(),
+  lastSessionsProject: new Map(),
 };
 
 /** Disposers for the refresh-only cordis event subscriptions above. */
@@ -208,6 +217,7 @@ function teardownMount(): void {
   typingLoops.clear();
   for (const timer of state.barTimers.values()) clearTimeout(timer);
   state.barTimers.clear();
+  state.lastSessionsProject.clear();
   state.barCounts.clear();
   state.barCarriers.clear();
   releaseAllModelSelections();
@@ -713,29 +723,94 @@ async function openPluginsCard(chatId: number, page = 0): Promise<void> {
 }
 
 const SESSIONS_PAGE_SIZE = 10;
+const SESSION_PROJECTS_PAGE_SIZE = 12;
+/** Synthetic project key for the legacy flat "all sessions" view. */
+const ALL_PROJECTS_KEY = "__all__";
 
-async function openSessionsCard(chatId: number, page = 0): Promise<void> {
+/** Load the Sessions roster once and project it into web-style ordered project groups. */
+async function sessionProjectSnapshot(chatId: number): Promise<{ details: SessionDetail[]; groups: ProjectGroup[]; bound?: string }> {
   const ctx = requireCtx();
   const details = await listSessionDetails(ctx);
-  const totalPages = Math.max(1, Math.ceil(details.length / SESSIONS_PAGE_SIZE));
+  const workspaces = listWorkspaces(ctx).items;
+  const groups = groupSessionsByProject(details, workspaces);
+  const bound = state.bridge?.agentIdForChat(chatId) ?? state.bridge?.currentAgentIdValue();
+  return { details, groups: orderProjectGroups(groups, bound), bound };
+}
+
+/** Project key the user last viewed on this chat's Sessions card. */
+function lastProjectKey(chatId: number): string | undefined {
+  return state.lastSessionsProject.get(chatId);
+}
+
+async function openSessionsCard(chatId: number, projectKey?: string, page = 0): Promise<void> {
+  const { details, groups, bound } = await sessionProjectSnapshot(chatId);
+  const requestedKey = projectKey ?? groups[0]?.key ?? ALL_PROJECTS_KEY;
+  const group = requestedKey === ALL_PROJECTS_KEY ? undefined : groups.find((candidate) => candidate.key === requestedKey) ?? groups[0];
+  const key = group?.key ?? ALL_PROJECTS_KEY;
+  const sessions = group?.sessions ?? details;
+  const totalPages = Math.max(1, Math.ceil(sessions.length / SESSIONS_PAGE_SIZE));
   const safe = Math.max(0, Math.min(page, totalPages - 1));
-  const pageItems = details.slice(safe * SESSIONS_PAGE_SIZE, (safe + 1) * SESSIONS_PAGE_SIZE);
-  const current = state.bridge?.agentIdForChat(chatId) ?? state.bridge?.currentAgentIdValue();
-  const lines = [`\u{1F9ED} Sessions (${details.length}) \u00B7 page ${safe + 1}/${totalPages}`, ""];
+  const pageItems = sessions.slice(safe * SESSIONS_PAGE_SIZE, (safe + 1) * SESSIONS_PAGE_SIZE);
+  const runningCount = group?.runningCount ?? details.filter((session) => session.running).length;
+  const label = group?.label ?? "\u5168\u90E8\u4F1A\u8BDD";
+  state.lastSessionsProject.set(chatId, key);
+  const lines = [
+    `\u{1F9ED} Sessions \u00B7 ${plain(truncate(label, 26))} \u00B7 \u25B6${runningCount}/${sessions.length} \u00B7 page ${safe + 1}/${totalPages}`,
+    "",
+  ];
+  if (sessions.length === 0) lines.push("(\u8BE5\u9879\u76EE\u6682\u65E0\u4F1A\u8BDD)", "");
   for (const session of pageItems) {
     const flags = [session.live ? "live" : "cold", session.running ? "running" : "idle"];
     if (session.archived) flags.push("archived");
-    const label = session.title && session.title.trim() !== "" ? session.title : session.id;
+    const title = displayTitleFor(session.title, session.cwd, session.id);
+    const hasTitle = session.title !== undefined && session.title.trim() !== "";
     lines.push(
-      `${session.id === current ? "\u25B8" : "\u2022"} ${plain(truncate(label, 32))} \u00B7 ${flags.join("/")}${session.title && session.title.trim() !== "" ? ` \u00B7 ${plain(truncate(session.id, 14))}` : ""}`,
+      `${session.id === bound ? "\u25B8" : "\u2022"} ${session.running ? "\u25B6 " : ""}${plain(truncate(title, 32))} \u00B7 ${flags.join("/")}${hasTitle ? ` \u00B7 ${plain(truncate(session.id, 14))}` : ""}`,
     );
     if (session.lastPromptAt !== undefined) lines.push(`   last prompt: ${plain(new Date(session.lastPromptAt).toLocaleString())}`);
   }
   lines.push("", "Tap a session for Use/History/Rename/Fork/Archive/Model/Queue.");
-  await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => ({ id: session.id, title: session.title })), {
-    ...(safe > 0 ? { previous: token({ action: "sessions-page", page: String(safe - 1) }) } : {}),
-    ...(safe + 1 < totalPages ? { next: token({ action: "sessions-page", page: String(safe + 1) }) } : {}),
-  }), () => openSessionsCard(chatId, safe));
+  await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => ({
+    id: session.id,
+    title: displayTitleFor(session.title, session.cwd, session.id),
+    running: session.running,
+  })), {
+    projectCount: groups.length,
+    projectsCb: token({ action: "sessions-projects" }),
+    paging: {
+      ...(safe > 0 ? { previous: token({ action: "sessions-page", projectKey: key, page: String(safe - 1) }) } : {}),
+      ...(safe + 1 < totalPages ? { next: token({ action: "sessions-page", projectKey: key, page: String(safe + 1) }) } : {}),
+    },
+  }), () => openSessionsCard(chatId, key, safe));
+}
+
+/** Project switcher page: running projects first, then current, then recency. */
+async function openSessionProjectsCard(chatId: number, page = 0): Promise<void> {
+  const { groups, bound } = await sessionProjectSnapshot(chatId);
+  const totalPages = Math.max(1, Math.ceil(groups.length / SESSION_PROJECTS_PAGE_SIZE));
+  const safe = Math.max(0, Math.min(page, totalPages - 1));
+  const pageGroups = groups.slice(safe * SESSION_PROJECTS_PAGE_SIZE, (safe + 1) * SESSION_PROJECTS_PAGE_SIZE);
+  const lines = [`\u{1F504} \u9879\u76EE (${groups.length}) \u00B7 page ${safe + 1}/${totalPages}`, ""];
+  for (const group of pageGroups) {
+    const current = bound !== undefined && group.sessions.some((session) => session.id === bound);
+    lines.push(
+      `${current ? "\u25B8" : "\u2022"} ${plain(truncate(group.label, 30))} \u00B7 \u25B6${group.runningCount} \u00B7 \u5171${group.sessions.length}`,
+    );
+  }
+  lines.push("", "Tap a project to switch its Sessions page.");
+  await openCard(chatId, lines.join("\n"), buildSessionProjectsKeyboard(pageGroups.map((group) => ({
+    label: group.label,
+    running: group.runningCount,
+    total: group.sessions.length,
+    cb: token({ action: "sessions-project", projectKey: group.key }),
+  })), {
+    all: token({ action: "sessions-project", projectKey: ALL_PROJECTS_KEY }),
+    paging: {
+      ...(safe > 0 ? { previous: token({ action: "sessions-projects-page", page: String(safe - 1) }) } : {}),
+      ...(safe + 1 < totalPages ? { next: token({ action: "sessions-projects-page", page: String(safe + 1) }) } : {}),
+    },
+    back: token({ action: "sessions-open" }),
+  }), () => openSessionProjectsCard(chatId, safe));
 }
 
 async function openSessionDetailCard(chatId: number, sessionId: string): Promise<void> {
@@ -744,18 +819,19 @@ async function openSessionDetailCard(chatId: number, sessionId: string): Promise
   const session = details.find((candidate) => candidate.id === sessionId);
   if (!session) {
     await requireTransport().sendText(chatId, `\u274C Session ${plain(truncate(sessionId, 32))} not found.`, { parse_mode: "HTML" });
-    return openSessionsCard(chatId);
+    return openSessionsCard(chatId, lastProjectKey(chatId));
   }
-  const title = session.title && session.title.trim() !== "" ? session.title : session.id;
+  const title = displayTitleFor(session.title, session.cwd, session.id);
+  const hasTitle = session.title !== undefined && session.title.trim() !== "";
   const lines = [
-    `\u{1F9ED} ${plain(truncate(title, 40))}${session.title && session.title.trim() !== "" ? ` \u00B7 ${plain(truncate(session.id, 16))}` : ""}`,
+    `\u{1F9ED} ${plain(truncate(title, 40))}${hasTitle ? ` \u00B7 ${plain(truncate(session.id, 16))}` : ""}`,
     "",
     `live: ${session.live} \u00B7 running: ${session.running} \u00B7 blank: ${session.blank} \u00B7 archived: ${session.archived}`,
     `events: ${session.eventCount}${session.cwd ? ` \u00B7 cwd: ${plain(truncate(session.cwd, 28))}` : ""}`,
-    session.title ? `id: ${plain(session.id)}` : "",
+    hasTitle ? `id: ${plain(session.id)}` : "",
     session.lastPromptAt !== undefined ? `last prompt: ${plain(new Date(session.lastPromptAt).toLocaleString())}` : "",
   ].filter((line) => line !== "");
-  await openCard(chatId, lines.join("\n"), buildSessionDetailKeyboard(session.id, session.archived));
+  await openCard(chatId, lines.join("\n"), buildSessionDetailKeyboard(session.id, session.archived, token({ action: "sessions-open" })));
 }
 
 async function openHistoryCard(chatId: number, sessionId: string, beforeSeq?: number): Promise<void> {
@@ -1554,15 +1630,30 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const sessionId = payload["sessionId"] ?? "";
       const res = await deleteSession(requireCtx(), sessionId);
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "session-delete-cancel": {
       await requireTransport().sendText(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "sessions-page": {
       const page = Number(payload["page"] ?? "0");
-      return openSessionsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
+      const projectKey = payload["projectKey"] ?? lastProjectKey(chatId);
+      return openSessionsCard(chatId, projectKey, Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "sessions-projects": {
+      return openSessionProjectsCard(chatId);
+    }
+    case "sessions-projects-page": {
+      const page = Number(payload["page"] ?? "0");
+      return openSessionProjectsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "sessions-project": {
+      const projectKey = payload["projectKey"] ?? lastProjectKey(chatId);
+      return openSessionsCard(chatId, projectKey);
+    }
+    case "sessions-open": {
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "plugins-page": {
       const page = Number(payload["page"] ?? "0");
@@ -1575,7 +1666,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "search-page": {
       const page = Number(payload["page"] ?? "0");
       const query = payload["query"] ?? "";
-      if (query === "") return openSessionsCard(chatId);
+      if (query === "") return openSessionsCard(chatId, lastProjectKey(chatId));
       return openSearchCard(chatId, query, Number.isFinite(page) && page > 0 ? page : 0);
     }
     case "history-older": {
@@ -1726,7 +1817,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
         state.bridge?.bindAgent(chatId, targetId);
         await requireTransport().sendText(chatId, `\u{1F3AF} Switched to session ${plain(truncate(targetId, 32))}.`, { parse_mode: "HTML" });
       }
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     if (sub === "history") return openHistoryCard(chatId, id);
     if (sub === "rename") {
@@ -1741,7 +1832,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     if (sub === "fork") {
       const res = forkSession(requireCtx(), id);
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     if (sub === "archive") {
       const res = await archiveSession(requireCtx(), id);
@@ -1785,7 +1876,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       const agent = sessionLifecycle.find(requireCtx(), id);
       if (!agent) {
         await requireTransport().sendText(chatId, "\u274C Session is not live \u2014 the queue is agent-owned.", { parse_mode: "HTML" });
-        return openSessionsCard(chatId);
+        return openSessionsCard(chatId, lastProjectKey(chatId));
       }
       const items = listQueue(requireCtx(), id);
       await openCard(chatId, `\u231B Queue \u00B7 ${plain(truncate(id, 24))} (${items.length})`, buildQueueKeyboard(items.map((item, index) => ({ itemId: item.itemId, kind: item.target, index }))));
@@ -1795,7 +1886,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   }
   if (data.startsWith("w:")) {
     const [, id, sub] = data.split(":");
-    if (sub === "create") {
+    // `w:create` predates the `w:<id>:<action>` vocabulary and has no
+    // workspace id: dispatch it before the id/sub split misreads "create"
+    // as a workspace id and routes it to a nonexistent detail card.
+    if (id === "create" && sub === undefined) {
       return openWorkspaceCreatePicker(chatId, state.workspaceRoot);
     }
     if (sub === "rename") {
@@ -1920,7 +2014,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "plugins":
       return openPluginsCard(chatId);
     case "sessions":
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     case "search": {
       pendingSearch = { chatId };
       await requireTransport().sendText(chatId, "\u{1F50D} Reply with the search query:", {
@@ -1938,7 +2032,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       }
       state.bridge?.bindAgent(chatId, id);
       await requireTransport().sendText(chatId, `\u{1F3AF} Switched to session ${plain(truncate(id, 32))}.`, { parse_mode: "HTML" });
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "mode":
       return openModeCard(chatId);
@@ -2106,7 +2200,7 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
     case MODE_BTN:
       return openModeCard(chatId);
     case SESSIONS_BTN:
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     case STATUS_BTN:
       await ephemeral.open(chatId, requireTransport());
       await statusPanel.refresh(chatId, requireTransport(), renderStatus(chatId), true);
@@ -2223,7 +2317,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       return;
     }
     case "sessions":
-      return openSessionsCard(chatId);
+      return openSessionsCard(chatId, lastProjectKey(chatId));
     case "workspaces":
       return openWorkspacesCard(chatId);
     case "project":

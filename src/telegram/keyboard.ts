@@ -283,22 +283,78 @@ export function buildSearchKeyboard(ids: readonly string[], paging?: SessionsPag
   return InlineKeyboard.from(rows);
 }
 
-export function buildSessionsKeyboard(items: readonly { id: string; title?: string }[], paging?: SessionsPaging): InlineKeyboard {
-  const rows: { text: string; callback_data: string }[][] = [
-    [{ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" }],
-  ];
+export interface SessionsKeyboardOptions {
+  /** Project count for the switcher button; the button is omitted without a callback. */
+  projectCount?: number;
+  /** Token callback that opens the project switcher. */
+  projectsCb?: string;
+  paging?: SessionsPaging;
+  back?: string;
+}
+
+export function buildSessionsKeyboard(
+  items: readonly { id: string; title?: string; running?: boolean }[],
+  options: SessionsKeyboardOptions = {},
+): InlineKeyboard {
+  const rows: { text: string; callback_data: string }[][] = [];
+  const top: { text: string; callback_data: string }[] = [];
+  if (options.projectsCb !== undefined) {
+    top.push({ text: `\u{1F504} \u9879\u76EE (${options.projectCount ?? 0})`, callback_data: options.projectsCb });
+  }
+  top.push({ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" });
+  rows.push(top.slice(0, 3));
   for (const item of items.slice(0, 10)) {
     const label = item.title && item.title.trim() !== "" ? item.title : item.id;
     const suffix = item.title && item.title.trim() !== "" ? ` \u00B7 ${item.id.slice(0, 14)}` : "";
-    rows.push([{ text: `\u{1F9ED} ${label.slice(0, 26)}${suffix}`.slice(0, 64), callback_data: `s:${item.id}`.slice(0, 64) }]);
+    const marker = item.running === true ? "\u25B6 " : "";
+    rows.push([{ text: `\u{1F9ED} ${marker}${label.slice(0, 24)}${suffix}`.slice(0, 64), callback_data: `s:${item.id}`.slice(0, 64) }]);
   }
+  const paging = options.paging;
   if (paging !== undefined && (paging.previous !== undefined || paging.next !== undefined)) {
     const nav: { text: string; callback_data: string }[] = [];
     if (paging.previous !== undefined) nav.push({ text: "\u2039 Prev", callback_data: paging.previous });
     if (paging.next !== undefined) nav.push({ text: "More \u203A", callback_data: paging.next });
     rows.push(nav);
   }
-  rows.push([{ text: "\u2190 Back", callback_data: "m:back" }]);
+  rows.push([{ text: "\u2190 Back", callback_data: options.back ?? "m:back" }]);
+  return InlineKeyboard.from(rows);
+}
+
+export interface SessionProjectRow {
+  label: string;
+  running: number;
+  total: number;
+  cb: string;
+}
+
+export interface SessionProjectsKeyboardOptions {
+  /** Optional "all sessions" flat-view callback. */
+  all?: string;
+  paging?: SessionsPaging;
+  back: string;
+}
+
+/** Project switcher for the grouped Sessions card: running projects first
+ * (the caller orders them), then paging and back. */
+export function buildSessionProjectsKeyboard(
+  items: readonly SessionProjectRow[],
+  options: SessionProjectsKeyboardOptions,
+): InlineKeyboard {
+  const rows: { text: string; callback_data: string }[][] = [];
+  if (options.all !== undefined) {
+    rows.push([{ text: "\u{1F310} \u5168\u90E8\u4F1A\u8BDD", callback_data: options.all }]);
+  }
+  for (const item of items.slice(0, 12)) {
+    const status = item.running > 0 ? ` \u00B7 \u25B6${item.running}` : "";
+    rows.push([{ text: `\u{1F4C1} ${item.label.slice(0, 26)}${status} \u00B7 \u5171${item.total}`.slice(0, 64), callback_data: item.cb }]);
+  }
+  if (options.paging !== undefined && (options.paging.previous !== undefined || options.paging.next !== undefined)) {
+    const nav: { text: string; callback_data: string }[] = [];
+    if (options.paging.previous !== undefined) nav.push({ text: "\u2039 Prev", callback_data: options.paging.previous });
+    if (options.paging.next !== undefined) nav.push({ text: "More \u203A", callback_data: options.paging.next });
+    rows.push(nav);
+  }
+  rows.push([{ text: "\u2190 Back", callback_data: options.back }]);
   return InlineKeyboard.from(rows);
 }
 
@@ -309,7 +365,7 @@ export function buildHistoryKeyboard(sessionId: string, older?: string): InlineK
   return InlineKeyboard.from(rows);
 }
 
-export function buildSessionDetailKeyboard(id: string, archived: boolean): InlineKeyboard {
+export function buildSessionDetailKeyboard(id: string, archived: boolean, back = "m:sessions"): InlineKeyboard {
   const prefix = `s:${id}`.slice(0, 52);
   const kb = new InlineKeyboard();
   kb.row().text("\u{1F3AF} Use", `${prefix}:use`.slice(0, 64));
@@ -318,7 +374,7 @@ export function buildSessionDetailKeyboard(id: string, archived: boolean): Inlin
   kb.row().text("\u{1F4CE} Model", `${prefix}:model`.slice(0, 64)).text("\u231B Queue", `${prefix}:queue`.slice(0, 64));
   kb.row().text("\u{1F3AF} Steer", `${prefix}:steer`.slice(0, 64)).text("\u{1F4E6} Log", `${prefix}:log`.slice(0, 64));
   kb.row().text("\u23F9 Stop", `${prefix}:stop`.slice(0, 64)).text("\u{1F5D1} Delete", `${prefix}:delete`.slice(0, 64));
-  return kb.row().text("\u2190 Sessions", "m:sessions");
+  return kb.row().text("\u2190 Sessions", back);
 }
 
 export function buildWorkspaceKeyboard(items: readonly { id: string; title: string }[]): InlineKeyboard {
