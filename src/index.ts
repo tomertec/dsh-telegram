@@ -725,13 +725,14 @@ async function openSessionsCard(chatId: number, page = 0): Promise<void> {
   for (const session of pageItems) {
     const flags = [session.live ? "live" : "cold", session.running ? "running" : "idle"];
     if (session.archived) flags.push("archived");
+    const label = session.title && session.title.trim() !== "" ? session.title : session.id;
     lines.push(
-      `${session.id === current ? "\u25B8" : "\u2022"} ${plain(truncate(session.id, 32))} \u00B7 ${flags.join("/")}${session.title ? ` \u00B7 ${plain(truncate(session.title, 24))}` : ""}`,
+      `${session.id === current ? "\u25B8" : "\u2022"} ${plain(truncate(label, 32))} \u00B7 ${flags.join("/")}${session.title && session.title.trim() !== "" ? ` \u00B7 ${plain(truncate(session.id, 14))}` : ""}`,
     );
     if (session.lastPromptAt !== undefined) lines.push(`   last prompt: ${plain(new Date(session.lastPromptAt).toLocaleString())}`);
   }
   lines.push("", "Tap a session for Use/History/Rename/Fork/Archive/Model/Queue.");
-  await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => session.id), {
+  await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => ({ id: session.id, title: session.title })), {
     ...(safe > 0 ? { previous: token({ action: "sessions-page", page: String(safe - 1) }) } : {}),
     ...(safe + 1 < totalPages ? { next: token({ action: "sessions-page", page: String(safe + 1) }) } : {}),
   }), () => openSessionsCard(chatId, safe));
@@ -745,12 +746,13 @@ async function openSessionDetailCard(chatId: number, sessionId: string): Promise
     await requireTransport().sendText(chatId, `\u274C Session ${plain(truncate(sessionId, 32))} not found.`, { parse_mode: "HTML" });
     return openSessionsCard(chatId);
   }
+  const title = session.title && session.title.trim() !== "" ? session.title : session.id;
   const lines = [
-    `\u{1F9ED} ${plain(truncate(session.id, 40))}`,
+    `\u{1F9ED} ${plain(truncate(title, 40))}${session.title && session.title.trim() !== "" ? ` \u00B7 ${plain(truncate(session.id, 16))}` : ""}`,
     "",
     `live: ${session.live} \u00B7 running: ${session.running} \u00B7 blank: ${session.blank} \u00B7 archived: ${session.archived}`,
     `events: ${session.eventCount}${session.cwd ? ` \u00B7 cwd: ${plain(truncate(session.cwd, 28))}` : ""}`,
-    session.title ? `title: ${plain(session.title)}` : "title: (none)",
+    session.title ? `id: ${plain(session.id)}` : "",
     session.lastPromptAt !== undefined ? `last prompt: ${plain(new Date(session.lastPromptAt).toLocaleString())}` : "",
   ].filter((line) => line !== "");
   await openCard(chatId, lines.join("\n"), buildSessionDetailKeyboard(session.id, session.archived));

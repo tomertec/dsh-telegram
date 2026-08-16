@@ -165,14 +165,15 @@ test('buildConfirmKeyboard lays out confirm and cancel side by side', () => {
   ]);
 });
 
-test('buildSessionsKeyboard paginates ids and adds nav callbacks', () => {
-  const ids = Array.from({ length: 25 }, (_, i) => `session-${i}`);
-  const first = buildSessionsKeyboard(ids, { next: 't:next' });
+test('buildSessionsKeyboard paginates ids and shows custom titles', () => {
+  const items = Array.from({ length: 25 }, (_, i) => ({ id: `session-${i}`, title: i % 2 === 0 ? `My session ${i}` : undefined }));
+  const first = buildSessionsKeyboard(items, { next: 't:next' });
   assert.equal(first.inline_keyboard.filter((row) => row.some((b) => b.text.startsWith('🧭'))).length, 10);
+  assert.ok(first.inline_keyboard.some((row) => row.some((b) => b.text.includes('My session 0'))), 'button should show the custom title');
   assert.equal(first.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:search')), false, 'the Sessions card no longer advertises search');
   const nav = first.inline_keyboard.find((row) => row.some((b) => b.callback_data === 't:next'));
   assert.ok(nav);
-  const last = buildSessionsKeyboard(ids.slice(10), { previous: 't:prev', next: 't:next2' });
+  const last = buildSessionsKeyboard(items.slice(10), { previous: 't:prev', next: 't:next2' });
   assert.ok(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:prev')));
 });
 

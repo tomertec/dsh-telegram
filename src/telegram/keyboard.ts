@@ -283,12 +283,14 @@ export function buildSearchKeyboard(ids: readonly string[], paging?: SessionsPag
   return InlineKeyboard.from(rows);
 }
 
-export function buildSessionsKeyboard(ids: readonly string[], paging?: SessionsPaging): InlineKeyboard {
+export function buildSessionsKeyboard(items: readonly { id: string; title?: string }[], paging?: SessionsPaging): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [
     [{ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" }],
   ];
-  for (const id of ids.slice(0, 10)) {
-    rows.push([{ text: `\u{1F9ED} ${id.slice(0, 30)}`, callback_data: `s:${id}`.slice(0, 64) }]);
+  for (const item of items.slice(0, 10)) {
+    const label = item.title && item.title.trim() !== "" ? item.title : item.id;
+    const suffix = item.title && item.title.trim() !== "" ? ` \u00B7 ${item.id.slice(0, 14)}` : "";
+    rows.push([{ text: `\u{1F9ED} ${label.slice(0, 26)}${suffix}`.slice(0, 64), callback_data: `s:${item.id}`.slice(0, 64) }]);
   }
   if (paging !== undefined && (paging.previous !== undefined || paging.next !== undefined)) {
     const nav: { text: string; callback_data: string }[] = [];

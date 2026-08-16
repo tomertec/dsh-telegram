@@ -1089,3 +1089,9 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - `w:create` 之前只发送一行用法说明，用户无法真正创建。
 - 改为 `pendingWorkspaceCreate` + ForceReply：点 Create 后自动拉起回复框，输入
   `/path/to/project [Title]` 即调用 `createWorkspace` 并刷新 Workspaces 卡；`/cancel` 可中止。
+
+## 50. Round 2 追加：Session 自定义名称显示（2026-08-19，229/229）
+
+- Telegram Sessions 卡之前按钮/列表主标签显示 session id（“编码”），即使 harness 有自定义标题。
+- `buildSessionsKeyboard` 改为接收 `{id,title}`，有标题时按钮显示标题 + 短 id；
+- Sessions 卡文本与详情卡同样以自定义标题为主，id 降为辅助信息。
