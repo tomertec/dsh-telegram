@@ -958,4 +958,5 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - GitHub Release（pre-release）已创建并附带 `dsh-telegram-0.3.0.tgz`：
   https://github.com/xqicxx/dsh-telegram/releases/tag/v0.3.0-rc.1
 - `npm publish --dry-run` 通过；真实 npm publish 需要机器上的 npm 登录
-  （`npm whoami` → need auth），未执行。
+  （`npm whoami` → need auth）。用户已明确选择「暂不发布 npm」，以 GitHub
+  pre-release v0.3.0-rc.1（含 tgz）作为当前交付物。

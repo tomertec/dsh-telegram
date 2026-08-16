@@ -149,4 +149,4 @@
 
 ## Round 25 发布动作
 
-- GitHub push + pre-release 完成；npm 真实发布缺 auth，待用户登录或提供 token。
+- GitHub push + pre-release 完成；用户已明确选择暂不发布 npm，发布动作以 GitHub rc release 收口。
