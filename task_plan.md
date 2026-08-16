@@ -17,7 +17,8 @@
 - [x] Round 10：session.attachment 读回 + Host 默认模型对齐（201/201）
 - [x] Round 11：v0.3.0 release candidate（版本/CHANGELOG/preset hasDocument/202 tests）
 - [x] Round 12：Host 浏览卡 New folder + 审计状态修正（203/203）
-- [ ] Round 13+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
+- [x] Round 13：Models routable + per-session thinking（206/206）
+- [ ] Round 14+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -101,3 +102,9 @@
 
 - Host 浏览卡 New folder（parent+name、单段校验、/cancel、原地刷新）。
 - buildProjectKeyboard newFolder 动作 + 单测；审计状态修正。
+
+## Round 13 已完成
+
+- `modelCatalog.routable` + llm.test.mjs（3 例）。
+- provider 卡 Thinking 行接入五档 per-session picker。
+- settings.describe 审计修正。

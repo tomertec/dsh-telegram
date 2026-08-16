@@ -51,7 +51,7 @@ import { listAgentPresets, selectAgentPreset, setDefaultAgentPreset, readAgentPr
 import { describeSettings, updateSettings, replaceSettings, mutateSettings } from "./harness/adapters/settings.js";
 import { describeCredential, describeCredentials, setCredential, unsetCredential } from "./harness/adapters/credentials.js";
 import { modelCatalog, discoverModels } from "./harness/adapters/llm.js";
-import { REASONING_DEFAULT, isReasoningEffort, reasoningLabel } from "./reasoning.js";
+import { REASONING_DEFAULT, REASONING_EFFORTS, isReasoningEffort, reasoningLabel } from "./reasoning.js";
 import { reasoningExtension } from "./extensions/reasoning.js";
 import type { TelegramExtension, ExtensionHost } from "./extensions/types.js";
 import { describeHost, listDirectory, createDirectory, isDirectory, parentOf, openPath, pickDirectoryHint } from "./harness/adapters/host.js";
@@ -578,7 +578,7 @@ async function openModelsCard(chatId: number): Promise<void> {
   const current = agent ? currentSessionModel(ctx, agent.id) : {};
   const catalog = await modelCatalog(ctx, current);
   const lines = [
-    `\u{1F9E9} Models \u00B7 current: ${current.provider ? `${plain(current.provider)}/` : ""}${plain(current.model ?? "default")}${current.reasoningEffort ? ` (${plain(current.reasoningEffort)})` : ""}`,
+    `\u{1F9E9} Models \u00B7 current: ${current.provider ? `${plain(current.provider)}/` : ""}${plain(current.model ?? "default")}${current.reasoningEffort ? ` (${plain(current.reasoningEffort)})` : ""} \u00B7 routable: ${catalog.routable ? "yes" : "no"}`,
     "",
   ];
   for (const group of catalog.groups) {
@@ -620,16 +620,39 @@ async function openProviderModelsCard(chatId: number, providerId: string, page =
     lines.push(`${current.provider === providerId && current.model === model.id ? "\u2705" : "\u25CB"} ${plain(truncate(model.id, 40))}`);
     if (model.name !== model.id) lines.push(`   ${plain(truncate(model.name, 40))}`);
   }
-  await openCard(chatId, lines.join("\n"), buildModelDetailKeyboard(models, undefined, {
-    ...(safe > 0 ? { previous: token({ action: "model-page", provider: providerId, page: String(safe - 1) }) } : {}),
-    ...(safe + 1 < totalPages ? { next: token({ action: "model-page", provider: providerId, page: String(safe + 1) }) } : {}),
-  }));
+  const selectedModel = current.provider === providerId && current.model !== undefined ? current.model : undefined;
+  await openCard(chatId, lines.join("\n"), buildModelDetailKeyboard(
+    models,
+    selectedModel === undefined
+      ? undefined
+      : {
+          label: reasoningLabel(isReasoningEffort(current.reasoningEffort) ? current.reasoningEffort : currentReasoningEffort()),
+          cb: token({ action: "model-thinking", provider: providerId, model: selectedModel }),
+        },
+    {
+      ...(safe > 0 ? { previous: token({ action: "model-page", provider: providerId, page: String(safe - 1) }) } : {}),
+      ...(safe + 1 < totalPages ? { next: token({ action: "model-page", provider: providerId, page: String(safe + 1) }) } : {}),
+    },
+  ));
 }
 
 /** Current reasoning effort from the live config (default medium). */
 function currentReasoningEffort(): "minimal" | "low" | "medium" | "high" | "max" {
   const effort = state.config.reasoning?.effort;
   return effort !== undefined && isReasoningEffort(effort) ? effort : REASONING_DEFAULT;
+}
+
+/** Per-session reasoning picker for the selected model (web selectModel). */
+async function openModelThinkingCard(chatId: number, providerId: string, modelId: string): Promise<void> {
+  const agent = currentAgent(chatId);
+  const current = agent ? currentSessionModel(requireCtx(), agent.id) : {};
+  const active = isReasoningEffort(current.reasoningEffort) ? current.reasoningEffort : currentReasoningEffort();
+  const options = REASONING_EFFORTS.map((effort) => ({
+    id: effort,
+    name: reasoningLabel(effort),
+    cb: token({ action: "model-effort", provider: providerId, model: modelId, effort }),
+  }));
+  await openCard(chatId, `\u{1F9E0} Thinking effort \u00B7 ${plain(providerId)}/${plain(modelId)}`, buildThinkingKeyboard(options, active));
 }
 
 /** Reasoning-effort picker card: the fixed codex-telegram-bot levels. */
@@ -1282,6 +1305,18 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "model-page": {
       const page = Number(payload["page"] ?? "0");
       return openProviderModelsCard(chatId, payload["provider"] ?? "", Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "model-thinking":
+      return openModelThinkingCard(chatId, payload["provider"] ?? "", payload["model"] ?? "");
+    case "model-effort": {
+      const provider = payload["provider"] ?? "";
+      const model = payload["model"] ?? "";
+      const effort = payload["effort"] ?? "";
+      if (!agent || !isReasoningEffort(effort)) return openProviderModelsCard(chatId, provider);
+      const res = await selectSessionModel(requireCtx(), agent.id, provider, model, effort);
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      refreshAllPanels();
+      return openProviderModelsCard(chatId, provider);
     }
     case "goal": {
       if (!agent) return openGoalsCard(chatId);

@@ -25,6 +25,9 @@ export interface ModelCatalog {
   groups: ModelGroup[];
   failures: { provider: string; message: string }[];
   current: { provider?: string; model?: string; reasoningEffort?: string };
+  /** Web SessionModels.routable: whether an adapter currently serves the
+   * selected provider (no llm registry = cannot judge, so report true). */
+  routable: boolean;
 }
 
 interface LlmLike {
@@ -43,13 +46,14 @@ function llmOf(ctx: Context): LlmLike | undefined {
   return ctx.get("llm") as LlmLike | undefined;
 }
 
-/** Build the web's exact model catalog shape (groups + failures). */
+/** Build the web's exact model catalog shape (groups + failures + routable). */
 export async function modelCatalog(ctx: Context, current?: { provider?: string; model?: string; reasoningEffort?: string }): Promise<ModelCatalog> {
   const llm = llmOf(ctx);
-  if (!llm) return { groups: [], failures: [], current: current ?? {} };
+  if (!llm) return { groups: [], failures: [], current: current ?? {}, routable: true };
+  const providers = llm.listProviders();
   const groups: ModelGroup[] = [];
   const failures: { provider: string; message: string }[] = [];
-  for (const provider of llm.listProviders()) {
+  for (const provider of providers) {
     try {
       const models = await llm.listModels(provider.id);
       const entries: ModelEntry[] = [];
@@ -73,7 +77,12 @@ export async function modelCatalog(ctx: Context, current?: { provider?: string; 
       failures.push({ provider: provider.id, message: err instanceof Error ? err.message : String(err) });
     }
   }
-  return { groups, failures, current: current ?? {} };
+  return {
+    groups,
+    failures,
+    current: current ?? {},
+    routable: current?.provider === undefined || providers.some((entry) => entry.id === current.provider),
+  };
 }
 
 export interface DiscoveredModel {

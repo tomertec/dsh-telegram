@@ -636,3 +636,25 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 1. Host → Browse cwd → `📁 New folder` → 回复 `my-dir` → 回执 Created + 浏览器原地刷新并出现 `my-dir`。
 2. 回复 `a/b` → 提示 must be a single path segment，浏览器回到原路径。
 3. `/cancel` → New-folder cancelled，不创建目录。
+
+## 27. Round 13：Models routable + per-session thinking（2026-08-16，206/206）
+
+### 改动
+
+1. **`session.models.routable`**：`modelCatalog` 返回 `routable`（当前 provider 是否被 llm registry serve；无 llm 时按 web 语义为 true）；Models 卡显示 `routable: yes/no`；新增 `test/llm.test.mjs` 3 例（groups/failures/routable、降级、discover 不泄 apiKey）。
+2. **per-session reasoningEffort 五档**：
+   - provider 卡当前模型下方出现 `🧠 Thinking · <当前档>`；
+   - 点击打开五档 picker（复用 `buildThinkingKeyboard`），选中后 `selectSessionModel(..., effort)` 并回到 provider 卡；
+   - 无 agent/非法 effort 安全回退。
+3. **审计修正**：settings.describe 的 web 契约本就是列出全部 namespace，修正表格描述。
+
+### 验证
+
+- `npm run check`：**206/206 pass**（新增 llm 3 例；既有 thinking keyboard 回归）。
+- round 1–12 的 203 个用例全部保持绿色。
+
+### Telegram 人工复核
+
+1. Models 卡标题含 `routable: yes/no`；无 llm registry 时显示 yes 且卡片优雅降级。
+2. 当前 provider 卡选中模型后出现 `🧠 Thinking · Medium`；点开选 High → 回执 Model switched（含 reasoning）并回到 provider 卡。
+3. 再次打开 Thinking 行应显示 High。

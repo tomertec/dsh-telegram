@@ -97,3 +97,9 @@
 
 - host.createDirectory 没有浏览器内的 parent+name 按钮流，只能背路径；新增 New folder 单段回复流。
 - 审计中 agentPreset.remove 仍标「无确认」，实际 Round 2 已实现；状态修正。
+
+## Round 13 发现与修复
+
+- `modelCatalog` 缺 web `SessionModels.routable`；按 web routeServed 语义补上（无 llm 时 true），Models 卡显示。
+- provider 卡的 Thinking 行是死能力（builder 支持但从未传参）；接入 per-session 五档 picker 与 `selectSessionModel(effort)`。
+- settings.describe 审计描述曾称 web 只暴露部分 namespace；权威源码显示 web 列出全部注册 namespace，修正审计。

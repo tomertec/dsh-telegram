@@ -65,8 +65,8 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | session.search | Sessions 卡 Search 按钮（回复查询）、/search | 🟡 | 入口已通；仍只扫 live/persisted 事件，不是 web 的 sqlite/索引路径；无 `hasMore` |
 | session.create | /new、✨ New、无 agent 时自动建 | 🟡 | 不支持 web 的 `agentPreset` / `sessionId` 幂等 / `workspaceId`；只有 cwd + telegram 自有默认模型 |
 | session.history | /history、详情 History 按钮 | 🟡 | 已加 `Load older` 分页；仍是原始事件窗口，不是 web 的“整消息边界分页”；无 `projections`、tool view |
-| session.models | Models 卡 | 🟡 | 缺 web `SessionModels.routable` 与完整失败投影；卡上不显示 reasoning 元数据 |
-| session.selectModel | Models 卡模型行 | 🟡 | **`reasoningEffort` 未暴露**（web 支持按模型路由选择）；无 agent 时自动建会话，与 web 的 session-not-found 语义不同（对手机更顺手，但不是复刻） |
+| session.models | Models 卡 | 🟡 | 已显示 `routable` 与 failures；仍缺完整 schema/每个模型的 reasoning 元数据展示 |
+| session.selectModel | Models 卡模型行 + Thinking 行 | 🟡 | 已暴露 per-session `reasoningEffort` 五档选择；无 agent 时自动建会话（手机更顺手，非严格复刻） |
 | session.rename | 详情按钮、/rename | ✅ | |
 | session.fork | 详情 Fork、/fork [atSeq] | ✅ | fork 后未一键绑定/恢复，需再点 Use |
 | session.prompt | 普通文本、Steer 按钮、/steer、queue-only 入站规则 | 🟡 | 只支持纯文本/图片 caption；对非当前会话的 prompt 只有 steer/queue，没有独立 followup 路由 |
@@ -99,7 +99,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | goal.create | Goals 卡、/goalcreate | ✅ | |
 | goal.edit | Goals 卡、/goaledit | ✅ | `/goaledit <objective> [maxRounds]` 同时支持 maxGoalRounds |
 | goal.pause/resume/complete/clear | Goals 卡按钮 | ✅ | |
-| settings.describe | Host settings 卡、/settingsdescribe | 🟡 | web 只暴露 model-provider 边界的 namespace；这里全部 namespace 都列出；缺 schema |
+| settings.describe | Host settings 卡、/settingsdescribe | 🟡 | web 同样列出全部注册 namespace；仍缺 schema envelope 展示与按钮表单 |
 | settings.openDocument | 卡片显示 documentPath | ➖ | 只显示路径（可接受） |
 | settings.update | /settingsupdate `<ns> <json>` | 🟡 | 无按钮流、无 expectedRevision |
 | settings.replace | /settingsreplace `<ns> <json section>` | ✅ | 无按钮流、无 expectedRevision |
@@ -328,6 +328,7 @@ Map<chatId, {
 - [x] ESM smoke import 三入口全通。
 - [x] 版本升至 0.3.0，新增 CHANGELOG.md 并纳入 npm 包 files。
 - [x] Host 浏览卡新增 `New folder`：回复单段目录名在当前目录创建并原地刷新（/cancel 可中止）；/mkdir 快速通道保留。
+- [x] `session.models.routable` 接入 Models 卡；per-session reasoningEffort 五档选择（Thinking 行 → picker → selectSessionModel）。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。
