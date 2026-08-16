@@ -73,9 +73,9 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | session.attachment | 发图片自动 `saveImage` → 进 agent；`/attachment <id>` 读回 | 🟡 | 只处理当前 agent；无 web 图片限制预检；读回仅限本 bridge 保存的 ref（web 校验同语义） |
 | session.updateQueue | Queue 卡编辑/删除/立即执行、/queueedit | ✅ | |
 | session.cancel | /stop、Stop 键 | ✅ | |
-| subagent.list | Subagents 卡 | 🟡 | 已显示 kind/activity/mode/label/hasChildren/diagnostic reason；parentAvailable 由「必须有 live parent 才能开卡」隐式表达 |
+| subagent.list | Subagents 卡 | 🟡 | activity 已按 web 重映射为 live agent status；mode/label/hasChildren/reason 齐；parentAvailable 仍隐式 |
 | subagent.history | 详情 History | 🟡 | 复用通用 history，缺分页/projections/tool view |
-| subagent.prompt | 详情 Prompt → 回复文本 | 🟡 | 已做 continuable 校验（非 continuable 只读 history）；仍缺时区、AbortSignal |
+| subagent.prompt | 详情 Prompt → 回复文本 | ✅ | continuable 校验 + clientTimeZone + AbortSignal 已随 source/options 传递 |
 | subagent.interrupt | 详情 Interrupt | ✅ | 仅 continuable 显示；二次确认；错误纯文本 |
 | host.describe | Host 卡 | 🟡 | `version` 显示 dsh-telegram 0.2.0；provider/model 已改读 `agentDefaultModel`（与 web 同 seam），fallback live agent；canOpenPath 平台限制为 false |
 | host.pickDirectory | /pickdir、Project 选择器 | ✅ | 平台限制下用路径式选择代替原生对话框；无参数时给提示并打开 Project 卡 |
@@ -331,6 +331,7 @@ Map<chatId, {
 - [x] `session.models.routable` 接入 Models 卡；per-session reasoningEffort 五档选择（Thinking 行 → picker → selectSessionModel）。
 - [x] settings namespace 卡透出 serialized schema envelope。
 - [x] `/settingsupdate|replace|mutate` 支持尾随 `expectedRevision`（安全解析，不破坏 JSON 字符串内空白）。
+- [x] subagent activity 按 web api-proxy 语义重映射 live agent status；prompt 补 clientTimeZone + AbortSignal。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

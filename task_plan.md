@@ -20,7 +20,8 @@
 - [x] Round 13：Models routable + per-session thinking（206/206）
 - [x] Round 14：Settings schema envelope（207/207）
 - [x] Round 15：settings expectedRevision（208/208）
-- [ ] Round 16+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
+- [x] Round 16：Subagent activity/时区/信号对齐 web（208/208）
+- [ ] Round 17+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -118,3 +119,8 @@
 ## Round 15 已完成
 
 - parseJsonWithRevision + settings 三命令 expectedRevision。
+
+## Round 16 已完成
+
+- subagent.activity 按 web 重映射 live agent status。
+- promptSubagent 携带 clientTimeZone + AbortSignal。

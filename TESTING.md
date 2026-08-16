@@ -695,3 +695,21 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 1. `/settingsupdate llm {"a":1} 3` → 以 expectedRevision=3 调用；
 2. `/settingsreplace llm {"a":2} 4`、`/settingsmutate llm [{"op":"set","path":["a"],"value":1}] 5` 同样带 revision；
 3. JSON 字符串内多空格：`/settingsupdate llm {"note":"x  y"}` 仍原样解析。
+
+## 30. Round 16：Subagents 时区/信号与 activity 语义修正（2026-08-16，208/208）
+
+### 改动
+
+1. **subagent.activity 修正**：web api-proxy 会把 child 行的 activity 重映射为 **live agent status**（`running` iff `ctx.agents.get(id).status === "running"`），此前我们误透传持久化快照；现在与 web 完全一致。
+2. **subagent.prompt 补 provenance**：自动附带 `clientTimeZone`（`Intl` 当前时区）与 `AbortSignal`，符合 web `SubagentAddress`/`MessageSource` 契约。
+3. 测试断言同步更新（activity 重映射、source.clientTimeZone、signal）。
+
+### 验证
+
+- `npm run check`：**208/208 pass**（subagents 断言加强，无回归）。
+- round 1–15 的 208 个用例全部保持绿色（本轮无新增用例）。
+
+### Telegram 人工复核
+
+1. Subagents 卡 activity 应反映 live agent status（running/idle），而不是持久化快照。
+2. continuable 子代理 Prompt 后，宿主侧消息 source 应含 `clientTimeZone` 与 signal（dsh 侧日志/事件可确认）。

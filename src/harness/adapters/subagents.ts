@@ -39,7 +39,7 @@ interface SubagentRuntimeLike {
     parent: AgentLike,
     childId: SessionId,
     content: unknown[],
-    options: { source: { kind: string }; signal?: AbortSignal },
+    options: { source: { kind: string; clientTimeZone?: string }; signal?: AbortSignal },
   ): Promise<MessageId>;
   interrupt(targetSessionId: SessionId, authority: { kind: string; parentSessionId: SessionId }): void;
 }
@@ -56,9 +56,10 @@ export async function listSubagents(ctx: Context, parentSessionId: string): Prom
     return entries.map((entry) => ({
       id: entry.id,
       kind: entry.kind,
-      // `activity` is a store snapshot on the web row; the live agent
-      // registry status only matters for legacy providers that omit it.
-      activity: entry.activity ?? (ctx.agents?.get(entry.id)?.status === "running" ? "running" : "inactive"),
+      // Web api-proxy remaps every child row to the LIVE AGENT status at the
+      // host sampling boundary; the durable `entry.activity` snapshot is not
+      // what the browser catalog exposes.
+      activity: ctx.agents?.get(entry.id)?.status === "running" ? "running" : "inactive",
       ...(entry.mode === undefined ? {} : { mode: entry.mode }),
       ...(entry.label === undefined ? {} : { label: entry.label }),
       ...(entry.hasChildren === undefined ? {} : { hasChildren: entry.hasChildren }),
@@ -73,13 +74,24 @@ export function subagentHistory(ctx: Context, childSessionId: string, limit = 20
   return readHistory(ctx, childSessionId, limit);
 }
 
-export async function promptSubagent(ctx: Context, parentSessionId: string, childSessionId: string, text: string): Promise<AdapterResult> {
+export async function promptSubagent(
+  ctx: Context,
+  parentSessionId: string,
+  childSessionId: string,
+  text: string,
+  options?: { clientTimeZone?: string; signal?: AbortSignal },
+): Promise<AdapterResult> {
   const subagents = subagentsOf(ctx);
   if (!subagents) return fail("subagents service is unavailable in this profile");
   const parent = ctx.agents?.get(SessionId(parentSessionId));
   if (!parent) return fail(`parent session ${parentSessionId} has no live agent`);
   try {
-    const messageId = await subagents.followup(parent as unknown as AgentLike, SessionId(childSessionId), [{ type: "text", text }], { source: { kind: "user" } });
+    const clientTimeZone = options?.clientTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const signal = options?.signal ?? new AbortController().signal;
+    const messageId = await subagents.followup(parent as unknown as AgentLike, SessionId(childSessionId), [{ type: "text", text }], {
+      source: { kind: "user", ...(clientTimeZone === undefined ? {} : { clientTimeZone }) },
+      signal,
+    });
     return ok(`\u{1F4E8} Delivered to subagent ${childSessionId} (${String(messageId)})`);
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));

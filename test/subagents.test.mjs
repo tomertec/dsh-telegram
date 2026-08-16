@@ -32,7 +32,9 @@ test('promptSubagent passes text as a ContentBlock[] followup payload', async ()
 
   assert.equal(res.ok, true);
   assert.deepEqual(captured.content, [{ type: 'text', text: 'hello subagent' }]);
-  assert.deepEqual(captured.options, { source: { kind: 'user' } });
+  assert.equal(captured.options.source.kind, 'user');
+  assert.equal(typeof captured.options.source.clientTimeZone, 'string', 'prompt provenance carries the Telegram client time zone');
+  assert.equal(typeof captured.options.signal?.aborted, 'boolean', 'prompt carries a caller signal like the web contract');
   assert.equal(String(captured.childId), 'child-session');
 });
 
@@ -63,13 +65,13 @@ test('listSubagents projects web catalog fields and legacy fallbacks', async () 
   const diagnostic = { id: 'broken-session', kind: 'diagnostic', reason: 'corrupt' };
   const legacy = { id: 'legacy-session', kind: 'child' };
   const ctx = {
-    agents: { get: (id) => (String(id) === 'legacy-session' ? { status: 'running' } : undefined) },
+    agents: { get: (id) => ({ 'child-session': { status: 'running' }, 'legacy-session': { status: 'idle' } }[String(id)]) },
     get: (name) => (name === 'subagents' ? { listChildren: async () => [child, diagnostic, legacy] } : undefined),
   };
   const entries = await listSubagents(ctx, 'parent-session');
   assert.deepEqual(entries[0], { id: 'child-session', kind: 'child', activity: 'running', mode: 'continuable', label: 'researcher', hasChildren: true });
   assert.deepEqual(entries[1], { id: 'broken-session', kind: 'diagnostic', activity: 'inactive', reason: 'corrupt' });
-  assert.equal(entries[2].activity, 'running', 'legacy entries fall back to the live agent status');
+  assert.equal(entries[2].activity, 'inactive', 'web remaps child rows to the live agent status, not the durable snapshot');
 });
 
 test('listSubagents degrades without the service or on listing errors', async () => {

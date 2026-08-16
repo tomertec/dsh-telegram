@@ -112,3 +112,8 @@
 ## Round 15 发现与修复
 
 - settings update/replace/mutate 未透传 web expectedRevision（并发编辑保护缺失）；命令支持尾随 revision，且 parser 保证 JSON 字符串内部空白不破坏。
+
+## Round 16 发现与修复
+
+- 权威源码显示 web api-proxy 将 subagent child 的 activity 重映射为 live agent status；此前透传持久化快照是语义错误。
+- subagent.prompt 缺 clientTimeZone 与 AbortSignal；已按 web MessageSource 契约补上。

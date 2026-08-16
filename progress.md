@@ -71,13 +71,18 @@
 - Settings schema envelope。
 - 207/207 tests；提交 `14ac1ee`；详见 TESTING.md §28。
 
-## 2026-08-16 Round 15（本轮）
+## 2026-08-16 Round 15（已完成）
 
-- settings update/replace/mutate 支持 expectedRevision。
+- settings expectedRevision。
+- 208/208 tests；提交 `7c8cfd8`；详见 TESTING.md §29。
+
+## 2026-08-16 Round 16（本轮）
+
+- Subagent activity 重映射 + prompt 时区/信号。
 - `npm run check`：**208/208 pass**。
-- 文档已同步 TESTING.md §29 与 WEB_PARITY_AUDIT.md。
+- 文档已同步 TESTING.md §30 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 16 候选）
+## 下一步（Round 17 候选）
 
 Telegram 实机执行 §25 checklist（需要 token/实机）；剩余审计 🟡 收敛；实机通过后 tag/publish。
