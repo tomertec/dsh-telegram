@@ -132,3 +132,7 @@
 
 - 修复 callback token 重复执行与 /credentialset 删除竞态；226/226 pass。
 - 实机端到端仍等待用户在 Telegram 回复。
+
+## Round 23 追加
+
+- 实机发现并修复「两条首消息 → 两个会话」竞态；新增 apply-race 集成测试；227/227。

@@ -2816,7 +2816,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           reply_markup: { inline_keyboard: [[{ text: "\u2795 Allow this chat", callback_data: "m:allowthis" }]] },
         }).catch(() => {});
       },
-      onUserText: (chatId, text, messageId) => {
+      onUserText: async (chatId, text, messageId) => {
         void state.transport?.sendChatAction(chatId, "typing").catch(() => {});
         if (pendingSearch && pendingSearch.chatId === chatId) {
           pendingSearch = undefined;
@@ -2896,21 +2896,22 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         const boundId = state.bridge?.agentIdForChat(chatId);
         const chatAgent = boundId === undefined ? undefined : requireCtx().agents?.get(boundId as never);
         if (chatAgent === undefined) {
-          void (async () => {
-            const created = await sessionLifecycle.create(requireCtx(), state.workspaceRoot, state.config.model);
-            if (created.agentId !== undefined) state.bridge?.bindAgent(chatId, created.agentId);
-            if (!created.result.ok) {
-              void state.transport?.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
-              return;
-            }
-            const res = state.bridge!.deliver(chatId, text, messageId);
-            if (!res.ok) void state.transport?.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-            else scheduleBarSync(chatId, 0);
-          })();
+          // AWAITED, not fire-and-forget: the router's per-chat FIFO can only
+          // protect "two rapid first messages → two sessions" if the handler
+          // promise spans the whole create+bind+deliver path.
+          const created = await sessionLifecycle.create(requireCtx(), state.workspaceRoot, state.config.model);
+          if (created.agentId !== undefined) state.bridge?.bindAgent(chatId, created.agentId);
+          if (!created.result.ok) {
+            await state.transport?.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
+            return;
+          }
+          const res = state.bridge!.deliver(chatId, text, messageId);
+          if (!res.ok) await state.transport?.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+          else scheduleBarSync(chatId, 0);
           return;
         }
         const res = state.bridge!.deliver(chatId, text, messageId);
-        if (!res.ok) void state.transport?.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        if (!res.ok) await state.transport?.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
         else scheduleBarSync(chatId, 0);
       },
     });

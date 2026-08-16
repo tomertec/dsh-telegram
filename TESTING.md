@@ -882,3 +882,27 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - `npm run check`：**226/226 pass**（+3）。
 - 实机进程仍为 web 51052；Telegram 真实入站仍待用户回复。
+
+## 38. Round 23 追加：实机发现「两条首消息建两个会话」并修复（227/227）
+
+### 实机复现
+
+- 用户在真实 Telegram 发送 ping 后，`session.list` 出现两个 `telegram-*` 会话，
+  各自带同一条 ping 并各自完成 turn（seq 70 / seq 89）。
+- 根因：`onUserText` 的首消息路径是 **fire-and-forget async IIFE**。per-chat FIFO
+  router 认为 handler 已结束，第二条消息在第一个 `sessionLifecycle.create` 尚未
+  完成时就进入同一分支，再次创建会话。router 的串行化形同虚设。
+- 修复：`onUserText` 改为 async 并 **await 整个 create → bind → deliver** 链路；
+  FIFO 现在真正覆盖会话创建窗口。
+
+### 回归测试
+
+- 新增 `test/apply-race.test.mjs`：假 agents.create 延迟 30ms，同一 chat 同时投递
+  两条首消息；断言 `create` 只调用 1 次、live agent 只有 1 个、chat 绑定正确。
+  修复前该测试稳定失败（create 2 次），修复后通过。
+- `npm run check`：**227/227 pass**。
+
+### 实机状态
+
+- 当前 live 实例中由该 bug 产生的两个会话为历史数据；重启新版后 chat 会重新绑定
+  新会话（旧会话保留在 sessions 列表，不影响运行）。

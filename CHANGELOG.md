@@ -11,7 +11,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 - Per-chat agent bindings route sessions/events back to their own chat; dead bindings fail closed.
 - Unbound chats fail closed for display too: Menu/Queue/Status never show another chat's agent or queue.
-- Per-chat FIFO inbound router (rapid first messages cannot create two sessions).
+- Per-chat FIFO inbound router spans the whole create→bind→deliver path, so two rapid first messages can never create two sessions.
 - Rebinding a chat clears stale inbound quote state; `disallow`/security hot-update ejects the chat fully.
 - `telegram_reply`/`telegram_mark_no_reply` resolve the inbound by the executing agent.
 - Approval/question cards route to the session-owned chat; broadcast fallback only when unbound.
@@ -49,7 +49,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 ### Tests
 
-- `npm run check`: 226/226 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
+- `npm run check`: 227/227 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
 - ESM smoke imports for `dist/index.js`, `dist/extensions/openclaw.js`, `dist/extensions/reasoning.js`.
 
 ## 0.2.0

@@ -154,3 +154,8 @@
 
 - token 注册表不是 single-use：确认按钮可重复执行副作用；抽为 TokenRegistry，单次消费 + 双账本有界 + 单测。
 - /credentialset 删除命令消息依赖 500ms timer：改为队列序删除（先删密钥、再发回执）。
+
+### Round 23 追加：实机首消息竞态
+
+- 真实 Telegram 出现同一 chat 双会话：onUserText 首消息路径未 await，router FIFO 对会话创建窗口无效。
+- 修复 + apply-race 集成回归（假 agents.create 延迟 30ms），227/227。
