@@ -113,6 +113,7 @@ Telegram 侧命令：`/start /menu /new /compact /stop /models /sessions /worksp
 - `host.pickDirectory` / `host.openPath` 无手机端原生对话框 —— 用 `/pickdir`（Project 浏览卡）与 `/openpath`（解析后的宿主路径）替代。
 - `downloads.sessionLog` 与 web 同源 ZIP 流；超过 50 MB 引导去 web 下载。
 - `dynamicCordisRunner` 的 run/stop/依赖变更与插件装卸仍是 web 面板操作（聊天内只读清单 + 指引）。
+- 仅图片可作为会话附件（web seam 只有图片附件 API）；文档/语音/视频会收到明确的指引回复，而不是被静默丢弃。
 - 仅长轮询（无 webhook）；回复按完整 assistant 消息发送（无逐块流式）。
 - 可选 peer `@deepseek-ai/dsh-compaction` / `@deepseek-ai/cordis-plugin-loader` 仅为构建期类型；运行期缺失服务会降级为可读错误。
 

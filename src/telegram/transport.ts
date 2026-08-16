@@ -23,10 +23,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+export type UnsupportedMediaKind = "document" | "voice" | "video";
+
 export interface TransportHandlers {
   onText: (chatId: number, text: string, messageId?: number) => void | Promise<void>;
   onPhoto: (chatId: number, fileId: string, caption: string, messageId?: number) => void | Promise<void>;
   onCallback: (chatId: number, data: string) => void | Promise<void>;
+  /** Media the web seam cannot attach (only images have an attachment API). */
+  onDocument?: (chatId: number, kind: UnsupportedMediaKind, fileId: string, name: string, mimeType: string, messageId?: number) => void | Promise<void>;
 }
 
 export interface TransportOptions {
@@ -90,7 +94,16 @@ export class TelegramTransport {
    * answered first so the Telegram client stops showing the spinner. */
   private async handleUpdate(update: unknown): Promise<void> {
     const entry = update as {
-      message?: { message_id?: number; chat?: { id?: number }; text?: string; photo?: { file_id: string }[]; caption?: string };
+      message?: {
+        message_id?: number;
+        chat?: { id?: number };
+        text?: string;
+        photo?: { file_id: string }[];
+        caption?: string;
+        document?: { file_id?: string; file_name?: string; mime_type?: string };
+        voice?: { file_id?: string; mime_type?: string };
+        video?: { file_id?: string; file_name?: string; mime_type?: string };
+      };
       callback_query?: { chat?: { id?: number }; data?: string; id?: string; message?: { chat?: { id?: number } } };
     };
     if (!this.handlers) return;
@@ -104,6 +117,20 @@ export class TelegramTransport {
       const largest = message.photo[message.photo.length - 1]!;
       await this.handlers.onPhoto(message.chat.id, largest.file_id, message.caption ?? "", message.message_id);
       return;
+    }
+    if (message?.chat?.id !== undefined && this.handlers.onDocument !== undefined) {
+      if (message.document !== undefined) {
+        await this.handlers.onDocument(message.chat.id, "document", message.document.file_id ?? "", message.document.file_name ?? "document", message.document.mime_type ?? "", message.message_id);
+        return;
+      }
+      if (message.voice !== undefined) {
+        await this.handlers.onDocument(message.chat.id, "voice", message.voice.file_id ?? "", "voice message", message.voice.mime_type ?? "", message.message_id);
+        return;
+      }
+      if (message.video !== undefined) {
+        await this.handlers.onDocument(message.chat.id, "video", message.video.file_id ?? "", message.video.file_name ?? "video", message.video.mime_type ?? "", message.message_id);
+        return;
+      }
     }
     const callback = entry.callback_query;
     if (callback !== undefined) {

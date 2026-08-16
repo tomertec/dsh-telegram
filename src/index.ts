@@ -2729,6 +2729,13 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       onBarButton: (chatId, label) => void dispatchBarButton(chatId, label).catch((err) => log("bar button failed", err)),
       onCallback: (chatId, data) => void dispatchCallback(chatId, data).catch((err) => log("callback failed", err)),
       onPhoto: (chatId, fileId, caption, messageId) => void dispatchPhoto(chatId, fileId, caption, messageId).catch((err) => log("photo failed", err)),
+      onDocument: (chatId, kind, _fileId, name, _mimeType) => {
+        void state.transport?.sendText(
+          chatId,
+          `\u{1F4CE} Received ${plain(kind)}${name ? ` "${plain(truncate(name, 48))}"` : ""}. The dsh web seam only attaches images \u2014 send the content as text or a photo.`,
+          { parse_mode: "HTML" },
+        );
+      },
       onUnauthorized: (chatId) => {
         log(`unauthorized prompt -> chatId ${chatId}`);
         void state.transport?.sendText(chatId, "\u{1F6AB} This chat is not allowed yet. Tap below to grant access:", {

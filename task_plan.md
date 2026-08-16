@@ -12,7 +12,8 @@
 - [x] Round 5：Host 目录逐级浏览 + Jobs/Search 卡片顺手化（184/184）
 - [x] Round 6：Skills 按 session 查询 + Search 结果分页（187/187）
 - [x] Round 7：Subagents 对齐 web 目录语义（190/190）
-- [ ] Round 8+：继续 P1/P2 候选（见下），每轮回归 `npm run check` + pack
+- [x] Round 8：非图片媒体明确指引 + downloads 单测（194/194）
+- [ ] Round 9+：继续收敛剩余项（见下），每轮回归 `npm run check` + pack
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -24,9 +25,9 @@
 
 ## 剩余候选（按性价比排序）
 
-1. 文档/语音/视频附件接纳（当前只支持图片）。
-2. downloads/events forwarding 单测补全。
-3. Telegram 实测清单持续更新。
+1. Telegram 实机回归 + 最终上线复测记录。
+2. 审计剩余 🟡 收敛（session history message 边界、credentials batch、host version 等）。
+3. 发布前最终 `npm pack` / README 复核。
 
 ## 错误记录
 
@@ -67,3 +68,9 @@
 - `listSubagents` 完整投影 mode/label/hasChildren/reason/activity；legacy 回退。
 - 详情仅 continuable 显示 Prompt/Interrupt，并在回调前校验。
 - 新增 subagents 投影/降级与 keyboard 按钮裁剪测试。
+
+## Round 8 已完成
+
+- document/voice/video 路由到明确指引；未授权 photo/media 也发 allow 提示。
+- downloads 单测：50MB 常量 + seam 缺失降级。
+- README 平台限制同步。

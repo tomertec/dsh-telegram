@@ -126,3 +126,21 @@ test('stop is idempotent and a later start works again', async () => {
   await transport.stop();
   assert.equal(poll.calls.length, 2);
 });
+
+test('unsupported media routes to the document handler with metadata', async () => {
+  const transport = makeTransport();
+  const calls = [];
+  transport.setHandlers({
+    onText: () => {},
+    onPhoto: () => {},
+    onCallback: () => {},
+    onDocument: (chatId, kind, fileId, name, mimeType, messageId) => calls.push({ chatId, kind, fileId, name, mimeType, messageId }),
+  });
+  await transport.handleUpdate({
+    message: { message_id: 77, chat: { id: 7 }, document: { file_id: 'file-doc', file_name: 'notes.txt', mime_type: 'text/plain' } },
+  });
+  assert.deepEqual(calls, [{ chatId: 7, kind: 'document', fileId: 'file-doc', name: 'notes.txt', mimeType: 'text/plain', messageId: 77 }]);
+  await transport.handleUpdate({ message: { message_id: 78, chat: { id: 7 }, voice: { file_id: 'file-voice', mime_type: 'audio/ogg' } } });
+  assert.equal(calls[1].kind, 'voice');
+  assert.equal(calls[1].messageId, 78);
+});

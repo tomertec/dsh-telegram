@@ -123,6 +123,7 @@ Telegram-side commands: `/start /menu /new /compact /stop /models /sessions /wor
 - `host.pickDirectory` / `host.openPath` have no phone-side native dialog — the bot guides with `/pickdir` (Project browser) and `/openpath` (resolved host path).
 - `downloads.sessionLog` streams the same ZIP as the web; files over 50 MB are handed off to the web download with a link/instruction.
 - `dynamicCordisRunner` run/stop/dependency mutations and plugin install/uninstall remain web-panel operations (read-only inventory + guidance in chat).
+- Only photos attach to a session (the web seam has an image-only attachment API); documents/voice/video receive a clear guidance reply instead of being silently dropped.
 - Long polling only (no webhook); replies are per completed assistant message (no token streaming).
 - Out-of-tree plugin packages need their optional peers `@deepseek-ai/dsh-compaction` / `@deepseek-ai/cordis-plugin-loader` only if you want the typed seam at build time; at runtime missing services degrade to readable errors.
 

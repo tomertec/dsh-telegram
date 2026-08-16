@@ -31,14 +31,19 @@
 - Skills 按 sessionId 查询并只显示 user-invocable；Search 结果 10/页分页。
 - 187/187 tests；提交 `d50ae7d`；详见 TESTING.md §20。
 
-## 2026-08-16 Round 7（本轮）
+## 2026-08-16 Round 7（已完成）
 
-- Subagents 对齐 web 目录语义：mode/label/hasChildren/reason 投影；
-  continuable 才可 Prompt/Interrupt，回调前二次校验。
-- `npm run check`：**190/190 pass**。
-- 文档已同步 TESTING.md §21 与 WEB_PARITY_AUDIT.md。
+- Subagents 对齐 web 目录语义并 gating continuable。
+- 190/190 tests；提交 `f805d65`；详见 TESTING.md §21。
+
+## 2026-08-16 Round 8（本轮）
+
+- document/voice/video 明确指引；未授权 photo/media 发 allow 提示。
+- downloads 单测；README 平台限制同步。
+- `npm run check`：**194/194 pass**。
+- 文档已同步 TESTING.md §22 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 8 候选）
+## 下一步（Round 9 候选）
 
-文档/语音附件、downloads 单测、Telegram 实测清单、最终上线复测。
+Telegram 实机回归、审计剩余 🟡 收敛、发布前最终复测与 README 复核。

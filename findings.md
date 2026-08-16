@@ -67,3 +67,10 @@
 - `listSubagents` 只取 `{kind,id}`，丢失 web `SubagentListEntry` 的 mode/label/hasChildren/reason；补齐投影并兼容 legacy。
 - one-shot/diagnostic 子代理详情仍显示 Prompt/Interrupt 按钮，点击会失败；改为只有 continuable 显示并在回调前二次校验。
 - Subagent 列表 activity 与 web 的「存储快照」语义不一致；现在优先透传 `entry.activity`，旧服务回退 live status。
+
+## Round 8 发现与修复
+
+- document/voice/video 到达 getUpdates 后被静默丢弃；现在提取 metadata、白名单检查并回明确指引。
+- 未授权 photo/document 同样静默；router 改为与文本一致地发 allow 提示。
+- downloads 动态 seam 缺失路径没有测试；补 50MB 常量与 fail-closed 指引测试。
+- 明确平台限制：web session.prompt 只接受 text/image（权威 schema 证据），文档/语音/视频不做假附件。

@@ -55,9 +55,9 @@ test('router prompts unauthorized chats and gates their traffic', async () => {
   await h.onCallback(9, 'm:sessions');
   await h.onCallback(9, 'm:allowthis');
   await h.onPhoto(9, 'file', '');
-  assert.deepEqual(calls, ['unauthorized:9', 'unauthorized:9', 'text', 'command', 'callback']);
+  assert.deepEqual(calls, ['unauthorized:9', 'unauthorized:9', 'text', 'command', 'callback', 'unauthorized:9']);
   await h.onPhoto(7, 'file', '');
-  assert.deepEqual(calls, ['unauthorized:9', 'unauthorized:9', 'text', 'command', 'callback', 'photo']);
+  assert.deepEqual(calls, ['unauthorized:9', 'unauthorized:9', 'text', 'command', 'callback', 'unauthorized:9', 'photo']);
 });
 
 test('router serializes updates per chat in arrival order and isolates chats', async () => {
@@ -108,4 +108,24 @@ test('a rejected handler does not wedge the per-chat chain', async () => {
   await assert.rejects(h.onText(7, '/boom'));
   await h.onText(7, 'hello');
   assert.deepEqual(calls, ['text']);
+});
+
+test('router gates unsupported media by the whitelist and delegates allowed chats', async () => {
+  const calls = [];
+  const t = fakeTransport();
+  attachRouter({
+    transport: t,
+    isAllowed: (chatId) => chatId === 7,
+    onCommand: () => {},
+    onBarButton: () => {},
+    onCallback: () => {},
+    onUserText: () => {},
+    onPhoto: () => {},
+    onDocument: (chatId, kind, fileId, name, mimeType) => calls.push({ chatId, kind, fileId, name, mimeType }),
+    onUnauthorized: (chatId) => calls.push(`unauthorized:${chatId}`),
+  });
+  const h = t.handlers();
+  await h.onDocument(9, 'document', 'f', 'x', 'text/plain');
+  await h.onDocument(7, 'video', 'v', 'clip.mp4', 'video/mp4');
+  assert.deepEqual(calls, ['unauthorized:9', { chatId: 7, kind: 'video', fileId: 'v', name: 'clip.mp4', mimeType: 'video/mp4' }]);
 });

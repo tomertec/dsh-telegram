@@ -163,7 +163,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 7. **自由文本 question 的 `/answer` 已接通**；question/approval 已改为按 session→chat 绑定路由（见 8）。
 8. ~~approval/question 全 chat 广播~~ 已修复：`InteractiveDelivery.chatForSession` + index 侧 `state.chats` 过滤，卡片与 settle 只达绑定 chat，无绑定才回退广播。
 9. **credential 值会留在聊天记录**。应优先走“发送后删除/隐私模式/仅提示在 dsh 侧设置”。
-10. **图片、文档、语音、视频**：只处理 photo；文档/语音/视频消息会被轮询收到后直接忽略。
+10. **图片、文档、语音、视频**：photo 走附件入站；document/voice/video 现在会收到「web seam 仅支持图片附件」的指引回复（不再静默忽略）。
 11. **测试覆盖断层**：host/commands/jobs/downloads/dynamic/events-forwarding 仍无单测；
     feedback、settings、subagents 已有单测，当前总计 147 tests。
 
@@ -210,7 +210,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 - [x] 订阅 11 个转发事件 + host 源事件（session/created、session/disposed、agent/error、domain/changed），按 chat 刷新受影响卡片和 status panel（无 open card 时不打扰）。
 - [ ] `events.host` 投影为轻量通知：session added/removed、workspace changed/order、agent error。
 - [x] `setMyCommands` 已注册 39 条已实现命令。
-- [x] 首条图片在无 agent 时自动建会话（文档/语音/视频仍未接纳，待后续）。
+- [x] 首条图片在无 agent 时自动建会话；文档/语音/视频按平台限制返回明确指引（web seam 只有图片附件 API）。
 - [x] credential 写入命令原消息 500ms 后自动删除，避免 secret 留在聊天历史。
 - [x] 审批/提问按会话 chat 路由（只有当前绑定 chat 收到），无绑定时才广播。
 - [x] `outbound.liveFeed` 真正控制 openclaw 草稿开关（core 忽略 consumer + 扩展逐事件检查，热切换免重启）。
@@ -320,6 +320,8 @@ Map<chatId, {
 - [x] Host 卡 `Browse cwd`：可点目录逐级浏览（Up/~//、20/页），`h:ls` 旧卡片兼容映射；Jobs 卡 20/页；Search 卡专用键盘。
 - [x] Skills 卡按 session 查询（传 `sessionId` option）并只显示 user-invocable；Search 结果 10/页分页。
 - [x] Subagents 卡/详情补 web 字段（mode/label/hasChildren/reason）；Prompt/Interrupt 只对 continuable 子代理开放。
+- [x] document/voice/video 入站不再静默丢弃：transport/router 提取并白名单检查后回明确指引；未授权媒体也会收到 allow 提示。
+- [x] downloads 单测（50MB 常量 + seam 缺失降级指引）。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

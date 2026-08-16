@@ -16,6 +16,7 @@ export interface RouterDeps {
   onCallback: (chatId: number, data: string) => void | Promise<void>;
   onUserText: (chatId: number, text: string, messageId?: number) => void | Promise<void>;
   onPhoto: (chatId: number, fileId: string, caption: string, messageId?: number) => void | Promise<void>;
+  onDocument: (chatId: number, kind: "document" | "voice" | "video", fileId: string, name: string, mimeType: string, messageId?: number) => void | Promise<void>;
   onUnauthorized: (chatId: number) => void | Promise<void>;
 }
 
@@ -56,8 +57,13 @@ export function attachRouter(deps: RouterDeps): void {
       }),
     onPhoto: (chatId, fileId, caption, messageId) =>
       enqueue(chatId, async () => {
-        if (!deps.isAllowed(chatId)) return;
+        if (!deps.isAllowed(chatId)) return deps.onUnauthorized(chatId);
         return deps.onPhoto(chatId, fileId, caption, messageId);
+      }),
+    onDocument: (chatId, kind, fileId, name, mimeType, messageId) =>
+      enqueue(chatId, async () => {
+        if (!deps.isAllowed(chatId)) return deps.onUnauthorized(chatId);
+        return deps.onDocument(chatId, kind, fileId, name, mimeType, messageId);
       }),
     onCallback: (chatId, data) =>
       enqueue(chatId, async () => {

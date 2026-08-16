@@ -517,3 +517,27 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 1. Subagents 卡：continuable 行应含 `mode: continuable` 与 label；diagnostic 行显示 reason。
 2. 点 continuable 子代理：有 Prompt/Interrupt/History；点 one-shot/diagnostic：只有 History。
 3. 对 one-shot 子代理发送 `/subagentprompt`（若仍有旧按钮）→ 提示 not continuable，不进入回复流程。
+
+## 22. Round 8：非图片媒体明确指引 + downloads 单测（2026-08-16，194/194）
+
+### 改动
+
+1. **document/voice/video 不再被静默忽略**：
+   - `TelegramTransport.handleUpdate` 识别 `message.document/voice/video` 并路由到新的 `onDocument` handler（带 kind/fileId/name/mimeType/messageId）；
+   - router 按白名单检查：未授权媒体收到 allow 提示，授权媒体进入 index handler；
+   - index 回复明确指引：dsh web seam 只有图片附件 API，请改发文本或图片；同时修复未授权 photo/document 被静默忽略的问题（现在都发 allow 提示）。
+2. **downloads 单测**：`TELEGRAM_DOCUMENT_LIMIT_BYTES` = 50 MiB；无 `@deepseek-ai/dsh-host-apiproxy` 时 `exportSessionLog` fail-closed 并给出 web 下载指引。
+3. **README/README.zh** 平台限制同步更新（图片-only 附件 + 非图片指引）。
+
+### 验证
+
+- `npm run check`：**194/194 pass**（新增 downloads 2 例、transport 媒体路由 1 例、router 媒体白名单 1 例；router 未授权 photo 断言同步加强）。
+- round 1–7 的 190 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步媒体处理与 downloads 状态。
+
+### Telegram 人工复核
+
+1. 发送一个文档 → bot 回复「Received document … only attaches images…」。
+2. 发送语音/视频 → 同样得到指引，而非无响应。
+3. 未授权 chat 发照片或文档 → 收到 `This chat is not allowed yet` + Allow 按钮。
+4. 发照片 → 仍按原路径作为 attachment 交给当前会话。
