@@ -27,6 +27,8 @@ export interface ExtensionHost {
   getConfigPath(path: string): unknown;
   /** Hot-apply + persist a config patch (returns applied section names). */
   applyConfig(patch: Record<string, unknown>): string[];
+  /** Whether the live reasoning/tool draft is enabled (`outbound.liveFeed`). */
+  liveFeedEnabled(): boolean;
   /** Refresh open status panels / menu heads after state changes. */
   refreshAllPanels(): void;
   /** Edit one message in place (streaming drafts). */

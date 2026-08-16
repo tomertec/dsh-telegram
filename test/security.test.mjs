@@ -11,12 +11,16 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
   const oldCwd = process.cwd();
   const oldToken = process.env.TELEGRAM_BOT_TOKEN;
 
+  const subscribed = [];
   const ctx = {
     get: () => undefined,
     provide: (_name, value) => {
       ctx.services.set(_name, value);
     },
-    on: () => () => {},
+    on: (name) => {
+      subscribed.push(name);
+      return () => {};
+    },
     effect: () => {},
     tools: { register: () => {} },
     commands: { register: (definition) => { ctx.command = definition; } },
@@ -48,6 +52,19 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
     const telegram = ctx.services.get('telegram');
     assert.ok(telegram);
     assert.deepEqual(telegram.chats(), []);
+
+    // The web's forwarded host/remote events must all be subscribed: open
+    // panels re-read their data source when any of them fires.
+    for (const name of [
+      'session/created', 'session/disposed', 'agent/error', 'domain/changed',
+      'agent-preset/selected', 'commands/change', 'credentials/updated',
+      'settings/document-updated', 'llm/adapters-updated',
+      'cordis/request-run', 'cordis/request-run-resolved',
+      'cordis/dynamic-package', 'cordis/dynamic-retract',
+      'cordis/inspect-query', 'cordis/inspect-query-resolved',
+    ]) {
+      assert.ok(subscribed.includes(name), `missing subscription: ${name}`);
+    }
 
     // An unauthorized probe gets the allow prompt but must not enter the
     // roster that receives broadcasts and approval/question cards.

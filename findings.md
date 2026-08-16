@@ -26,3 +26,11 @@
 10. `/telegram disallow` 与 security 热更新只从 roster 移除，不解除 bridge 绑定 → 已解绑会话仍可能通过 bridge 发消息。
 11. `/use` 恢复会话后不 adopt `AgentHandle` → teardown 不跟踪。
 12. `telegram_reply`/`telegram_mark_no_reply` 只看「最近触碰」inbound，两个会话并发时可能回错聊天。
+
+## Round 2 发现与修复
+
+- `outbound.liveFeed` 是死配置：openclaw 只认「是否挂载」。修复为 core 侧按配置忽略 consumer + 扩展逐事件检查，热切换生效。
+- web `events.host`/remote 事件完全未订阅，导致其他面板改设置/插件后 Telegram 卡片陈旧。
+- 危险操作中 workspace delete、preset remove、subagent interrupt 无确认；session delete 有确认但走「新消息 + 残留确认卡」旧路径。
+- `/credentialset` 的 secret 明文会永久留在聊天历史。
+- grammY `InlineKeyboard.row()` 陷阱再次出现：新 confirm 键盘若以 `.row()` 开头会多一个空行，以 `.row()` 结尾会多一个空尾行；正确写法是两个 `.text()` 不加 `.row()`。

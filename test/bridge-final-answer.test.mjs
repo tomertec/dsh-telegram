@@ -180,3 +180,27 @@ test('legacy delivery reports the Telegram message id for feedback buttons', asy
   ]);
   assert.deepEqual(transport.sent[0].extra.reply_parameters, { message_id: 501 });
 });
+
+test('outbound.liveFeed=false ignores a mounted stream consumer and restores legacy forwarding', async () => {
+  const transport = makeTransport();
+  const { ctx } = makeBridge(transport);
+  const { Bridge } = await import('../dist/harness/bridge.js');
+  const bridge = new Bridge({
+    ctx,
+    transport,
+    getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML', liveFeed: false } }),
+    onStateChange: () => {},
+    log: () => {},
+  });
+  bridge.attach();
+  const consumed = [];
+  bridge.setAssistantConsumer((chatId, text) => consumed.push({ chatId, text }));
+  assert.equal(bridge.deliver(7, 'hi', 501).ok, true);
+  ctx.emit('session/event', { id: 'agent-1' }, am('answer'));
+  await sleep(10);
+  assert.deepEqual(consumed, [], 'consumer is registered but disabled by config');
+  assert.equal(transport.sent.length, 1);
+  assert.equal(transport.sent[0].text, 'answer');
+  assert.deepEqual(transport.sent[0].extra.reply_parameters, { message_id: 501 });
+  assert.equal(bridge.hasPendingInbound(), false);
+});

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildMenuPage, buildQueueKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildMenuPage, buildQueueKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -154,4 +154,14 @@ test('callback chat resolves from callback_query.message.chat (Bot API shape)', 
   assert.equal(callbackUpdateChatId({ chat: { id: 1 }, message: { chat: { id: 2 } } }), 2);
   assert.equal(callbackUpdateChatId({}), undefined);
   assert.equal(callbackUpdateChatId({ message: {} }), undefined);
+});
+
+test('buildConfirmKeyboard lays out confirm and cancel side by side', () => {
+  const kb = buildConfirmKeyboard({ confirm: 't:1', cancel: 't:2' });
+  assert.deepEqual(kb.inline_keyboard, [
+    [
+      { text: '\u2705 Confirm', callback_data: 't:1' },
+      { text: '\u2716 Cancel', callback_data: 't:2' },
+    ],
+  ]);
 });

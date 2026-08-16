@@ -367,3 +367,33 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
   - 本机 `~/.npm` 缓存目录含 root-owned 文件（环境问题），项目包内容不受影响。
 - `docs/WEB_PARITY_AUDIT.md` 已同步：多 chat 路由、首图自动建会话、审批/提问按 chat 路由均更新为完成。
 - 待 Telegram 人工复核：见第 14 节清单，外加「两个白名单 chat 并发发消息互不串话」「A 的审批不再推给 B」「快速连发两条首条消息只建一个 session」「disallow 后旧 chat 不再收到 agent 回复」。
+
+## 16. Round 2：liveFeed 生效 + 转发事件 + 危险操作确认（2026-08-16，163/163）
+
+### 修复/增强
+
+1. **`outbound.liveFeed` 从死配置变为真开关**：
+   - core `Bridge` 在 `liveFeed=false` 时忽略已注册的 stream consumer，恢复 legacy 立即转发与 turn/end 提醒；
+   - openclaw 监听器每个 `session/event` 都先查 `host.liveFeedEnabled()`，关闭时完全不建草稿；
+   - `ExtensionHost` 暴露 `liveFeedEnabled()`；`/config set outbound.liveFeed true|false` 免重启热切换。
+2. **web 转发事件全部接线（15 个）**：
+   - 11 个 `API_REMOTE_FORWARDED_EVENTS` + `session/created`、`session/disposed`、`agent/error`、`domain/changed`；
+   - 每个事件只调用 `refreshAllPanels()`：打开的 status/卡片原地刷新，没有打开的聊天不被打扰；
+   - disposer 进入 `teardownMount` 回收，热卸载/热重载无残留监听。
+3. **危险操作统一二次确认**：
+   - session delete（改造成确认卡并原地结算）、workspace delete、preset remove、subagent interrupt；
+   - 新增纯函数 `buildConfirmKeyboard`（`✅ Confirm · ✖ Cancel` 同行），确认/取消都在原卡原地更新后回到对应列表。
+4. **credential 隐私**：`/credentialset <REF> <value>` 的命令消息在 500ms 后自动删除，secret 不再留在用户聊天历史。
+
+### 验证
+
+- `npm run check`：**163/163 pass**（新增 bridge liveFeed 开关、openclaw liveFeed 关闭、confirm 键盘形状、security 订阅清单断言）。
+- 回归确认：round 1 的 160 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 已同步：events.host / 11 转发事件 / liveFeed / 危险确认 / credential 状态更新。
+
+### Telegram 人工复核
+
+1. `/config get outbound.liveFeed` → `true`；`/config set outbound.liveFeed false` 后发一条多步任务 → 应回到「最终一条干净回复」（无 `⚙ Working…` 草稿）；再 set `true` → 流式草稿恢复（无需重启）。
+2. 删除 Workspace / 删除 Session / 删除 Preset / 中断 Subagent 都应先出现 `✅ Confirm · ✖ Cancel`，点 Cancel 无副作用，点 Confirm 原地显示结果。
+3. `/credentialset <REF> <value>` 发送约 0.5s 后，你自己的这条命令消息应从聊天中消失，只留下成功回执。
+4. 在另一个面板修改 settings/credentials/插件后，返回 Telegram 打开对应卡片应看到最新数据（无需重启 bot）。

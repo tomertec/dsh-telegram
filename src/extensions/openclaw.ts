@@ -354,6 +354,10 @@ export function apply(ctx: Context, _config?: unknown): void {
     // trusting the most-recently-touched chat, so two chats can stream at once.
     const chatId = host.chatIdForAgent(String(session.id));
     if (chatId === undefined) return;
+    // `outbound.liveFeed=false` disables this renderer dynamically; the core
+    // falls back to immediate forwarding while this listener stays mounted,
+    // so a later `/config set outbound.liveFeed true` needs no restart.
+    if (!host.liveFeedEnabled()) return;
     const type = event.type;
     if (type === "turn/start") {
       // Drop only this chat's stale draft; another chat's live draft stays.

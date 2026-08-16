@@ -1,18 +1,21 @@
 # dsh-telegram 进度日志
 
-## 2026-08-16 Round 1（第 1 轮目标续作）
+## 2026-08-16 Round 1（已完成）
 
-- 恢复上下文：读 PLAN.md、TESTING.md（至第 14 节）、docs/WEB_PARITY_AUDIT.md、git diff。
-- 基线 `npm run check`：**失败**（TS2352 sessions.ts:84）。
-- 修复基线 + 审查发现 11 项问题（清单见 TESTING.md §15）。
-- `npm run check`：**160/160 pass**。
-- `npm pack --dry-run`（独立 cache）：118 文件完整。
-- 文档同步：TESTING.md §15 新增；WEB_PARITY_AUDIT.md 多 chat/审批路由状态更新。
-- 本轮文件改动：src/{index, bridge, router, transport, interactive, sessions, openclaw}.ts +
-  test/{bridge-multichat, interactive, router, transport, keyboard, security, session-lifecycle, openclaw}.mjs +
-  规划文件与文档。
+- 基线构建修复 + 12 项缺陷修复，160/160 tests，commit `577a820`。
+- 详见 TESTING.md §15。
 
-## 下一步（Round 2 候选）
+## 2026-08-16 Round 2（本轮，进行中）
 
-按 task_plan.md「下一轮候选」继续：liveFeed 开关、危险操作确认、credential 隐私、
-转发事件刷新、分页与附件接纳。
+- `outbound.liveFeed` 动态生效（core + openclaw 两侧）。
+- 订阅 15 个 web 转发/host 事件并只刷新打开面板。
+- 危险操作确认卡统一（session/workspace delete、preset remove、subagent interrupt）。
+- `/credentialset` 原消息 500ms 自动删除。
+- `npm run check`：163/163 pass。
+- 文档已同步：TESTING.md §16、WEB_PARITY_AUDIT.md。
+- 待办：npm pack 验证 + git 提交本轮改动。
+
+## 下一步（Round 3 候选）
+
+session/history/models 分页、host 目录逐级浏览、文档/语音附件、skills scope、
+subagent 详情字段、goal edit maxRounds、补齐 adapter 单测。

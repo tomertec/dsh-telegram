@@ -105,13 +105,13 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | settings.replace | /settingsreplace `<ns> <json section>` | ✅ | 无按钮流、无 expectedRevision |
 | settings.mutate | /settingsmutate `<ns> <json ops>` | ✅ | 无按钮流、无 expectedRevision |
 | credentials.describe | /credential `<REF>` | 🟡 | web 接受 `refs[]` 批量查询；TG 只能一次一个；卡上没有可点选的 ref 列表 |
-| credentials.set | /credentialset `<REF> <value>` | 🟡 | 值明文留在聊天记录里（web 表单不回显） |
+| credentials.set | /credentialset `<REF> <value>` | 🟡 | 命令原消息在 500ms 后自动删除，值不回显；Telegram 服务端短期缓存仍非本项目可控 |
 | credentials.unset | /credentialunset `<REF>` | ✅ | |
 | llm.providers | Models 卡（间接） | 🟡 | 缺 `settingsNs` / `settingsPath` / `active` / `declared` 展示；没有单独 Providers 卡 |
 | llm.models | Models 卡 | 🟡 | 每 provider 只显示前 12 个，无模型翻页 |
 | llm.discoverModels | /discover `<settingsNs> [baseURL]` | 🟡 | web 还支持 `provider` / `api` / `apiKey`；TG 只透出两个参数 |
 | events.mux | bridge 订阅 `session/event`；approval/question 内联 | 🟡 | 只转发最终 assistant text；无 `session/subscribed`、`session/queue` 推送、`session/jobs` 推送、`session/projection`、tool view、`stream/error` 全量 |
-| events.host | `agent/status` + 打开卡片时重读 | ❌ | **没有实现 host frame 流**；session added/removed、workspace changed/removed/order、archived、remote-event 均未订阅 |
+| events.host | `session/created|disposed`、`agent/status|error`、`domain/changed` + 打开卡片时重读 | ✅ | 订阅后只刷新已打开的卡片/status panel，不向聊天推送（无 open card 不打扰） |
 | respond | approval 按钮；question 选项按钮；自由文本 `/answer <id> <n> <text>` | 🟡 | `/answer` 已接线；approval/question 有 chat 绑定时只发绑定 chat，settle/answered 也回原 chat；无绑定时才广播 |
 | downloads.sessionLog | 详情 Log、/sessionlog | ✅ | 50 MB 内直传，超过给 web 指引 |
 
@@ -133,17 +133,17 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 
 | 事件 | 状态 | 证据 |
 | --- | --- | --- |
-| agent-preset/selected | 🟡 | status 打开时会扫 session events；但没有订阅推送刷新 |
-| commands/change | ❌ | 源码无订阅 |
-| credentials/updated | ❌ | 源码无订阅 |
-| settings/document-updated | ❌ | 源码无订阅 |
-| llm/adapters-updated | ❌ | 源码无订阅 |
-| cordis/request-run | ❌ | 源码无订阅 |
-| cordis/request-run-resolved | ❌ | 源码无订阅 |
-| cordis/dynamic-package | ❌ | 源码无订阅 |
-| cordis/dynamic-retract | ❌ | 源码无订阅 |
-| cordis/inspect-query | ❌ | 源码无订阅 |
-| cordis/inspect-query-resolved | ❌ | 源码无订阅 |
+| agent-preset/selected | ✅ | 已订阅，触发打开卡片/status panel 刷新 |
+| commands/change | ✅ | 已订阅，触发刷新 |
+| credentials/updated | ✅ | 已订阅，触发刷新 |
+| settings/document-updated | ✅ | 已订阅，触发刷新 |
+| llm/adapters-updated | ✅ | 已订阅，触发刷新 |
+| cordis/request-run | ✅ | 已订阅，触发刷新 |
+| cordis/request-run-resolved | ✅ | 已订阅，触发刷新 |
+| cordis/dynamic-package | ✅ | 已订阅，触发刷新 |
+| cordis/dynamic-retract | ✅ | 已订阅，触发刷新 |
+| cordis/inspect-query | ✅ | 已订阅，触发刷新 |
+| cordis/inspect-query-resolved | ✅ | 已订阅，触发刷新 |
 
 `bridge.attach()` 目前只订阅 `session/event` 和 `agent/status`。
 
@@ -207,14 +207,14 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 
 ### P2：让 Telegram 真正“顺手”（体验增强）
 
-- [ ] 订阅 11 个转发事件，按 chat 刷新受影响卡片和 status panel（无 open card 时不打扰）。
+- [x] 订阅 11 个转发事件 + host 源事件（session/created、session/disposed、agent/error、domain/changed），按 chat 刷新受影响卡片和 status panel（无 open card 时不打扰）。
 - [ ] `events.host` 投影为轻量通知：session added/removed、workspace changed/order、agent error。
 - [x] `setMyCommands` 已注册 39 条已实现命令。
 - [x] 首条图片在无 agent 时自动建会话（文档/语音/视频仍未接纳，待后续）。
-- [ ] credential 写入流程改成“发送后 10 秒删除消息”或“只在 dsh 侧设置”的提示，避免 secret 留痕。
+- [x] credential 写入命令原消息 500ms 后自动删除，避免 secret 留在聊天历史。
 - [x] 审批/提问按会话 chat 路由（只有当前绑定 chat 收到），无绑定时才广播。
-- [ ] `outbound.liveFeed` 真正控制 openclaw 草稿开关；未挂扩展时给降级说明。
-- [ ] 危险操作统一二次确认：Delete session、Preset remove、Subagent interrupt、Workspace delete。
+- [x] `outbound.liveFeed` 真正控制 openclaw 草稿开关（core 忽略 consumer + 扩展逐事件检查，热切换免重启）。
+- [x] 危险操作统一二次确认：Delete session、Workspace delete、Preset remove、Subagent interrupt 全部走同一张 confirm 卡。
 - [ ] 卡片分页统一：Sessions/Models/Plugins/Jobs/History/Search 都支持翻页。
 - [ ] 补 adapter 单测：feedback/host/settings/commands/jobs/downloads/dynamic/events forwarding。
 
@@ -310,6 +310,10 @@ Map<chatId, {
 - [x] approval/question 按 session→chat 路由（无绑定才广播）；`telegram_reply`/`telegram_mark_no_reply` 按执行 agent 反查 inbound，不再依赖「最近触碰」。
 - [x] `ejectChat`：dsh `/telegram disallow` 与 security 热更新同步解除 bridge 绑定、typing 与 bar 残留。
 - [x] openclaw 新回合取消旧 throttle timer，避免上一回合草稿 edit 打入新回合。
+- [x] `outbound.liveFeed` 动态生效：core 忽略禁用状态的 consumer，openclaw 逐事件检查 `host.liveFeedEnabled()`，`/config set outbound.liveFeed true|false` 免重启切换。
+- [x] 15 个 web 转发/host 事件（11 remote + session/created、session/disposed、agent/error、domain/changed）全部订阅并触发 `refreshAllPanels()`；disposer 随 teardown 回收。
+- [x] 危险操作统一确认卡：session delete、workspace delete、preset remove、subagent interrupt；`buildConfirmKeyboard` 纯函数 + 单测。
+- [x] `/credentialset` 原消息 500ms 后自动删除，secret 不留聊天历史。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

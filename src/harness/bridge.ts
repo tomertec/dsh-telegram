@@ -313,6 +313,13 @@ export class Bridge {
     return inbound !== undefined && !inbound.replied && !inbound.noReply;
   }
 
+  /** Live feed switch (`outbound.liveFeed`): when false, stream-renderer
+   * plugins are ignored and the built-in immediate forwarding is restored
+   * without unloading or re-registering the plugin. */
+  private liveFeedEnabled(): boolean {
+    return this.getConfig().outbound.liveFeed !== false;
+  }
+
   /** Stream-renderer plugin seam: when a consumer is registered the core
    * forwards assistant text blocks to it instead of the chat and defers the
    * inbound-answered bookkeeping to the consumer. No consumer = the built-in
@@ -354,7 +361,10 @@ export class Bridge {
             .trim();
           const messageId = message?.id === undefined ? undefined : String(message.id);
           if (text) {
-            const consumer = this.assistantConsumer;
+            // `outbound.liveFeed=false` disables stream-renderer plugins
+            // dynamically: the core falls back to its legacy immediate
+            // forwarding even while a consumer is registered.
+            const consumer = this.liveFeedEnabled() ? this.assistantConsumer : undefined;
             if (consumer !== undefined) {
               // A stream-renderer plugin owns presentation and final delivery.
               consumer(chatId, text, messageId);
@@ -396,7 +406,7 @@ export class Bridge {
               })
               .catch(() => {});
           } else if (
-            this.assistantConsumer === undefined &&
+            (this.assistantConsumer === undefined || !this.liveFeedEnabled()) &&
             inbound !== undefined &&
             !inbound.replied &&
             !inbound.noReply &&

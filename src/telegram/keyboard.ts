@@ -157,6 +157,13 @@ export function buildBackKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("\u2190 Back", "m:back");
 }
 
+/** Two-button confirmation row for destructive actions. */
+export function buildConfirmKeyboard(callbacks: { confirm: string; cancel: string }): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("\u2705 Confirm", callbacks.confirm)
+    .text("\u2716 Cancel", callbacks.cancel);
+}
+
 export interface ProjectRow {
   label: string;
   cb: string;

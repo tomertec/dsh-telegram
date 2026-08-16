@@ -65,6 +65,7 @@ import { plain, truncate } from "./telegram/html.js";
 import {
   buildBackKeyboard,
   buildBarKeyboard,
+  buildConfirmKeyboard,
   buildMenuPage,
   buildProjectKeyboard,
   queueBarLabel,
@@ -135,6 +136,24 @@ interface State {
   barTimers: Map<number, ReturnType<typeof setTimeout>>;
 }
 
+/** Web `ApiProxy.events.host` also forwards these remote-service events. */
+const FORWARDED_EVENT_NAMES = [
+  "agent-preset/selected",
+  "commands/change",
+  "credentials/updated",
+  "settings/document-updated",
+  "llm/adapters-updated",
+  "cordis/request-run",
+  "cordis/request-run-resolved",
+  "cordis/dynamic-package",
+  "cordis/dynamic-retract",
+  "cordis/inspect-query",
+  "cordis/inspect-query-resolved",
+] as const;
+
+/** Underlying cordis events that the web projects into `events.host` frames. */
+const HOST_EVENT_NAMES = ["session/created", "session/disposed", "agent/error", "domain/changed"] as const;
+
 const state: State = {
   context: null,
   workspaceRoot: findWorkspaceRoot(process.cwd()) ?? process.cwd(),
@@ -150,10 +169,14 @@ const state: State = {
   barTimers: new Map(),
 };
 
+/** Disposers for the refresh-only cordis event subscriptions above. */
+const refreshEventDisposers: (() => void)[] = [];
+
 /** Reverse every live mount effect (hot unplug / HMR / config restart). */
 function teardownMount(): void {
   state.interactive?.detach();
   state.interactive = undefined;
+  for (const dispose of refreshEventDisposers.splice(0)) dispose();
   state.bridge?.detach();
   state.bridge = undefined;
   void state.transport?.stop().catch(() => {});
@@ -275,6 +298,7 @@ function buildExtensionHost(): ExtensionHost {
       writeConfig(state.configRoot, state.config);
       return changed;
     },
+    liveFeedEnabled: () => state.config.outbound.liveFeed !== false,
     refreshAllPanels,
     editMessage: (chatId, messageId, text, options) => requireTransport().editText(chatId, messageId, text, options as never),
     deleteMessage: (chatId, messageId) => requireTransport().deleteMessage(chatId, messageId),
@@ -473,6 +497,14 @@ async function openCard(chatId: number, text: string, keyboard: unknown): Promis
     parse_mode: "HTML",
     reply_markup: keyboard,
   });
+}
+
+/** Replace the current card with a destructive-action confirmation. */
+async function askConfirm(chatId: number, text: string, confirmPayload: Record<string, string>, cancelPayload: Record<string, string>): Promise<void> {
+  await openCard(chatId, text, buildConfirmKeyboard({
+    confirm: token(confirmPayload),
+    cancel: token(cancelPayload),
+  }));
 }
 
 const menuPageIndex = new Map<number, number>();
@@ -1138,8 +1170,22 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       return;
     }
     case "subagent-interrupt": {
+      const parentId = payload["parentId"] ?? "";
+      const childId = payload["childId"] ?? "";
+      return askConfirm(
+        chatId,
+        `\u23F9 Interrupt subagent ${plain(truncate(childId, 28))}?`,
+        { action: "subagent-interrupt-confirm", parentId, childId },
+        { action: "subagent-interrupt-cancel", parentId, childId },
+      );
+    }
+    case "subagent-interrupt-confirm": {
       const res = interruptSubagent(requireCtx(), payload["parentId"] ?? "", payload["childId"] ?? "");
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
+      return openSubagentsCard(chatId);
+    }
+    case "subagent-interrupt-cancel": {
+      await openCard(chatId, "\u2716 Interrupt cancelled.", buildBackKeyboard());
       return openSubagentsCard(chatId);
     }
     case "subagent-history": {
@@ -1200,12 +1246,12 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "session-delete-confirm": {
       const sessionId = payload["sessionId"] ?? "";
       const res = await deleteSession(requireCtx(), sessionId);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
       return openSessionsCard(chatId);
     }
     case "session-delete-cancel": {
-      await requireTransport().sendText(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
-      return;
+      await openCard(chatId, "\u2716 Delete cancelled.", buildBackKeyboard());
+      return openSessionsCard(chatId);
     }
     case "preset-read": {
       const res = await readAgentPreset(requireCtx(), payload["presetId"] ?? "");
@@ -1223,14 +1269,36 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       return openPresetsCard(chatId);
     }
     case "preset-remove": {
+      const presetId = payload["presetId"] ?? "";
+      return askConfirm(
+        chatId,
+        `\u{1F5D1} Remove agent preset ${plain(truncate(presetId, 32))}?`,
+        { action: "preset-remove-confirm", presetId },
+        { action: "preset-remove-cancel", presetId },
+      );
+    }
+    case "preset-remove-confirm": {
       const res = await removeAgentPreset(requireCtx(), payload["presetId"] ?? "");
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
+      return openPresetsCard(chatId);
+    }
+    case "preset-remove-cancel": {
+      await openCard(chatId, "\u2716 Remove cancelled.", buildBackKeyboard());
       return openPresetsCard(chatId);
     }
     case "preset-open": {
       const res = openAgentPresetDocument(requireCtx(), payload["presetId"] ?? "");
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
+    }
+    case "workspace-delete-confirm": {
+      const res = await deleteWorkspace(requireCtx(), payload["id"] ?? "");
+      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
+      return openWorkspacesCard(chatId);
+    }
+    case "workspace-delete-cancel": {
+      await openCard(chatId, "\u2716 Delete cancelled.", buildBackKeyboard());
+      return openWorkspacesCard(chatId);
     }
     case "feedback": {
       const sessionId = payload["sessionId"] ?? "";
@@ -1342,15 +1410,12 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openSessionDetailCard(chatId, id);
     }
     if (sub === "delete") {
-      const confirm = token({ action: "session-delete-confirm", sessionId: id });
-      const cancel = token({ action: "session-delete-cancel", sessionId: id });
-      await requireTransport().sendText(chatId, `\u{1F5D1} Delete ${plain(truncate(id, 24))}?`, {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [[{ text: "\u2705 Confirm", callback_data: confirm }, { text: "\u2716 Cancel", callback_data: cancel }]],
-        },
-      });
-      return;
+      return askConfirm(
+        chatId,
+        `\u{1F5D1} Delete session ${plain(truncate(id, 24))}?`,
+        { action: "session-delete-confirm", sessionId: id },
+        { action: "session-delete-cancel", sessionId: id },
+      );
     }
     if (sub === "steer") {
       pendingSteer = { chatId, sessionId: id };
@@ -1390,9 +1455,12 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return;
     }
     if (sub === "delete") {
-      const res = await deleteWorkspace(requireCtx(), id);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-      return openWorkspacesCard(chatId);
+      return askConfirm(
+        chatId,
+        `\u{1F5D1} Delete workspace ${plain(truncate(id, 32))}?`,
+        { action: "workspace-delete-confirm", id },
+        { action: "workspace-delete-cancel", id },
+      );
     }
     if (sub === "up" || sub === "down") {
       const { items } = listWorkspaces(requireCtx());
@@ -2105,6 +2173,14 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       const space = args.indexOf(" ");
       const ref = space === -1 ? args.trim() : args.slice(0, space);
       const value = space === -1 ? "" : args.slice(space + 1);
+      // The value is a secret: remove the command message from the chat as
+      // soon as Telegram processed the follow-up, so the secret does not sit
+      // in the user's message history.
+      if (messageId !== undefined) {
+        setTimeout(() => {
+          void t.deleteMessage(chatId, messageId).catch((err) => log("credential command delete failed", err));
+        }, 500);
+      }
       const res = await setCredential(ctx, ref, value);
       await send(res.text, res.ok);
       return;
@@ -2410,6 +2486,25 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       log,
     });
     state.bridge.attach();
+
+    // Refresh-only subscribers for the events the web forwards over
+    // events.mux/events.host: open panels re-read their data source, closed
+    // chats get no message. Waterfall events keep flowing (we return void).
+    const onRefreshEvent = ctx.on.bind(ctx) as (name: string, listener: (...args: unknown[]) => void) => () => void;
+    for (const name of FORWARDED_EVENT_NAMES) {
+      refreshEventDisposers.push(
+        onRefreshEvent(name, () => {
+          refreshAllPanels();
+        }),
+      );
+    }
+    for (const name of HOST_EVENT_NAMES) {
+      refreshEventDisposers.push(
+        onRefreshEvent(name, () => {
+          refreshAllPanels();
+        }),
+      );
+    }
 
     state.interactive = attachInteractive(ctx, {
       broadcast: async (text, keyboard, chatId) => {

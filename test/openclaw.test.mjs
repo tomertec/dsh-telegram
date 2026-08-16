@@ -11,6 +11,7 @@ function makeHost() {
     feedback: [],
     nextId: 100,
     inboundPending: false,
+    liveFeed: true,
     inboundRepliedMarks: 0,
     consumer: undefined,
     consumed: [],
@@ -18,6 +19,7 @@ function makeHost() {
     currentChatId: () => 7,
     agentIdForChat: (chatId) => (chatId === 7 ? 'agent-1' : undefined),
     chatIdForAgent: (agentId) => (agentId === 'agent-1' ? 7 : undefined),
+    liveFeedEnabled: () => host.liveFeed !== false,
     bindAgent: () => {},
     unbindChat: () => {},
     send: async (chatId, text, options) => {
@@ -283,4 +285,20 @@ test('a new turn cancels the previous draft throttle timer', async () => {
   ctx.emit('agent-1', ev('turn/start', { turn: 2 }));
   await sleep(200);
   assert.equal(host.edits.length, 0, 'the old throttled edit must not fire into the new turn');
+});
+
+test('outbound.liveFeed=false disables the draft without unmounting', async () => {
+  const { host, ctx } = await setup();
+  host.liveFeed = false;
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'silent' } }));
+  ctx.emit('agent-1', ev('tool/call', { callId: 'call_silent', name: 'bash', arguments: 'ls' }));
+  await sleep(220);
+  assert.equal(host.sends.length, 0);
+  assert.equal(host.edits.length, 0);
+  host.inboundPending = true;
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+  assert.equal(host.sends.length, 0, 'disabled renderer must not deliver the turn-end answer');
+  host.liveFeed = true;
 });
