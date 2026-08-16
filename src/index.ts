@@ -197,6 +197,7 @@ function teardownMount(): void {
   state.chats.clear();
   state.context = null;
   pendingRename = undefined;
+  pendingWorkspaceCreate = undefined;
   pendingSubagentPrompt = undefined;
   pendingSteer = undefined;
   pendingSearch = undefined;
@@ -1747,7 +1748,15 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   if (data.startsWith("w:")) {
     const [, id, sub] = data.split(":");
     if (sub === "create") {
-      await requireTransport().sendText(chatId, "/workspacecreate &lt;path&gt; [title]", { parse_mode: "HTML" });
+      pendingWorkspaceCreate = { chatId };
+      await requireTransport().sendText(
+        chatId,
+        "\u{1F5C2} Reply with the workspace path, optionally followed by a title (or /cancel):",
+        {
+          parse_mode: "HTML",
+          reply_markup: inputPromptKeyboard("/path/to/project [Title]"),
+        },
+      );
       return;
     }
     if (sub === "rename") {
@@ -1976,6 +1985,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
 }
 
 let pendingRename: { chatId: number; sessionId: string } | undefined;
+let pendingWorkspaceCreate: { chatId: number } | undefined;
 /** Chats whose first touch was `/start` while unauthorized: once they tap
  * Allow, replay the welcome instead of making them resend the command. */
 const pendingStartAfterAllow = new Set<number>();
@@ -2140,6 +2150,9 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       if (pendingPresetCopy && pendingPresetCopy.chatId === chatId) {
         pendingPresetCopy = undefined;
         await send("Preset copy cancelled.");
+      } else if (pendingWorkspaceCreate && pendingWorkspaceCreate.chatId === chatId) {
+        pendingWorkspaceCreate = undefined;
+        await send("Workspace create cancelled.");
       } else if (pendingMkdir && pendingMkdir.chatId === chatId) {
         pendingMkdir = undefined;
         await send("New-folder cancelled.");
@@ -2968,6 +2981,23 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           pendingSteer = undefined;
           const res = promptSession(requireCtx(), sessionId, text, "steer");
           void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+          return;
+        }
+        if (pendingWorkspaceCreate && pendingWorkspaceCreate.chatId === chatId) {
+          pendingWorkspaceCreate = undefined;
+          const trimmed = text.trim();
+          if (!trimmed) {
+            void state.transport?.sendText(chatId, "\u274C Workspace path must not be blank.", { parse_mode: "HTML" });
+            return openWorkspacesCard(chatId);
+          }
+          const space = trimmed.indexOf(" ");
+          const path = space === -1 ? trimmed : trimmed.slice(0, space);
+          const title = space === -1 ? undefined : trimmed.slice(space + 1).trim();
+          void (async () => {
+            const res = await createWorkspace(requireCtx(), path, title === "" ? undefined : title);
+            void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+            return openWorkspacesCard(chatId);
+          })().catch((err) => log("workspace create failed", err));
           return;
         }
         if (pendingRename && pendingRename.chatId === chatId) {

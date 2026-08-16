@@ -1083,3 +1083,9 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 ## 48. Round 2 追加：Watch 开关可见反馈（2026-08-19，229/229）
 
 - `m:watchtoggle` 现在会在停止/恢复轮询时发送一条明确提示（“Polling resumed.” / “Polling stopped — tap Watch → Start…”），避免用户以为 bot 坏了。
+
+## 49. Round 2 追加：Workspace Create 交互流程（2026-08-19，229/229）
+
+- `w:create` 之前只发送一行用法说明，用户无法真正创建。
+- 改为 `pendingWorkspaceCreate` + ForceReply：点 Create 后自动拉起回复框，输入
+  `/path/to/project [Title]` 即调用 `createWorkspace` 并刷新 Workspaces 卡；`/cancel` 可中止。
