@@ -79,7 +79,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | subagent.interrupt | 详情 Interrupt | 🟡 | 无确认；错误只有纯文本 |
 | host.describe | Host 卡 | 🟡 | `version` 写死 `0.0.1`；provider/model 取第一个 agent，不是宿主默认 seam |
 | host.pickDirectory | /pickdir、Project 选择器 | ✅ | 平台限制下用路径式选择代替原生对话框；无参数时给提示并打开 Project 卡 |
-| host.listDirectory | /ls、Project 选择器 | 🟡 | /ls 是截断到 3500 字符的纯文本；无 web 的 crumbs/home/hidden/truncated；除 Project 卡外无逐级点按导航 |
+| host.listDirectory | /ls（文本）、Host 卡 `Browse cwd` 逐级浏览 | ✅ | 点击文件夹进入、Up/~// 导航、目录 20/页、文件只计数；`/ls` 保留文本形式 |
 | host.createDirectory | /mkdir | 🟡 | 只接受完整路径；web 语义是 parent+name；没有浏览卡里“New folder”按钮 |
 | host.openPath | /openpath [path] | ✅ | 返回宿主路径指引，符合平台限制设计 |
 | workspace.list | Workspaces 卡 | ✅ | |
@@ -215,7 +215,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 - [x] 审批/提问按会话 chat 路由（只有当前绑定 chat 收到），无绑定时才广播。
 - [x] `outbound.liveFeed` 真正控制 openclaw 草稿开关（core 忽略 consumer + 扩展逐事件检查，热切换免重启）。
 - [x] 危险操作统一二次确认：Delete session、Workspace delete、Preset remove、Subagent interrupt 全部走同一张 confirm 卡。
-- [x] 卡片分页：Sessions/Models/Plugins/History 已支持翻页；Jobs/Search 仍为文本截断（候选）。
+- [x] 卡片分页：Sessions/Models/Plugins/History/Jobs 已支持翻页；Search 改为专用命中卡（New search/Sessions 按钮）。
 - [ ] 补 adapter 单测：feedback/host/settings/commands/jobs/downloads/dynamic/events forwarding。
 
 ---
@@ -317,6 +317,7 @@ Map<chatId, {
 - [x] Sessions 卡 10 条/页（`lastPromptAt desc`）、History `Load older`、`/goaledit <objective> [maxRounds]`、Preset copy 自定义 id。
 - [x] Models provider 卡 12 个/页、Plugins 卡 20 个/页；`telegram_send/broadcast` 只允许白名单 roster。
 - [x] host/commands/jobs/dynamic 适配器补单测（`test/host.test.mjs`、`test/commands-jobs-dynamic.test.mjs`）。
+- [x] Host 卡 `Browse cwd`：可点目录逐级浏览（Up/~//、20/页），`h:ls` 旧卡片兼容映射；Jobs 卡 20/页；Search 卡专用键盘。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

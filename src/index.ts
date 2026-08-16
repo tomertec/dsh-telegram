@@ -17,7 +17,7 @@ import type {} from "@deepseek-ai/dsh-session";
 import { existsSync } from "node:fs";
 import { defineTool, type ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { homedir } from "node:os";
-import { basename, resolve } from "node:path";
+import { basename, join, parse, resolve } from "node:path";
 import { isChatAllowed, readConfig, resolveToken, writeConfig, overlayConfig, getConfigPath, patchFromPath, type ConfigSection, type TelegramConfig } from "./config.js";
 import { Bridge } from "./harness/bridge.js";
 import { compactCurrent } from "./harness/adapters/compact.js";
@@ -73,6 +73,7 @@ import {
   queueBarLabel,
   type MenuItem,
   buildSessionsKeyboard,
+  buildSearchKeyboard,
   buildSessionDetailKeyboard,
   buildWorkspaceKeyboard,
   buildWorkspaceDetailKeyboard,
@@ -89,7 +90,6 @@ import {
   buildSettingsKeyboard,
   buildCredentialsKeyboard,
   buildHostKeyboard,
-  buildJobsKeyboard,
   buildDynamicCordisKeyboard,
   buildCapabilitiesKeyboard,
   buildFeedbackKeyboard,
@@ -721,7 +721,7 @@ async function openSearchCard(chatId: number, query: string): Promise<void> {
     lines.push(`\u2022 ${plain(truncate(hit.sessionId, 24))} [${hit.seq}] ${hit.type}${hit.live ? "" : " (cold)"}`);
     lines.push(`  ${plain(truncate(hit.snippet, 80))}`);
   }
-  await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(hits.slice(0, 8).map((hit) => hit.sessionId)));
+  await openCard(chatId, lines.join("\n"), buildSearchKeyboard(hits.slice(0, 8).map((hit) => hit.sessionId)));
 }
 
 async function openQueueCard(chatId: number): Promise<void> {
@@ -1002,21 +1002,67 @@ async function openHostCard(chatId: number): Promise<void> {
     `model default: ${host.provider ? `${plain(host.provider)}/` : ""}${host.model ? plain(host.model) : "default"}`,
     `attached sessions: ${host.attachedSessions} \u00B7 canOpenPath: ${host.canOpenPath}`,
     "",
-    "List: /ls [path] \u00B7 Mkdir: /mkdir <path>",
+    "Browse: pick a folder below \u00B7 Text: /ls [path] \u00B7 Mkdir: /mkdir <path>",
   ];
   await openCard(chatId, lines.join("\n"), buildHostKeyboard());
 }
 
-async function openJobsCard(chatId: number): Promise<void> {
+const HOST_BROWSE_PAGE_SIZE = 20;
+
+/** Telegram-native host.listDirectory: clickable breadcrumb browsing instead
+ * of a raw `/ls` dump. Directories are buttons; files are only counted so a
+ * large folder never overflows the callback keyboard. */
+async function openHostDirectoryCard(chatId: number, path: string, page = 0): Promise<void> {
+  const target = resolve(path);
+  const res = await listDirectory(target);
+  const dirs = (res.entries ?? []).filter((entry) => entry.kind === "directory");
+  const files = (res.entries ?? []).length - dirs.length;
+  const totalPages = Math.max(1, Math.ceil(dirs.length / HOST_BROWSE_PAGE_SIZE));
+  const safe = Math.max(0, Math.min(page, totalPages - 1));
+  const pageDirs = dirs.slice(safe * HOST_BROWSE_PAGE_SIZE, (safe + 1) * HOST_BROWSE_PAGE_SIZE);
+  const lines = [
+    res.ok ? `\u{1F4C2} ${plain(truncate(target, 80))}` : `\u274C ${plain(truncate(target, 80))}`,
+    "",
+    res.ok
+      ? `${dirs.length} dirs \u00B7 ${files} files \u00B7 page ${safe + 1}/${totalPages}`
+      : `Cannot list this path: ${plain(res.text)}`,
+    "",
+  ];
+  if (res.ok && pageDirs.length === 0) lines.push("(this directory contains files only)");
+  await openCard(chatId, lines.join("\n"), buildProjectKeyboard(
+    pageDirs.map((entry) => ({ label: entry.name, cb: token({ action: "host-open", path: join(target, entry.name) }) })),
+    {
+      up: token({ action: "host-open", path: parentOf(target) }),
+      home: token({ action: "host-open", path: homedir() }),
+      root: token({ action: "host-open", path: parse(target).root }),
+      paging: [
+        ...(safe > 0 ? [{ text: "\u2039 Prev", cb: token({ action: "host-page", path: target, page: String(safe - 1) }) }] : []),
+        ...(safe + 1 < totalPages ? [{ text: "More \u203A", cb: token({ action: "host-page", path: target, page: String(safe + 1) }) }] : []),
+      ],
+      close: "m:host",
+    },
+  ));
+}
+
+const JOBS_PAGE_SIZE = 20;
+
+async function openJobsCard(chatId: number, page = 0): Promise<void> {
   const agent = currentAgent(chatId);
   const jobs = listJobs(requireCtx(), agent?.id);
-  const lines = [`\u{1F527} Jobs (${jobs.length})`, ""];
-  for (const job of jobs.slice(0, 20)) {
+  const totalPages = Math.max(1, Math.ceil(jobs.length / JOBS_PAGE_SIZE));
+  const safe = Math.max(0, Math.min(page, totalPages - 1));
+  const pageItems = jobs.slice(safe * JOBS_PAGE_SIZE, (safe + 1) * JOBS_PAGE_SIZE);
+  const lines = [`\u{1F527} Jobs (${jobs.length}) \u00B7 page ${safe + 1}/${totalPages}`, ""];
+  for (const job of pageItems) {
     lines.push(`\u2022 ${plain(job.kind)} [${plain(job.id)}] \u00B7 ${job.status}${job.detail ? ` \u00B7 ${plain(truncate(job.detail, 30))}` : ""}`);
     lines.push(`  ${plain(truncate(job.label, 60))} \u00B7 started ${plain(new Date(job.startedAt).toLocaleString())}`);
   }
   if (jobs.length === 0) lines.push("(none)");
-  await openCard(chatId, lines.join("\n"), buildJobsKeyboard());
+  await openCard(chatId, lines.join("\n"), buildPagingKeyboard({
+    ...(safe > 0 ? { previous: token({ action: "jobs-page", page: String(safe - 1) }) } : {}),
+    ...(safe + 1 < totalPages ? { next: token({ action: "jobs-page", page: String(safe + 1) }) } : {}),
+    back: "m:jobs",
+  }));
 }
 
 async function openDynamicCordisCard(chatId: number): Promise<void> {
@@ -1149,6 +1195,12 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       return openProjectCard(chatId, parentOf(payload["path"] ?? state.workspaceRoot));
     case "project-select":
       return applyProjectPath(chatId, payload["path"] ?? state.workspaceRoot);
+    case "host-open":
+      return openHostDirectoryCard(chatId, payload["path"] ?? state.workspaceRoot);
+    case "host-page": {
+      const page = Number(payload["page"] ?? "0");
+      return openHostDirectoryCard(chatId, payload["path"] ?? state.workspaceRoot, Number.isFinite(page) && page > 0 ? page : 0);
+    }
     case "model-select": {
       const provider = payload["provider"] ?? "";
       const model = payload["model"] ?? "";
@@ -1301,6 +1353,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "plugins-page": {
       const page = Number(payload["page"] ?? "0");
       return openPluginsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "jobs-page": {
+      const page = Number(payload["page"] ?? "0");
+      return openJobsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
     }
     case "history-older": {
       const beforeSeq = Number(payload["beforeSeq"] ?? "");
@@ -1567,10 +1623,9 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   }
   if (data.startsWith("h:")) {
     const sub = data.slice(2);
-    if (sub === "ls") {
-      const res = await listDirectory(state.workspaceRoot);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-      return;
+    if (sub === "browse" || sub === "ls") {
+      // `ls` remains mapped for stale persisted Host cards from older builds.
+      return openHostDirectoryCard(chatId, state.workspaceRoot);
     }
     if (sub === "mkdir") {
       await requireTransport().sendText(chatId, "/mkdir <path>", { parse_mode: "HTML" });

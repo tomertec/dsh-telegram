@@ -48,3 +48,10 @@
 - Plugins 卡截断 30 条且键盘没有翻页；新增通用 `buildPagingKeyboard`，20/页。
 - `telegram_send`/`telegram_broadcast` 可由 agent 发给任意 chatId，绕过安全白名单；两个工具现在只接受 roster 内 chat。
 - host/commands/jobs/dynamic 长期无单测；补齐 8 个用例（含 mkdir 递归失败语义）。
+
+## Round 5 发现与修复
+
+- `/ls` 只能发一大段文本，不符合手机逐级浏览习惯；Host 卡新增 `Browse cwd` 逐级点按浏览器，路径全部 token 化。
+- 旧客户端残留 `h:ls` 按钮需兼容；路由统一映射到新浏览卡。
+- Jobs 卡截断 20 条且无翻页；改为 20/页 + `buildPagingKeyboard`。
+- Search 卡误用 Sessions 键盘（New/Stop/Search 与搜索结果混在一起）；新增专用 `buildSearchKeyboard`。

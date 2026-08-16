@@ -443,3 +443,27 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 2. 30+ 插件 profile → Plugins 卡显示 `page 1/2`，`More ›` 可翻页。
 3. agent 调用 `telegram_send` 发往未授权 chatId → 工具返回 not allowed，不真正发送；白名单 chat 正常发送。
 4. `/ls`、`/mkdir`、`/jobs`、`/commands`、Dynamic 卡在无服务 profile 下仍优雅降级。
+
+## 19. Round 5：Host 目录逐级浏览 + Jobs/Search 卡片顺手化（2026-08-16，184/184）
+
+### 改动
+
+1. **Host `Browse cwd` 逐级浏览**：
+   - Host 卡按钮由纯文本 `List cwd` 改为 `📂 Browse cwd`（`h:browse`），点击打开目录浏览卡；
+   - 目录两列按钮、文件只计数不占按钮、`⬆️ Up`/`🏠 ~`/`🖥️ /` 导航、目录 20/页 `‹ Prev`/`More ›`、`✖ Close` 回 Host 卡；
+   - 路径全部走 token 注册表（callback_data 永不超长）；旧客户端残留 `h:ls` 按钮兼容映射到同一浏览器；`/ls` 仍保留文本形式。
+2. **Jobs 卡分页**：20 条/页 + `buildPagingKeyboard` 导航。
+3. **Search 卡专用键盘**：命中会话按钮 + `🔍 New search`/`← Sessions`，不再套用 Sessions 卡的 New/Stop/Search 按钮；新增 `buildSearchKeyboard` 纯函数与测试。
+
+### 验证
+
+- `npm run check`：**184/184 pass**（新增 buildSearchKeyboard 1 例；host listDirectory/createDirectory 等 4 例此前已覆盖）。
+- round 1–4 的 183 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步 host.listDirectory 状态与卡片分页清单。
+
+### Telegram 人工复核
+
+1. `☰ Menu` → `Host` → `📂 Browse cwd`：应出现当前项目目录，文件夹两列可点，逐级进入；`⬆️ Up` 回父目录，`🏠 ~`/`🖥 /` 直达，`✖ Close` 回 Host 卡。
+2. 无权限目录：卡片显示 `Cannot list this path: …`，Up 仍可逐级回退。
+3. 大目录（>20 个子目录）出现 `More ›`/`‹ Prev`；文件只出现在计数里。
+4. `/jobs` 超过 20 条时 `More ›` 翻页；`/search <词>` 只出现命中会话按钮与 New search/Sessions。

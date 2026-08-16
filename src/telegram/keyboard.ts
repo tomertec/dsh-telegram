@@ -239,6 +239,15 @@ export function buildPagingKeyboard(callbacks: { previous?: string; next?: strin
   return InlineKeyboard.from(rows);
 }
 
+export function buildSearchKeyboard(ids: readonly string[]): InlineKeyboard {
+  const rows: { text: string; callback_data: string }[][] = [];
+  for (const id of ids.slice(0, 8)) {
+    rows.push([{ text: `\u{1F9ED} ${id.slice(0, 30)}`, callback_data: `s:${id}`.slice(0, 64) }]);
+  }
+  rows.push([{ text: "\u{1F50D} New search", callback_data: "m:search" }, { text: "\u2190 Sessions", callback_data: "m:sessions" }]);
+  return InlineKeyboard.from(rows);
+}
+
 export function buildSessionsKeyboard(ids: readonly string[], paging?: SessionsPaging): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [
     [{ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" }],
@@ -426,7 +435,7 @@ export function buildCredentialsKeyboard(): InlineKeyboard {
 
 export function buildHostKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
-  kb.row().text("\u{1F4C2} List cwd", "h:ls");
+  kb.row().text("\u{1F4C2} Browse cwd", "h:browse");
   kb.row().text("\u{1F4C1} Mkdir", "h:mkdir");
   return kb.row().text("\u2190 Back", "m:back");
 }

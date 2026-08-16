@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildQueueKeyboard, buildSessionsKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -200,4 +200,11 @@ test('buildPagingKeyboard shows nav only when a page edge exists', () => {
   const both = buildPagingKeyboard({ previous: 't:prev', next: 't:next', back: 'm:plugins' });
   assert.ok(both.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:prev')));
   assert.ok(both.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:plugins')));
+});
+
+test('buildSearchKeyboard lists hit sessions with new-search and sessions actions', () => {
+  const kb = buildSearchKeyboard(['s-one', 's-two']);
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 's:s-one')));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:search')));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:sessions')));
 });
