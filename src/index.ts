@@ -707,7 +707,7 @@ async function openPluginsCard(chatId: number, page = 0): Promise<void> {
   await openCard(chatId, lines.join("\n"), buildPagingKeyboard({
     ...(safe > 0 ? { previous: token({ action: "plugins-page", page: String(safe - 1) }) } : {}),
     ...(safe + 1 < totalPages ? { next: token({ action: "plugins-page", page: String(safe + 1) }) } : {}),
-    back: "m:plugins",
+    back: "m:back",
   }));
 }
 
@@ -1193,7 +1193,7 @@ async function openJobsCard(chatId: number, page = 0): Promise<void> {
   await openCard(chatId, lines.join("\n"), buildPagingKeyboard({
     ...(safe > 0 ? { previous: token({ action: "jobs-page", page: String(safe - 1) }) } : {}),
     ...(safe + 1 < totalPages ? { next: token({ action: "jobs-page", page: String(safe + 1) }) } : {}),
-    back: "m:jobs",
+    back: "m:back",
   }));
 }
 

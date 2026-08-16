@@ -1074,3 +1074,8 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 ### 验证
 
 - `npm run check`：**229/229 pass**。
+
+## 47. Round 2 追加：Plugins/Jobs 返回按钮修复（2026-08-19，229/229）
+
+- `openPluginsCard` 与 `openJobsCard` 的 `buildPagingKeyboard(back: "m:plugins"/"m:jobs")` 会让
+  「← Back」重新打开当前卡片，看起来像点了没反应。改为 `m:back`（回到上次菜单页）。
