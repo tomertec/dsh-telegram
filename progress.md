@@ -83,6 +83,11 @@
 - 文档已同步 TESTING.md §30 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 17 候选）
+## Round 17（已完成）
 
-Telegram 实机执行 §25 checklist（需要 token/实机）；剩余审计 🟡 收敛；实机通过后 tag/publish。
+- Release gate：npm publish --dry-run OK；tag v0.3.0-rc.1（commit `3bccf34`）。
+- 详见 TESTING.md §31。
+
+## 下一步（Round 18 候选）
+
+Telegram 实机执行 §25 checklist；实机通过后推 tag 与正式发布。

@@ -117,3 +117,8 @@
 
 - 权威源码显示 web api-proxy 将 subagent child 的 activity 重映射为 live agent status；此前透传持久化快照是语义错误。
 - subagent.prompt 缺 clientTimeZone 与 AbortSignal；已按 web MessageSource 契约补上。
+
+## Round 17 发现与验证
+
+- `npm publish --dry-run` 通过（registry public access，真实发布需登录）。
+- 自动化发布门槛已过；创建本地 tag `v0.3.0-rc.1`（推送/发布待实机验收）。

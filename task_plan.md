@@ -21,7 +21,8 @@
 - [x] Round 14：Settings schema envelope（207/207）
 - [x] Round 15：settings expectedRevision（208/208）
 - [x] Round 16：Subagent activity/时区/信号对齐 web（208/208）
-- [ ] Round 17+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
+- [x] Round 17：Release gate（npm publish dry-run + v0.3.0-rc.1 tag）
+- [ ] Round 18+：Telegram 实机 checklist + 最终发布决策（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
