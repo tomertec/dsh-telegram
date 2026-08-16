@@ -223,3 +223,60 @@ test('a failed telegram_reply leaves the inbound pending for the error path', as
   await assert.rejects(bridge.sendOutbound(7, 'reply', { replyToInbound: true }));
   assert.equal(bridge.hasPendingInbound(7), true, 'failed send must not mark the inbound answered');
 });
+
+test('deliver binds the chat and installs the inbound before followup can emit synchronously', async () => {
+  const transport = makeTransport();
+  const { ctx } = makeBridge(transport);
+  const running = [];
+  const agent = ctx.agents.get('agent-1');
+  agent.followup = () => {
+    ctx.emit('session/event', { id: 'agent-1' }, { type: 'turn/start', data: { turn: 1 } });
+    ctx.emit('session/event', { id: 'agent-1' }, am('synchronous answer'));
+    ctx.emit('session/event', { id: 'agent-1' }, turnEnd());
+  };
+  const { Bridge } = await import('../dist/harness/bridge.js');
+  const bridge = new Bridge({
+    ctx,
+    transport,
+    getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML' } }),
+    onStateChange: () => {},
+    onTurnRunning: (chatId, isRunning) => running.push({ chatId, isRunning }),
+    log: () => {},
+  });
+  bridge.attach();
+  assert.equal(bridge.deliver(7, 'hi', 501).ok, true);
+  assert.equal(bridge.chatIdForAgent('agent-1'), 7, 'binding must exist before followup runs');
+  assert.equal(bridge.inboundMessageIdValue(7), 501, 'inbound quote must exist before followup runs');
+  await sleep(10);
+  assert.deepEqual(running, [
+    { chatId: 7, isRunning: true },
+    { chatId: 7, isRunning: false },
+  ], 'synchronous turn lifecycle events are routed, not dropped');
+  assert.equal(transport.sent.length, 1, 'only the synchronous answer, no reminder');
+  assert.equal(transport.sent[0].chatId, 7);
+  assert.equal(transport.sent[0].text, 'synchronous answer');
+  assert.deepEqual(transport.sent[0].extra.reply_parameters, { message_id: 501 });
+  assert.equal(bridge.hasPendingInbound(7), false);
+});
+
+test('events for an unbound agent are logged as dropped with a per-agent summary', () => {
+  const transport = makeTransport();
+  const { ctx } = makeBridge(transport);
+  const logs = [];
+  return import('../dist/harness/bridge.js').then(async ({ Bridge }) => {
+    const bridge = new Bridge({
+      ctx,
+      transport,
+      getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML' } }),
+      onStateChange: () => {},
+      log: (message) => logs.push(message),
+    });
+    bridge.attach();
+    bridge.setCurrentAgent('agent-unknown'); // Telegram-touched agent without a chat binding
+    ctx.emit('session/event', { id: 'agent-unknown' }, am('orphan prose'));
+    ctx.emit('session/event', { id: 'agent-unknown' }, turnEnd());
+    assert.equal(logs.length, 2, 'first drop logs, and turn/end repeats so a lost final answer stays visible');
+    assert.match(logs[0], /event dropped: no chat for agent agent-unknown/);
+    assert.match(logs[1], /2 total dropped/);
+  });
+});

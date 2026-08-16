@@ -129,7 +129,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.0";
+export const version = "0.3.1";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -278,6 +278,9 @@ function applyConfigLive(changed: readonly ConfigSection[]): void {
     if (activePath !== undefined && existsSync(activePath)) {
       state.workspaceRoot = activePath;
     }
+  }
+  if (changed.includes("interactive")) {
+    log("interactive config changed \u2014 question-provider ownership applies on the next plugin restart");
   }
   refreshAllPanels();
 }
@@ -3115,32 +3118,39 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       );
     }
 
-    state.interactive = attachInteractive(ctx, {
-      broadcast: async (text, keyboard, chatId) => {
-        const delivered: { chatId: number; messageId: number }[] = [];
-        const targets = chatId === undefined ? [...state.chats] : state.chats.has(chatId) ? [chatId] : [];
-        for (const target of targets) {
-          const id = await state.transport?.sendText(target, plain(text), {
+    state.interactive = attachInteractive(
+      ctx,
+      {
+        broadcast: async (text, keyboard, chatId) => {
+          const delivered: { chatId: number; messageId: number }[] = [];
+          const targets = chatId === undefined ? [...state.chats] : state.chats.has(chatId) ? [chatId] : [];
+          for (const target of targets) {
+            const id = await state.transport?.sendText(target, plain(text), {
+              parse_mode: "HTML",
+              ...(keyboard === undefined ? {} : { reply_markup: keyboard as never }),
+            });
+            if (id !== undefined) delivered.push({ chatId: target, messageId: id });
+          }
+          return delivered;
+        },
+        chatForSession: (sessionId) => state.bridge?.chatIdForAgent(sessionId),
+        edit: async (chatId, messageId, text, keyboard) => {
+          const t = state.transport;
+          if (!t) return false;
+          const edited = await t.editText(chatId, messageId, plain(text), {
             parse_mode: "HTML",
-            ...(keyboard === undefined ? {} : { reply_markup: keyboard as never }),
+            // `undefined` means "settle this card": edit the text and remove
+            // its inline keyboard in place instead of leaving dead buttons.
+            reply_markup: keyboard === undefined ? { inline_keyboard: [] } : (keyboard as never),
           });
-          if (id !== undefined) delivered.push({ chatId: target, messageId: id });
-        }
-        return delivered;
+          return edited;
+        },
       },
-      chatForSession: (sessionId) => state.bridge?.chatIdForAgent(sessionId),
-      edit: async (chatId, messageId, text, keyboard) => {
-        const t = state.transport;
-        if (!t) return false;
-        const edited = await t.editText(chatId, messageId, plain(text), {
-          parse_mode: "HTML",
-          // `undefined` means "settle this card": edit the text and remove
-          // its inline keyboard in place instead of leaving dead buttons.
-          reply_markup: keyboard === undefined ? { inline_keyboard: [] } : (keyboard as never),
-        });
-        return edited;
+      {
+        userQuestions: state.config.interactive?.userQuestions ?? "telegram",
+        log,
       },
-    });
+    );
 
     // Every restart the client keeps the previous reply keyboard, which can
     // be a stale static `⌛ Queue` label from an older build. Re-assert the

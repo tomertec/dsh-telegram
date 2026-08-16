@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.0-2ea44f" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.1-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-244%2F244%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
@@ -93,7 +93,8 @@ At `<workspace>/.pi/telegram.json` (the nearest ancestor directory containing `.
 {
   "security": { "allowedChatIds": [123456789] },
   "watch": { "autoStart": true },
-  "outbound": { "liveFeed": true }
+  "outbound": { "liveFeed": true },
+  "interactive": { "userQuestions": "telegram" }
 }
 ```
 
@@ -130,8 +131,9 @@ Send a message. The bot binds the chat to its own dsh session, streams the turn 
 | `mode.name` | — | Profile mode label |
 | `model.provider` / `model.model` | — | Telegram-owned default model, inherited by `/new` and `✨ New` |
 | `reasoning.effort` | `medium` | `minimal` / `low` / `medium` / `high` / `max` directive prefix |
+| `interactive.userQuestions` | `telegram` | `ask_user_question` ownership: `telegram` / `web` / `auto`. `telegram` keeps working in the web profile even when the API proxy owns the user-questions provider seam; `web` yields to the browser UI; `auto` keeps the legacy loader-entry inference |
 
-Live updates: Telegram-side `/config get|set <path> [json]` or dsh-side `/telegram config get|set <path> <json>` hot-apply and persist any leaf (e.g. `outbound.sendRatePerSecond`).
+Live updates: Telegram-side `/config get|set <path> [json]` or dsh-side `/telegram config get|set <path> <json>` hot-apply and persist any leaf (e.g. `outbound.sendRatePerSecond`). `interactive.userQuestions` is read at plugin mount and applies on the next restart.
 
 ## Architecture
 

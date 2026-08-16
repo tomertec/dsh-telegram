@@ -3,6 +3,23 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.1
+
+Issue #1: Telegram can now answer `ask_user_question` in the web profile and never loses early session events or final answers.
+
+### Interactive question ownership
+
+- New `interactive.userQuestions` config: `telegram` (default), `web`, or `auto`.
+- `telegram` answers `ask_user_question` even when `@deepseek-ai/dsh-host-apiproxy` already owns the single `ctx.userQuestions` provider: it intercepts the public `tools/execute` seam instead of registering a second provider, so the service invariant is preserved and a clear startup diagnostic is emitted.
+- `web` yields to the browser UI; `auto` keeps the legacy loader-entry inference.
+- Question options now use their protocol `label` as the answer value, while callback data carries tiny numeric indexes (long labels can no longer break the 64-byte callback limit).
+
+### Event ordering & final delivery
+
+- `Bridge.deliver()` / `deliverImage()` install the chat binding and inbound quote before calling `agent.followup()` / `agent.send()`, so synchronous `turn/start` / `assistant/message` events can no longer be dropped as “no chat for agent”.
+- Dropped events for a Telegram-touched but unbound agent are logged with a per-agent summary.
+- Openclaw final-answer delivery moved outside the draft-existence guard: a turn whose live draft was never created still delivers the buffered answer (or the reminder), and final-send failures are logged.
+
 ## 0.3.0
 
 Final release of the web-parity Telegram bridge: workspace-grouped sessions, goal/menu/bar ergonomics, direct session management, and release hardening.

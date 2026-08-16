@@ -1,6 +1,6 @@
 {
   "name": "dsh-telegram",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DeepSeek Harness plugin: a native Telegram bridge that lets humans chat with dsh agents, control sessions and manage the harness from a phone.",
   "type": "module",
   "main": "./dist/index.js",

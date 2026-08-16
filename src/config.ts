@@ -5,6 +5,9 @@ import { REASONING_EFFORTS } from './reasoning.js';
 /** How inbound chat text is treated before it ever reaches the agent. */
 export type InboundMode = 'auto-handle' | 'queue-only' | 'muted';
 
+/** Which channel owns `ask_user_question` when more than one UI is mounted. */
+export type QuestionOwnership = 'telegram' | 'web' | 'auto';
+
 /** Ordered inbound rule; the first matching rule wins, otherwise `inbound.defaultMode`. */
 export interface InboundRule {
   /** Optional numeric Telegram chat id. */
@@ -61,6 +64,18 @@ export interface TelegramConfig {
   reasoning?: {
     effort?: "minimal" | "low" | "medium" | "high" | "max";
   };
+  /** Interactive question/approval channel routing. */
+  interactive?: {
+    /**
+     * Which UI answers `ask_user_question`:
+     * - `telegram`: Telegram owns the question card, even when the web API
+     *   proxy is mounted (web profile included).
+     * - `web`: yield to the web API proxy's user-questions provider.
+     * - `auto`: register the Telegram provider only when no enabled web API
+     *   proxy loader entry is mounted (the legacy inference).
+     */
+    userQuestions?: QuestionOwnership;
+  };
 }
 
 export const DEFAULT_CONFIG: TelegramConfig = Object.freeze({
@@ -82,6 +97,7 @@ export const DEFAULT_CONFIG: TelegramConfig = Object.freeze({
   mode: { name: '' },
   reasoning: { effort: 'medium' as const },
   model: {},
+  interactive: { userQuestions: 'telegram' as const },
 });
 
 /** Config errors carry a JSON-pointer-ish path so humans can fix `.pi/telegram.json`. */
@@ -95,6 +111,7 @@ export class ConfigError extends Error {
 }
 
 const INBOUND_MODES: readonly InboundMode[] = ['auto-handle', 'queue-only', 'muted'];
+const QUESTION_OWNERSHIPS: readonly QuestionOwnership[] = ['telegram', 'web', 'auto'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -259,6 +276,18 @@ export function normalizeConfig(raw: unknown): TelegramConfig {
     };
   }
 
+  const interactive = raw['interactive'];
+  if (interactive !== undefined) {
+    if (!isRecord(interactive)) throw new ConfigError('interactive', 'must be an object');
+    const userQuestions = readString(interactive, 'userQuestions', 'interactive');
+    if (userQuestions !== undefined) {
+      if (!QUESTION_OWNERSHIPS.includes(userQuestions as QuestionOwnership)) {
+        throw new ConfigError('interactive.userQuestions', `must be one of ${QUESTION_OWNERSHIPS.join(' | ')}`);
+      }
+      base.interactive = { userQuestions: userQuestions as QuestionOwnership };
+    }
+  }
+
   return base;
 }
 
@@ -275,6 +304,7 @@ function cloneDefault(): TelegramConfig {
     mode: { ...DEFAULT_CONFIG.mode },
     reasoning: { ...DEFAULT_CONFIG.reasoning },
     model: { ...DEFAULT_CONFIG.model },
+    interactive: { ...DEFAULT_CONFIG.interactive },
   };
 }
 
@@ -332,8 +362,8 @@ export function writeConfig(workspaceRoot: string, config: TelegramConfig): stri
   return file;
 }
 
-export type ConfigSection = "security" | "watch" | "inbound" | "outbound" | "mode" | "workspace" | "reasoning" | "model";
-const CONFIG_SECTIONS: readonly ConfigSection[] = ["security", "watch", "inbound", "outbound", "mode", "workspace", "reasoning", "model"];
+export type ConfigSection = "security" | "watch" | "inbound" | "outbound" | "mode" | "workspace" | "reasoning" | "model" | "interactive";
+const CONFIG_SECTIONS: readonly ConfigSection[] = ["security", "watch", "inbound", "outbound", "mode", "workspace", "reasoning", "model", "interactive"];
 
 /**
  * Overlay a raw loader-provided config (from `ctx.config` / `internal/update`)

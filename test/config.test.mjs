@@ -37,6 +37,7 @@ test('normalizeConfig merges partial config over defaults', () => {
     },
     outbound: { disableNotification: true },
     mode: { name: 'headless' },
+    interactive: { userQuestions: 'web' },
   });
   assert.deepEqual(config.security.allowedChatIds, [1, 2]);
   assert.equal(config.watch.autoStart, true);
@@ -46,6 +47,8 @@ test('normalizeConfig merges partial config over defaults', () => {
   assert.equal(config.outbound.parseMode, 'HTML');
   assert.equal(config.outbound.sendRatePerSecond, 20);
   assert.equal(config.mode.name, 'headless');
+  assert.equal(config.interactive.userQuestions, 'web');
+  assert.equal(normalizeConfig(undefined).interactive.userQuestions, 'telegram', 'telegram-first is the default so web profiles remain answerable');
 });
 
 test('normalizeConfig rejects invalid fields with a path', () => {
@@ -158,4 +161,15 @@ test('normalizeConfig rejects unknown reasoning efforts', () => {
   assert.throws(() => normalizeConfig({ reasoning: { effort: 'ultra' } }));
   const ok = normalizeConfig({ reasoning: { effort: 'max' } });
   assert.equal(ok.reasoning.effort, 'max');
+});
+
+test('normalizeConfig validates interactive.userQuestions ownership', () => {
+  assert.throws(() => normalizeConfig({ interactive: { userQuestions: 'carrier-pigeon' } }), /interactive\.userQuestions/);
+  assert.equal(normalizeConfig({ interactive: { userQuestions: 'auto' } }).interactive.userQuestions, 'auto');
+});
+
+test('overlayConfig applies the interactive section live', () => {
+  const { config, changed } = overlayConfig(normalizeConfig(undefined), { interactive: { userQuestions: 'web' } });
+  assert.ok(changed.includes('interactive'));
+  assert.equal(config.interactive.userQuestions, 'web');
 });

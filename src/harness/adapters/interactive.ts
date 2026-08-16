@@ -9,6 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
+import type { QuestionOwnership } from "../../config.js";
 
 export type ApprovalOutcome = "allowed-once" | "rejected" | "cancelled";
 
@@ -47,8 +48,11 @@ interface PendingApproval {
 }
 
 interface QuestionOptionLike {
-  id: string;
+  /** Selected value echoed back in the answer. Required in the dsh contract;
+   * legacy test shapes also carry an `id`. */
   label: string;
+  description?: string;
+  id?: string;
 }
 
 interface QuestionItemLike {
@@ -58,6 +62,7 @@ interface QuestionItemLike {
   header?: string;
   options?: QuestionOptionLike[];
   multiSelect?: boolean;
+  intent?: { kind?: string; approve?: string };
 }
 
 interface QuestionRequestLike {
@@ -102,6 +107,56 @@ function webUiOwnsQuestions(ctx: Context): boolean {
     if (entry.options?.name === "@deepseek-ai/dsh-host-apiproxy") return true;
   }
   return false;
+}
+
+/** Stable option identity inside one question: label is the protocol value;
+ * a numeric token keeps callback_data tiny even for long labels. */
+function optionKey(option: QuestionOptionLike, index: number): string {
+  return String(index);
+}
+
+function optionValue(option: QuestionOptionLike): string {
+  return option.label;
+}
+
+function findOption(question: QuestionItemLike, token: string): QuestionOptionLike | undefined {
+  const options = question.options ?? [];
+  const index = Number(token);
+  if (Number.isInteger(index) && index >= 0 && index < options.length) return options[index];
+  return options.find((option) => option.id === token || option.label === token);
+}
+
+/** Same validation the user-questions service applies before `provider.ask`. */
+function assertValidRequest(ctx: Context, request: QuestionRequestLike): void {
+  if (request.signal?.aborted === true) {
+    throw new Error("ask_user_question was aborted before the user answered");
+  }
+  if (request.questions.length === 0) {
+    throw new Error("ask_user_question requires at least one question");
+  }
+  const agent = request.agent;
+  if (agent === undefined) return;
+  const agents = ctx.get("agents") as { get(id: unknown): unknown; roots?(): unknown[] } | undefined;
+  if (agents === undefined || agents.get(agent.id) !== agent) {
+    throw new Error("human interaction requires the exact live calling agent when an agent is supplied");
+  }
+  if (typeof agents.roots === "function" && !agents.roots().includes(agent)) {
+    throw new Error(
+      "human interaction is unavailable while the calling agent is owned by another live agent; " +
+      "include the unresolved question or decision in the child agent's final result",
+    );
+  }
+  for (const question of request.questions) {
+    const intent = question.intent;
+    if (intent === undefined) continue;
+    const approve = intent.approve;
+    if (approve !== undefined && !(question.options ?? []).some((option) => option.label === approve)) {
+      throw new Error(`question ${question.id} declares an intent whose approve label names none of its options`);
+    }
+    if (question.detail === undefined) {
+      throw new Error(`question ${question.id} declares an intent without the detail it reviews`);
+    }
+  }
 }
 
 interface ApprovalServiceLike {
@@ -169,11 +224,12 @@ export function renderQuestions(pending: PendingQuestion, chatId: number): strin
   const lines = [`\u2753 ${pending.sessionId ? `Session ${pending.sessionId}` : "Session"} asks (id ${pending.id}):`, ""];
   pending.questions.forEach((question, index) => {
     lines.push(`${index + 1}. ${question.header ? `[${question.header}] ` : ""}${question.question}`);
+    if (question.detail) lines.push(`   ${question.detail}`);
     const selected = pending.selections.get(question.id) ?? [];
     const custom = pending.custom.get(question.id);
     if (question.options?.length) {
       for (const option of question.options) {
-        lines.push(`   ${selected.includes(option.id) ? "\u2705" : "\u25CB"} ${option.label}`);
+        lines.push(`   ${selected.includes(optionValue(option)) ? "\u2705" : "\u25CB"} ${option.label}`);
       }
       if (question.multiSelect) lines.push("   (multi-select: tap to toggle)");
     } else {
@@ -190,12 +246,11 @@ export function questionKeyboard(pendingId: number, chatId: number): unknown {
   if (!pending) return undefined;
   const rows: { text: string; callback_data: string }[][] = [];
   pending.questions.forEach((question, index) => {
-    const options = (question.options ?? []).slice(0, 24);
-    const selected = pending.selections.get(question.id) ?? [];
-    for (const option of options) {
-      const marked = selected.includes(option.id) ? "\u2705 " : "";
-      rows.push([{ text: `${index + 1}:${marked}${option.label}`.slice(0, 40), callback_data: `qu:${pendingId}:${index}:${option.id}`.slice(0, 64) }]);
-    }
+    (question.options ?? []).slice(0, 24).forEach((option, optionIndex) => {
+      const selected = pending.selections.get(question.id) ?? [];
+      const marked = selected.includes(optionValue(option)) ? "\u2705 " : "";
+      rows.push([{ text: `${index + 1}:${marked}${option.label}`.slice(0, 40), callback_data: `qu:${pendingId}:${index}:${optionKey(option, optionIndex)}`.slice(0, 64) }]);
+    });
   });
   rows.push([
     { text: "\u2714\uFE0F Submit", callback_data: `qu:${pendingId}:s` },
@@ -215,8 +270,104 @@ function approvalKeyboard(id: number): unknown {
   };
 }
 
-export function attachInteractive(ctx: Context, delivery: InteractiveDelivery): Interactive {
+export interface InteractiveOptions {
+  /** Explicit channel ownership for `ask_user_question`. Defaults to Telegram. */
+  userQuestions?: QuestionOwnership;
+  /** Diagnostic sink; defaults to console.error. */
+  log?: (message: string, error?: unknown) => void;
+}
+
+interface ToolExecutionLike {
+  name?: string;
+  arguments?: { questions?: unknown };
+  agent?: { id: string };
+  signal?: AbortSignal;
+}
+
+/** Project a `tools/execute` execution for `ask_user_question` onto the same
+ * request shape the user-questions service forwards to providers. */
+function toQuestionRequest(exec: ToolExecutionLike): QuestionRequestLike | undefined {
+  if (exec.name !== "ask_user_question") return undefined;
+  const raw = exec.arguments?.questions;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const questions: QuestionItemLike[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return undefined;
+    const item = entry as {
+      id?: unknown;
+      question?: unknown;
+      detail?: unknown;
+      header?: unknown;
+      options?: unknown;
+      multi_select?: unknown;
+    };
+    if (typeof item.id !== "string" || typeof item.question !== "string") return undefined;
+    let options: QuestionOptionLike[] | undefined;
+    if (item.options !== undefined) {
+      if (!Array.isArray(item.options)) return undefined;
+      options = [];
+      for (const option of item.options) {
+        const value = option as { label?: unknown; description?: unknown };
+        // Leave malformed arguments for the tool body's schema validation.
+        if (typeof value.label !== "string") return undefined;
+        options.push({
+          label: value.label,
+          ...(typeof value.description === "string" ? { description: value.description } : {}),
+        });
+      }
+    }
+    questions.push({
+      id: item.id,
+      question: item.question,
+      ...(typeof item.detail === "string" ? { detail: item.detail } : {}),
+      ...(typeof item.header === "string" ? { header: item.header } : {}),
+      ...(options === undefined ? {} : { options }),
+      ...(item.multi_select === true ? { multiSelect: true } : {}),
+    });
+  }
+  return {
+    ...(exec.agent === undefined ? {} : { agent: exec.agent }),
+    questions,
+    ...(exec.signal === undefined ? {} : { signal: exec.signal }),
+  };
+}
+
+/** Create the pending Telegram question card and wait for the user's answer. */
+function askViaTelegram(delivery: InteractiveDelivery, request: QuestionRequestLike): Promise<{ answers: { id: string; selected: string[]; custom?: string }[] }> {
+  const sessionId = request.agent?.id;
+  if (sessionId === undefined) return Promise.reject(new Error("telegram user interaction requires an agent-owned session"));
+  return new Promise((resolve, reject) => {
+    const id = mint();
+    const pending: PendingQuestion = {
+      id,
+      sessionId,
+      questions: request.questions,
+      resolve,
+      reject,
+      messageIds: new Map(),
+      selections: new Map(),
+      custom: new Map(),
+    };
+    const onAbort = () => {
+      if (!questions.delete(id)) return;
+      reject(new Error("ask_user_question was aborted before the user answered"));
+    };
+    pending.questions.forEach((question) => pending.selections.set(question.id, []));
+    questions.set(id, pending);
+    request.signal?.addEventListener("abort", onAbort, { once: true });
+    void broadcastForSession(delivery, sessionId, renderQuestions(pending, 0), questionKeyboard(id, 0))
+      .then((delivered) => {
+        for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
+        pending.answerer = delivered[0]?.chatId;
+      })
+      .catch(() => {});
+  });
+}
+
+export function attachInteractive(ctx: Context, delivery: InteractiveDelivery, options: InteractiveOptions = {}): Interactive {
   const disposers: (() => void)[] = [];
+  const ownership = options.userQuestions ?? "telegram";
+  const log = options.log ?? ((message: string, error?: unknown) => console.error(`[dsh-telegram] ${message}`, error ?? ""));
 
   if (ctx.get("approval") !== undefined) {
     const events = ctx as unknown as CordisEventsLike;
@@ -272,39 +423,55 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery): 
 
   const questionsService = ctx.get("userQuestions") as QuestionsServiceLike | undefined;
   let disposeProvider: (() => void) | undefined;
-  if (questionsService && questionsService.provider === undefined && !webUiOwnsQuestions(ctx)) {
-    disposeProvider = questionsService.registerProvider({
-      ask(request: QuestionRequestLike) {
-        const sessionId = request.agent?.id;
-        if (sessionId === undefined) return Promise.reject(new Error("telegram user interaction requires an agent-owned session"));
-        return new Promise((resolve, reject) => {
-          const id = mint();
-          const pending: PendingQuestion = {
-            id,
-            sessionId,
-            questions: request.questions,
-            resolve,
-            reject,
-            messageIds: new Map(),
-            selections: new Map(),
-            custom: new Map(),
-          };
-          const onAbort = () => {
-            if (!questions.delete(id)) return;
-            reject(new Error("ask_user_question was aborted before the user answered"));
-          };
-          pending.questions.forEach((question) => pending.selections.set(question.id, []));
-          questions.set(id, pending);
-          request.signal?.addEventListener("abort", onAbort, { once: true });
-          void broadcastForSession(delivery, sessionId, renderQuestions(pending, 0), questionKeyboard(id, 0))
-            .then((delivered) => {
-              for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
-              pending.answerer = delivered[0]?.chatId;
-            })
-            .catch(() => {});
-        });
-      },
-    });
+  const webMounted = webUiOwnsQuestions(ctx);
+  const serviceOwned = questionsService?.provider !== undefined;
+
+  if (ownership === "telegram") {
+    // When another UI already owns the single userQuestions provider (or the
+    // web API proxy is mounted and may claim it later), Telegram claims
+    // ask_user_question at the public `tools/execute` seam instead. The
+    // one-provider invariant stays untouched: Telegram never registers a
+    // second provider. When the seam is free, the ordinary provider path
+    // keeps the service's own validation in front of every ask.
+    if (questionsService !== undefined && (serviceOwned || webMounted)) {
+      const events = ctx as unknown as CordisEventsLike;
+      if (typeof events.on === "function") {
+        disposers.push(
+          events.on("tools/execute", (exec, next) => {
+            const request = toQuestionRequest(exec as ToolExecutionLike);
+            if (request === undefined) return (next as () => Promise<unknown>)();
+            assertValidRequest(ctx, request);
+            return askViaTelegram(delivery, request).then((answer) => ({ value: answer }));
+          }),
+        );
+      }
+      if (serviceOwned) {
+        log("interactive.userQuestions=telegram: another UI owns ctx.userQuestions; Telegram answers ask_user_question at the tools/execute seam");
+      } else {
+        log("interactive.userQuestions=telegram: web API proxy is mounted; Telegram answers ask_user_question at the tools/execute seam and leaves the single provider seam to the web UI");
+      }
+    } else if (questionsService !== undefined) {
+      try {
+        disposeProvider = questionsService.registerProvider({ ask: (request) => askViaTelegram(delivery, request) });
+      } catch (err) {
+        log("telegram userQuestions provider registration failed; another provider owns the seam", err);
+      }
+    } else {
+      log("interactive.userQuestions=telegram: userQuestions service is unavailable; ask_user_question will fail if it is ever dispatched");
+    }
+  } else if (ownership === "auto") {
+    // Legacy inference: only register when no other provider and no enabled
+    // web API proxy loader entry. The service itself enforces the
+    // single-provider invariant on the attempted registration.
+    if (questionsService !== undefined && questionsService.provider === undefined && !webMounted) {
+      try {
+        disposeProvider = questionsService.registerProvider({ ask: (request) => askViaTelegram(delivery, request) });
+      } catch (err) {
+        log("telegram userQuestions provider registration failed; another provider owns the seam", err);
+      }
+    } else if (questionsService !== undefined && (serviceOwned || webMounted)) {
+      log(`interactive.userQuestions=auto: ${serviceOwned ? "another provider" : "web API proxy"} owns ask_user_question; Telegram will not answer questions`);
+    }
   }
 
   return {
@@ -314,18 +481,21 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery): 
       pending.resolve(outcome);
       return true;
     },
-    async toggleQuestionOption(chatId, id, questionId, optionId) {
+    async toggleQuestionOption(chatId, id, questionId, optionToken) {
       const pending = questions.get(id);
       if (!pending) return false;
       const question = pending.questions.find((candidate) => candidate.id === questionId);
       if (!question) return false;
+      const option = findOption(question, optionToken);
+      if (!option) return false;
+      const value = optionValue(option);
       const selected = pending.selections.get(questionId) ?? [];
-      if (selected.includes(optionId)) {
-        pending.selections.set(questionId, selected.filter((entry) => entry !== optionId));
+      if (selected.includes(value)) {
+        pending.selections.set(questionId, selected.filter((entry) => entry !== value));
       } else if (question.multiSelect) {
-        pending.selections.set(questionId, [...selected, optionId]);
+        pending.selections.set(questionId, [...selected, value]);
       } else {
-        pending.selections.set(questionId, [optionId]);
+        pending.selections.set(questionId, [value]);
       }
       await reRenderQuestion(ctx, pending, chatId, delivery);
       return true;

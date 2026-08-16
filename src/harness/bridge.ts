@@ -66,6 +66,9 @@ export class Bridge {
   private readonly log: (message: string, error?: unknown) => void;
   private readonly disposers: (() => void)[] = [];
   private readonly chatStates = new Map<number, ChatState>();
+  /** Dropped-event diagnostics: one line per unbound agent, plus every
+   * turn/end so a missing final delivery is visible in the log. */
+  private readonly droppedEvents = new Map<string, { count: number; lastType?: string }>();
 
   /** Most recently touched chat/agent — compatibility view, not the routing
    * source of truth. Session events are routed through `chatStates`. */
@@ -229,16 +232,19 @@ export class Bridge {
       content: [{ type: "text", text: withReasoningDirective(config, text) }],
       source: { kind: "user" },
     });
-    if (mode === "queue-only") {
-      agent.send(message, "next-turn", false);
-    } else {
-      agent.followup(message);
-    }
+    // Bind the chat to this agent and install the inbound BEFORE the agent
+    // can emit anything: a synchronous turn/start or assistant/message must
+    // already know its chat and quote target, never be dropped as "no chat".
     const state = this.touch(chatId, agent.id);
     const inbound = { chatId, text, messageId, replied: false, noReply: false };
     state.inbound = inbound;
     state.reminded = false;
     this.syncLegacy(chatId, state, inbound);
+    if (mode === "queue-only") {
+      agent.send(message, "next-turn", false);
+    } else {
+      agent.followup(message);
+    }
     return { ok: true, text: mode === "queue-only" ? "Queued." : "Delivered." };
   }
 
@@ -254,13 +260,15 @@ export class Bridge {
     content.push({ type: "image", attachment });
     const message = createUserMessage({ content: content as never, source: { kind: "user" } });
     const target = agent as unknown as { send(message: unknown, target: string, wakeup: boolean): void; followup(message: unknown): void };
-    if (mode === "queue-only") target.send(message, "next-turn", false);
-    else target.followup(message);
+    // Same ordering contract as deliver(): the binding and inbound quote must
+    // exist before the agent can emit a session event synchronously.
     const state = this.touch(chatId, agent.id);
     const inbound = { chatId, text: caption ?? "[image]", messageId, replied: false, noReply: false };
     state.inbound = inbound;
     state.reminded = false;
     this.syncLegacy(chatId, state, inbound);
+    if (mode === "queue-only") target.send(message, "next-turn", false);
+    else target.followup(message);
     return { ok: true, text: mode === "queue-only" ? "Image queued." : "Image delivered." };
   }
 
@@ -354,13 +362,36 @@ export class Bridge {
     return this.inbound;
   }
 
+  private logDroppedEvent(agentId: string, type: string | undefined): void {
+    const entry = this.droppedEvents.get(agentId) ?? { count: 0, lastType: type };
+    entry.count += 1;
+    entry.lastType = type;
+    this.droppedEvents.set(agentId, entry);
+    // First occurrence always logs; afterwards only turn/end repeats so a
+    // silently lost final answer stays visible without flooding the console.
+    if (entry.count === 1 || type === "turn/end") {
+      this.log(
+        `event dropped: no chat for agent ${agentId} (${type ?? "unknown"}${entry.count > 1 ? `; ${entry.count} total dropped` : ""})`,
+      );
+    }
+  }
+
   attach(): void {
     this.disposers.push(
       this.ctx.on("session/event", (session, event) => {
         // Route by the agent that produced the event: chat A's transcript can
         // never leak into chat B, even when the chats are active concurrently.
-        const chatId = this.chatIdForAgent(String(session.id));
-        if (chatId === undefined) return;
+        const sessionId = String(session.id);
+        const chatId = this.chatIdForAgent(sessionId);
+        if (chatId === undefined) {
+          // Only diagnose events that belonged to an agent Telegram itself
+          // touched. Web-owned sessions are expected to be unbound and must
+          // not flood the console on every browser turn.
+          if (this.currentAgentId !== undefined && String(this.currentAgentId) === sessionId) {
+            this.logDroppedEvent(sessionId, event.type);
+          }
+          return;
+        }
         const state = this.chatStates.get(chatId);
         const inbound = this.inboundFor(chatId);
 
@@ -460,6 +491,7 @@ export class Bridge {
   detach(): void {
     for (const dispose of this.disposers.splice(0)) dispose();
     this.chatStates.clear();
+    this.droppedEvents.clear();
     this.inbound = undefined;
     this.currentAgentId = undefined;
     this.activeChat = undefined;

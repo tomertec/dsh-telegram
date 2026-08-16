@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.0-2ea44f" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.1-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-244%2F244%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
@@ -93,7 +93,8 @@ export TELEGRAM_BOT_TOKEN='123456:ABC...'
 {
   "security": { "allowedChatIds": [123456789] },
   "watch": { "autoStart": true },
-  "outbound": { "liveFeed": true }
+  "outbound": { "liveFeed": true },
+  "interactive": { "userQuestions": "telegram" }
 }
 ```
 
@@ -130,8 +131,9 @@ export TELEGRAM_BOT_TOKEN='123456:ABC...'
 | `mode.name` | — | profile 模式标签 |
 | `model.provider` / `model.model` | — | Telegram 侧默认模型，`/new` 与 `✨ New` 继承 |
 | `reasoning.effort` | `medium` | `minimal` / `low` / `medium` / `high` / `max` 指令前缀 |
+| `interactive.userQuestions` | `telegram` | `ask_user_question` 归属：`telegram` / `web` / `auto`。`telegram` 在 web profile 下即使 API proxy 已占用 provider seam 也能继续应答；`web` 让给浏览器 UI；`auto` 保留旧的 loader-entry 推断 |
 
-热更新：Telegram 侧 `/config get|set <path> [json]` 或 dsh 侧 `/telegram config get|set <path> <json>` 可实时应用并持久化任意配置叶（如 `outbound.sendRatePerSecond`）。
+热更新：Telegram 侧 `/config get|set <path> [json]` 或 dsh 侧 `/telegram config get|set <path> <json>` 可实时应用并持久化任意配置叶（如 `outbound.sendRatePerSecond`）。`interactive.userQuestions` 在插件挂载时读取，下次重启生效。
 
 ## 架构
 

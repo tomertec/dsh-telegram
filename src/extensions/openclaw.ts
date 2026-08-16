@@ -380,6 +380,67 @@ export function apply(ctx: Context, _config?: unknown): void {
       });
       return;
     }
+    // Final delivery must never depend on the live draft: a turn whose
+    // turn/start was dropped (or whose draft was never created) still has to
+    // deliver its buffered final answer / reminder. Keep this branch above
+    // the draft-existence guard.
+    if (type === "turn/end") {
+      const draft = chats.get(chatId);
+      if (draft !== undefined) {
+        if (draft.timer !== undefined) {
+          clearTimeout(draft.timer);
+          draft.timer = undefined;
+        }
+        commitReasoning(draft);
+        const hasContent = draft.reasoningSteps > 0 || draft.toolCalls > 0;
+        const finalize = (messageId: number | undefined): void => {
+          if (messageId === undefined) return;
+          if (hasContent) {
+            void host
+              .editMessage(chatId, messageId, buildSummary(draft), { parse_mode: "HTML" })
+              .catch(() => {});
+          } else {
+            void host.deleteMessage(chatId, messageId).catch(() => {});
+          }
+        };
+        if (draft.messageId !== undefined) {
+          finalize(draft.messageId);
+        } else if (draft.sending !== undefined) {
+          // The placeholder is still in flight: finalize it when it lands
+          // instead of leaving a stray "…" message behind.
+          void draft.sending.then(finalize).catch(() => {});
+        }
+        chats.delete(chatId);
+      }
+
+      // Final delivery is this plugin's job while it is mounted: the newest
+      // prose block is the turn's answer; without one the openclaw-mode
+      // reminder replaces the core's (suppressed) reminder. A tool reply
+      // (telegram_reply) already answered the inbound — skip both.
+      const answer = answers.get(chatId);
+      answers.delete(chatId);
+      if (host.pendingInbound(chatId)) {
+        const text = answer !== undefined ? escapeHtml(answer.text) : NO_REPLY_REMINDER;
+        const inboundMessageId = host.inboundMessageId(chatId);
+        const agentId = host.agentIdForChat(chatId);
+        const assistantMessageId = answer?.assistantMessageId;
+        void host
+          .send(chatId, text, {
+            parse_mode: "HTML",
+            ...(inboundMessageId === undefined ? {} : { reply_parameters: { message_id: inboundMessageId } }),
+          })
+          .then((telegramMessageId) => {
+            if (telegramMessageId !== undefined && agentId !== undefined && assistantMessageId !== undefined) {
+              host.attachFeedback(chatId, telegramMessageId, agentId, assistantMessageId);
+            }
+            host.markInboundReplied(chatId);
+          })
+          .catch((err) => {
+            console.error("[openclaw] final answer send failed", err);
+          });
+      }
+      return;
+    }
     const draft = chats.get(chatId);
     if (!draft) return;
 
@@ -461,59 +522,6 @@ export function apply(ctx: Context, _config?: unknown): void {
         line.html = toolLineHtml(line.name ?? "tool", line.detail ?? "", line.done);
       }
       schedule(chatId, draft);
-      return;
-    }
-    if (type === "turn/end") {
-      if (draft.timer !== undefined) {
-        clearTimeout(draft.timer);
-        draft.timer = undefined;
-      }
-      commitReasoning(draft);
-      const chatIdNow = chatId;
-      const hasContent = draft.reasoningSteps > 0 || draft.toolCalls > 0;
-      const finalize = (messageId: number | undefined): void => {
-        if (messageId === undefined) return;
-        if (hasContent) {
-          void host
-            .editMessage(chatIdNow, messageId, buildSummary(draft), { parse_mode: "HTML" })
-            .catch(() => {});
-        } else {
-          void host.deleteMessage(chatIdNow, messageId).catch(() => {});
-        }
-      };
-      if (draft.messageId !== undefined) {
-        finalize(draft.messageId);
-      } else if (draft.sending !== undefined) {
-        // The placeholder is still in flight: finalize it when it lands
-        // instead of leaving a stray "…" message behind.
-        void draft.sending.then(finalize).catch(() => {});
-      }
-      chats.delete(chatId);
-
-      // Final delivery is this plugin's job while it is mounted: the newest
-      // prose block is the turn's answer; without one the openclaw-mode
-      // reminder replaces the core's (suppressed) reminder. A tool reply
-      // (telegram_reply) already answered the inbound — skip both.
-      const answer = answers.get(chatId);
-      answers.delete(chatId);
-      if (host.pendingInbound(chatId)) {
-        const text = answer !== undefined ? escapeHtml(answer.text) : NO_REPLY_REMINDER;
-        const inboundMessageId = host.inboundMessageId(chatId);
-        const agentId = host.agentIdForChat(chatId);
-        const assistantMessageId = answer?.assistantMessageId;
-        void host
-          .send(chatId, text, {
-            parse_mode: "HTML",
-            ...(inboundMessageId === undefined ? {} : { reply_parameters: { message_id: inboundMessageId } }),
-          })
-          .then((telegramMessageId) => {
-            if (telegramMessageId !== undefined && agentId !== undefined && assistantMessageId !== undefined) {
-              host.attachFeedback(chatId, telegramMessageId, agentId, assistantMessageId);
-            }
-            host.markInboundReplied(chatId);
-          })
-          .catch(() => {});
-      }
       return;
     }
   });

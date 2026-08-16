@@ -255,6 +255,22 @@ test('turn end delivers the buffered final answer and marks the inbound replied'
   assert.equal(host.inboundPending, false);
 });
 
+test('turn end delivers the buffered answer even when no live draft was created', async () => {
+  const { host, ctx } = await setup();
+  host.inboundPending = true;
+  // A dropped turn/start means no draft exists; the final answer must not be
+  // suppressed by the draft guard.
+  host.consumer(7, 'answer without a draft', 'assistant-message-no-draft');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+  const answer = host.sends.find((s) => s.text.includes('answer without a draft'));
+  assert.ok(answer, 'final answer is delivered without a progress draft');
+  assert.deepEqual(host.feedback, [
+    { chatId: 7, telegramMessageId: answer.id, sessionId: 'agent-1', assistantMessageId: 'assistant-message-no-draft' },
+  ]);
+  assert.equal(host.inboundRepliedMarks, 1);
+});
+
 test('turn end sends the openclaw-mode reminder when nothing answered', async () => {
   const { host, ctx } = await setup();
   host.inboundPending = true;

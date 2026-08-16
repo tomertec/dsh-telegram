@@ -64,7 +64,7 @@ test('renderQuestions numbers questions and reflects selections', () => {
       { id: 'q1', question: 'A or B?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
       { id: 'q2', question: 'Why?' },
     ],
-    selections: new Map([['q1', ['a']], ['q2', []]]),
+    selections: new Map([['q1', ['A']], ['q2', []]]),
     custom: new Map(),
   };
   const text = renderQuestions(pending, 0);
@@ -267,5 +267,138 @@ test('question cards and the answered status route to the session-owned chat', a
   assert.equal(settle.edit.chatId, 555);
   assert.equal(settle.edit.keyboard, undefined);
   assert.equal(delivery.sent.filter((entry) => !entry.edit && entry.text?.startsWith('✅ Questions answered')).length, 0);
+  interactive.detach();
+});
+
+test('telegram ownership answers ask_user_question at tools/execute when the web proxy owns the provider seam', async () => {
+  const delivery = fakeDelivery();
+  delivery.chatForSession = (sessionId) => (sessionId === 's-owner' ? 555 : undefined);
+  const events = fakeEvents();
+  let registered = 0;
+  let nextCalled = 0;
+  const liveAgent = { id: 's-owner' };
+  const ctx = {
+    get: (name) => {
+      if (name === 'userQuestions') return { provider: { ask: async () => ({ answers: [] }) }, registerProvider() { registered += 1; return () => {}; } };
+      if (name === 'loader') return { entries: () => [{ options: { name: '@deepseek-ai/dsh-host-apiproxy' } }] };
+      if (name === 'agents') return {
+        get: (id) => (id === 's-owner' ? liveAgent : undefined),
+        roots: () => [liveAgent],
+      };
+      return undefined;
+    },
+    on: events.on.bind(events),
+  };
+  const logs = [];
+  const interactive = attachInteractive(ctx, delivery, { userQuestions: 'telegram', log: (message) => logs.push(message) });
+  assert.equal(registered, 0, 'never competes for the single userQuestions provider');
+  const listener = events.listeners.get('tools/execute');
+  assert.equal(typeof listener, 'function', 'tools/execute interception is installed');
+  const answerPromise = listener(
+    {
+      name: 'ask_user_question',
+      arguments: { questions: [{ id: 'q1', question: 'Pick', options: [{ label: 'One' }] }] },
+      agent: liveAgent,
+    },
+    () => { nextCalled += 1; },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(nextCalled, 0, 'the original tool body (and web provider) is bypassed');
+  const prompt = delivery.sent.find((entry) => entry.text?.startsWith('❓ Session s-owner asks'));
+  assert.ok(prompt, 'question card reaches the Telegram chat');
+  assert.equal(prompt.chatId, 555);
+  const callback = prompt.keyboard.inline_keyboard[0][0].callback_data;
+  const id = Number(callback.split(':')[1]);
+  await interactive.toggleQuestionOption(555, id, 'q1', '0');
+  await interactive.submitQuestions(555, id);
+  const result = await answerPromise;
+  assert.deepEqual(result, { value: { answers: [{ id: 'q1', selected: ['One'] }] } });
+  assert.ok(logs.some((line) => line.includes('another UI owns ctx.userQuestions')), 'competition diagnostic is emitted');
+  interactive.detach();
+});
+
+test('web ownership yields the provider seam and installs no tools/execute interception', () => {
+  const delivery = fakeDelivery();
+  const events = fakeEvents();
+  let registered = 0;
+  const ctx = {
+    get: (name) => {
+      if (name === 'userQuestions') return { provider: undefined, registerProvider() { registered += 1; return () => {}; } };
+      if (name === 'loader') return { entries: () => [{ options: { name: '@deepseek-ai/dsh-host-apiproxy' } }] };
+      return undefined;
+    },
+    on: events.on.bind(events),
+  };
+  const interactive = attachInteractive(ctx, delivery, { userQuestions: 'web' });
+  assert.equal(registered, 0);
+  assert.equal(events.listeners.get('tools/execute'), undefined);
+  interactive.detach();
+});
+
+test('auto ownership keeps the legacy inference: register without web proxy, yield with one', () => {
+  const delivery = fakeDelivery();
+  let registered = 0;
+  const bare = {
+    get: (name) => (name === 'userQuestions' ? { provider: undefined, registerProvider() { registered += 1; return () => {}; } } : undefined),
+  };
+  const first = attachInteractive(bare, delivery, { userQuestions: 'auto' });
+  assert.equal(registered, 1, 'no web proxy: Telegram registers the provider');
+  first.detach();
+
+  const withWeb = {
+    get: (name) => {
+      if (name === 'userQuestions') return { provider: undefined, registerProvider() { registered += 1; return () => {}; } };
+      if (name === 'loader') return { entries: () => [{ options: { name: '@deepseek-ai/dsh-host-apiproxy' } }] };
+      return undefined;
+    },
+  };
+  const second = attachInteractive(withWeb, delivery, { userQuestions: 'auto' });
+  assert.equal(registered, 1, 'web proxy mounted: the legacy inference yields');
+  second.detach();
+});
+
+test('an already-aborted tools/execute question fails fast instead of hanging', () => {
+  const delivery = fakeDelivery();
+  const events = fakeEvents();
+  const liveAgent = { id: 's-owner' };
+  const ctx = {
+    get: (name) => {
+      if (name === 'userQuestions') return { provider: { ask: async () => ({ answers: [] }) }, registerProvider() { return () => {}; } };
+      if (name === 'agents') return { get: (id) => (id === 's-owner' ? liveAgent : undefined), roots: () => [liveAgent] };
+      return undefined;
+    },
+    on: events.on.bind(events),
+  };
+  const interactive = attachInteractive(ctx, delivery, { userQuestions: 'telegram', log: () => {} });
+  const listener = events.listeners.get('tools/execute');
+  const controller = new AbortController();
+  controller.abort();
+  const signal = controller.signal;
+  assert.throws(() => listener(
+    { name: 'ask_user_question', arguments: { questions: [{ id: 'q1', question: 'Pick' }] }, agent: liveAgent, signal },
+    () => { throw new Error('next must not run for an aborted ask'); },
+  ), /aborted before the user answered/);
+  interactive.detach();
+});
+
+test('question options use labels as answer values while callback tokens stay tiny indexes', async () => {
+  const delivery = fakeDelivery();
+  let provider;
+  const ctx = {
+    get: (name) => (name === 'userQuestions' ? { provider: undefined, registerProvider(p) { provider = p; return () => {}; } } : undefined),
+  };
+  const interactive = attachInteractive(ctx, delivery);
+  const promise = provider.ask(questionRequest('s1', [{ id: 'q1', question: 'Pick', options: [{ label: 'A very long option label that would blow the callback limit if echoed' }, { label: 'B' }] }]));
+  promise.catch(() => {});
+  await new Promise((resolve) => setImmediate(resolve));
+  const prompt = delivery.sent[0];
+  const rows = prompt.keyboard.inline_keyboard;
+  assert.match(rows[0][0].callback_data, /^qu:\d+:0:0$/);
+  assert.match(rows[1][0].callback_data, /^qu:\d+:0:1$/);
+  const id = Number(rows[0][0].callback_data.split(':')[1]);
+  await interactive.toggleQuestionOption(111, id, 'q1', '0');
+  await interactive.submitQuestions(111, id);
+  const answer = await promise;
+  assert.deepEqual(answer.answers[0].selected, ['A very long option label that would blow the callback limit if echoed']);
   interactive.detach();
 });
