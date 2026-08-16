@@ -163,3 +163,8 @@
 ## Round 24 发现与修复
 
 - 审计遗留 UX：未授权 /start 放行后不会自动进入欢迎流程；已改为 allow 后重放 /start。
+
+## Round 25 实机验收证据
+
+- 快速连发 1/2：仅一个 telegram 会话，第二条进同一 inbox（竞态修复实机通过）。
+- Menu/Models/Queue/approval 回调全部真实走通；menucheck 等价探测 0 ❌。

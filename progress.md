@@ -141,3 +141,8 @@
 
 - 修复未授权 /start 放行后的欢迎语重放；227/227。
 - 实机端到端：真实 Telegram ping 已验证（真实 LLM turn completed）；竞态修复后等待用户快速连发复验。
+
+## Round 25（本轮）
+
+- 收集到真实 Telegram 实机验收证据：单会话竞态、回调闭环、真实 LLM 轮次。
+- 发布门满足，下一步 push main/tags + release。

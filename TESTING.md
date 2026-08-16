@@ -924,3 +924,29 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - security 集成测试锁定：未授权 `/start` 不入白名单 → 点 Allow → 白名单加入且
   sent 流里出现包含 `ready` 的欢迎语。
 - `npm run check`：**227/227 pass**。
+
+## 40. Round 25：真实 Telegram 实机验收证据（2026-08-19，227/227）
+
+### 用户实机操作回放（live web 51501 日志 + session.history）
+
+- `☰ Menu` bar 按钮 → Menu 卡（P1/P2）正常；
+- `ping` → 真实 LLM turn（opencode-go）`turn/end completed`，回复 pong；
+- **快速连发 `1`、`2`** → 只创建 **1 个** `telegram-182277cb…` 会话；`2` 进入同一会话的
+  next-turn inbox（`agent/inbox/spliced` 同 session），未再触发 `session create` ——
+  Round 23 竞态修复在真实 Bot API 上通过；
+- `123`、`1`、`2` 连续入站 → 同一会话 inbox 排队（start 0/1/2），bar `Queue · 3` 实时更新；
+- Models bar → 两个 provider 按钮 → `mo:opencode-go` provider 卡 → back/close 正常；
+- Queue 卡 → 删除/编辑队列项、`/cancel` 中止编辑 → bar 计数回落，均无异常；
+- approval 卡（`ap:1`）→ Reject 回调被正确应答并结算（真实回调闭环）。
+
+### 实机 menucheck（HTTP 会话等价探测）
+
+- 18 项数据源：14 ✅ · 3 ⚠️（history/credentials/capabilities 在本侧无对应工具，非故障）· 0 ❌。
+- 真实 `/telegram menucheck` 需用户在 Telegram 直接发送（当前 live web profile 的
+  ask_user_question 由 web UI 持有，这是设计行为，不是 bridge bug）。
+
+### 结论
+
+- 真实 Telegram → LLM 轮次、快速首消息单会话、bar/Menu/Models/Queue/approval 回调
+  全部有实机证据；自动化 227/227、audit 0、pack/publish dry-run 通过。
+- 发布门满足：进入 push tag + GitHub Release / npm publish 收尾。
