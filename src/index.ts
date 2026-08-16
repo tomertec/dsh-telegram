@@ -1181,11 +1181,11 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     }
     case "subagent-interrupt-confirm": {
       const res = interruptSubagent(requireCtx(), payload["parentId"] ?? "", payload["childId"] ?? "");
-      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openSubagentsCard(chatId);
     }
     case "subagent-interrupt-cancel": {
-      await openCard(chatId, "\u2716 Interrupt cancelled.", buildBackKeyboard());
+      await requireTransport().sendText(chatId, "\u2716 Interrupt cancelled.", { parse_mode: "HTML" });
       return openSubagentsCard(chatId);
     }
     case "subagent-history": {
@@ -1246,11 +1246,11 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "session-delete-confirm": {
       const sessionId = payload["sessionId"] ?? "";
       const res = await deleteSession(requireCtx(), sessionId);
-      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openSessionsCard(chatId);
     }
     case "session-delete-cancel": {
-      await openCard(chatId, "\u2716 Delete cancelled.", buildBackKeyboard());
+      await requireTransport().sendText(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
       return openSessionsCard(chatId);
     }
     case "preset-read": {
@@ -1279,11 +1279,11 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     }
     case "preset-remove-confirm": {
       const res = await removeAgentPreset(requireCtx(), payload["presetId"] ?? "");
-      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openPresetsCard(chatId);
     }
     case "preset-remove-cancel": {
-      await openCard(chatId, "\u2716 Remove cancelled.", buildBackKeyboard());
+      await requireTransport().sendText(chatId, "\u2716 Remove cancelled.", { parse_mode: "HTML" });
       return openPresetsCard(chatId);
     }
     case "preset-open": {
@@ -1293,11 +1293,11 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     }
     case "workspace-delete-confirm": {
       const res = await deleteWorkspace(requireCtx(), payload["id"] ?? "");
-      await openCard(chatId, res.ok ? `\u2705 ${plain(res.text)}` : `\u274C ${plain(res.text)}`, buildBackKeyboard());
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openWorkspacesCard(chatId);
     }
     case "workspace-delete-cancel": {
-      await openCard(chatId, "\u2716 Delete cancelled.", buildBackKeyboard());
+      await requireTransport().sendText(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
       return openWorkspacesCard(chatId);
     }
     case "feedback": {
