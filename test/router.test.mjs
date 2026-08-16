@@ -59,3 +59,53 @@ test('router prompts unauthorized chats and gates their traffic', async () => {
   await h.onPhoto(7, 'file', '');
   assert.deepEqual(calls, ['unauthorized:9', 'unauthorized:9', 'text', 'command', 'callback', 'photo']);
 });
+
+test('router serializes updates per chat in arrival order and isolates chats', async () => {
+  const calls = [];
+  const t = fakeTransport();
+  attachRouter({
+    transport: t,
+    isAllowed: () => true,
+    onCommand: () => calls.push('command'),
+    onBarButton: () => calls.push('bar'),
+    onCallback: () => calls.push('callback'),
+    onUserText: (chatId, text) => {
+      calls.push(`start:${chatId}:${text}`);
+      return new Promise((resolve) => setTimeout(() => {
+        calls.push(`end:${chatId}:${text}`);
+        resolve();
+      }, text === 'slow-7' ? 20 : 1));
+    },
+    onPhoto: () => calls.push('photo'),
+    onUnauthorized: () => calls.push('unauthorized'),
+  });
+  const h = t.handlers();
+  const p1 = h.onText(7, 'slow-7');
+  const p2 = h.onText(7, 'fast-7');
+  const p3 = h.onText(8, 'other-8');
+  await Promise.all([p1, p2, p3]);
+  assert.deepEqual(calls.slice(0, 2), ['start:7:slow-7', 'start:8:other-8'], 'chat 8 starts while chat 7 is busy');
+  const slowEnd = calls.indexOf('end:7:slow-7');
+  const fastStart = calls.indexOf('start:7:fast-7');
+  assert.ok(slowEnd !== -1 && fastStart !== -1 && slowEnd < fastStart, 'chat 7 updates run FIFO');
+  assert.equal(calls.at(-1), 'end:7:fast-7');
+});
+
+test('a rejected handler does not wedge the per-chat chain', async () => {
+  const calls = [];
+  const t = fakeTransport();
+  attachRouter({
+    transport: t,
+    isAllowed: () => true,
+    onCommand: () => { throw new Error('boom'); },
+    onBarButton: () => calls.push('bar'),
+    onCallback: () => calls.push('callback'),
+    onUserText: () => calls.push('text'),
+    onPhoto: () => calls.push('photo'),
+    onUnauthorized: () => calls.push('unauthorized'),
+  });
+  const h = t.handlers();
+  await assert.rejects(h.onText(7, '/boom'));
+  await h.onText(7, 'hello');
+  assert.deepEqual(calls, ['text']);
+});

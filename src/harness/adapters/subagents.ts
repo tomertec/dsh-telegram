@@ -3,7 +3,7 @@
  * ctx.subagents.
  */
 import type { Context } from "@deepseek-ai/cordis";
-import { createUserMessage, MessageId } from "@deepseek-ai/dsh-llm";
+import { MessageId } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import { fail, ok, type AdapterResult } from "./types.js";
 import { readHistory } from "./sessions.js";
@@ -58,8 +58,7 @@ export async function promptSubagent(ctx: Context, parentSessionId: string, chil
   const parent = ctx.agents?.get(SessionId(parentSessionId));
   if (!parent) return fail(`parent session ${parentSessionId} has no live agent`);
   try {
-    const message = createUserMessage({ content: [{ type: "text", text }], source: { kind: "user" } });
-    const messageId = await subagents.followup(parent as unknown as AgentLike, SessionId(childSessionId), [message], { source: { kind: "user" } });
+    const messageId = await subagents.followup(parent as unknown as AgentLike, SessionId(childSessionId), [{ type: "text", text }], { source: { kind: "user" } });
     return ok(`\u{1F4E8} Delivered to subagent ${childSessionId} (${String(messageId)})`);
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));

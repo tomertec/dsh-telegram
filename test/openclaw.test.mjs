@@ -8,6 +8,7 @@ function makeHost() {
     sends: [],
     edits: [],
     deletes: [],
+    feedback: [],
     nextId: 100,
     inboundPending: false,
     inboundRepliedMarks: 0,
@@ -15,9 +16,14 @@ function makeHost() {
     consumed: [],
     currentAgentId: () => 'agent-1',
     currentChatId: () => 7,
+    agentIdForChat: (chatId) => (chatId === 7 ? 'agent-1' : undefined),
+    chatIdForAgent: (agentId) => (agentId === 'agent-1' ? 7 : undefined),
+    bindAgent: () => {},
+    unbindChat: () => {},
     send: async (chatId, text, options) => {
-      host.sends.push({ chatId, text, options });
-      return host.nextId++;
+      const id = host.nextId++;
+      host.sends.push({ chatId, text, options, id });
+      return id;
     },
     editMessage: async (chatId, messageId, text, options) => {
       host.edits.push({ chatId, messageId, text, options });
@@ -26,16 +32,19 @@ function makeHost() {
     deleteMessage: async (chatId, messageId) => {
       host.deletes.push({ chatId, messageId });
     },
+    attachFeedback: (chatId, telegramMessageId, sessionId, assistantMessageId) => {
+      host.feedback.push({ chatId, telegramMessageId, sessionId, assistantMessageId });
+    },
     statusStats: () => ({}),
     setAssistantConsumer: (consumer) => {
       host.consumer = consumer;
     },
     pendingInbound: () => host.inboundPending,
+    inboundMessageId: () => (host.inboundPending ? 99 : undefined),
     markInboundReplied: () => {
       host.inboundRepliedMarks += 1;
       host.inboundPending = false;
-    },
-  };
+    },  };
   return host;
 }
 
@@ -229,13 +238,17 @@ test('turn end delivers the buffered final answer and marks the inbound replied'
   const { host, ctx } = await setup();
   host.inboundPending = true;
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
-  host.consumer(7, 'clean <b>answer</b>');
+  host.consumer(7, 'clean <b>answer</b>', 'assistant-message-42');
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
   const answer = host.sends.find((s) => s.text.includes('clean'));
   assert.ok(answer, 'final answer delivered as a separate message');
   assert.ok(answer.text.includes('&lt;b&gt;answer&lt;/b&gt;'), 'answer HTML-escaped');
   assert.equal(answer.options.parse_mode, 'HTML');
+  assert.deepEqual(answer.options.reply_parameters, { message_id: 99 });
+  assert.deepEqual(host.feedback, [
+    { chatId: 7, telegramMessageId: answer.id, sessionId: 'agent-1', assistantMessageId: 'assistant-message-42' },
+  ], 'feedback keyboard attached once the final answer landed');
   assert.equal(host.inboundRepliedMarks, 1);
   assert.equal(host.inboundPending, false);
 });
@@ -260,4 +273,14 @@ test('turn end skips delivery when a tool reply already answered the inbound', a
   await sleep(20);
   assert.ok(host.sends.every((s) => !s.text.includes('post-reply narration')), 'no duplicate after tool reply');
   assert.equal(host.inboundRepliedMarks, 0);
+});
+
+test('a new turn cancels the previous draft throttle timer', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'stale' } }));
+  assert.equal(host.sends.length, 1, 'placeholder for the first turn is created');
+  ctx.emit('agent-1', ev('turn/start', { turn: 2 }));
+  await sleep(200);
+  assert.equal(host.edits.length, 0, 'the old throttled edit must not fire into the new turn');
 });

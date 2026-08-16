@@ -73,19 +73,32 @@ interface AgentLike {
   options?: { provider?: string; model?: string };
 }
 
+interface AgentPresetsLike {
+  defaultId?: string;
+  resolve?(presetId?: string): Promise<{ id: string }>;
+  mount(agentCtx: Context, presetId: string): Promise<unknown>;
+}
+
 function agentsOf(ctx: Context) {
-  return (ctx.agents ?? undefined) as
+  // The real `ctx.agents` is an `AgentRegistry`; we only consume the stable
+  // structural subset below so this adapter never hard-couples to that class.
+  return (ctx.agents ?? undefined) as unknown as
     | {
         list(): AgentLike[];
         get(id: SessionId): AgentLike | undefined;
         create(options: {
           sessionId: SessionId;
-          meta?: { cwd?: string };
+          meta?: { cwd?: string; agentPreset?: string };
           agentOptions?: { provider?: string; model?: string };
+          setup?: (agentCtx: Context) => Promise<void>;
         }): Promise<AgentHandle>;
         resume(options: { resumeSessionId: SessionId; agentOptions?: { provider?: string; model?: string } }): Promise<AgentHandle>;
       }
     | undefined;
+}
+
+function agentPresetsOf(ctx: Context): AgentPresetsLike | undefined {
+  return ctx.get("agentPresets") as AgentPresetsLike | undefined;
 }
 
 function sessionTitleService(ctx: Context): SessionTitleServiceLike | undefined {
@@ -592,6 +605,15 @@ export function releaseAllModelSelections(): void {
 export interface CreatedSession {
   result: AdapterResult;
   agentId?: string;
+  /** Preset the new session was composed from (web session.create echo). */
+  agentPreset?: string;
+}
+
+export interface SessionCreateOptions {
+  /** Close this previously-owned session after the new one is published. */
+  replaceSessionId?: string;
+  /** Compose the new agent from this preset (omitted = default preset). */
+  agentPreset?: string;
 }
 
 /** Session-directory segment encoding (mirrors the JSONL backend's
@@ -649,49 +671,80 @@ export async function deleteSession(ctx: Context, sessionId: string): Promise<Ad
 }
 
 /**
- * Owns the agents this plugin created through `/new` so the previous one can
- * be torn down (and persisted by the session-persistence plugins) when a
- * fresh one replaces it.
+ * Owns the agents this plugin created through `/new` so they can be torn down
+ * (and persisted by the session-persistence plugins) when their OWN chat
+ * replaces them. Creation never disposes a global "previous" agent anymore:
+ * chat A's session must survive chat B pressing `✨ New`.
  */
 export class SessionLifecycle {
   private handle: AgentHandle | undefined;
   private readonly handles = new Map<string, AgentHandle>();
 
-  /** Create a fresh agent+session in `cwd`, replacing the previously owned one. */
-  /** Create a session. `model` (optional telegram-owned default) overrides
-   * the profile default so the bot can run a different model than the web. */
-  async create(ctx: Context, cwd: string, model?: { provider?: string; model?: string }): Promise<CreatedSession> {
+  /**
+   * Create a session, mirroring web `session.create`:
+   * - `model` (optional telegram-owned default) overrides the profile default
+   *   (`ctx.agentDefaultModel.currentSelection()`), so prompt assembly always
+   *   has a `{{model}}` value.
+   * - `agentPreset` (optional) is resolved BEFORE the agent exists and mounted
+   *   through the creation `setup` hook; the resolved id is recorded on the
+   *   session header. Omitted = the roster's default preset (or no setup when
+   *   the profile composes no preset roster).
+   * - `replaceSessionId` (optional) names the agent THIS chat is leaving; only
+   *   that agent is disposed after the new one publishes. Other chats' agents
+   *   are never touched.
+   */
+  async create(
+    ctx: Context,
+    cwd: string,
+    model?: { provider?: string; model?: string },
+    options?: SessionCreateOptions,
+  ): Promise<CreatedSession> {
     if (!ctx.agents) return { result: fail("agents service is unavailable in this profile") };
-    const previousAgent = ctx.agents.list()[0];
-    // First `/new` in a fresh process has no live agent to inherit from; fall
-    // back to the profile default (mirrors the web ApiProxy's
-    // defaultModelSelection() = ctx.agentDefaultModel.currentSelection()),
-    // otherwise prompt assembly fails with `{{model}} has no value`.
     const defaultModel = (
       ctx.get("agentDefaultModel") as { currentSelection(): { provider: string; model: string } } | undefined
     )?.currentSelection();
+    const presets = agentPresetsOf(ctx);
+    let resolvedPreset: string | undefined;
+    let presetSetup: ((agentCtx: Context) => Promise<void>) | undefined;
+    if (presets !== undefined) {
+      try {
+        const resolve = presets.resolve?.bind(presets) ?? ((id?: string) => Promise.resolve({ id: id ?? presets.defaultId ?? "default" }));
+        resolvedPreset = (await resolve(options?.agentPreset)).id;
+        presetSetup = async (agentCtx: Context) => {
+          await presets.mount(agentCtx, resolvedPreset!);
+        };
+      } catch (err) {
+        return { result: fail(err instanceof Error ? err.message : String(err)) };
+      }
+    } else if (options?.agentPreset !== undefined) {
+      return { result: fail("this profile composes no agent presets") };
+    }
     try {
       const handle = await ctx.agents.create({
         sessionId: SessionId(`telegram-${randomUUID()}`),
-        meta: { cwd },
-        agentOptions: {
-          provider: model?.provider ?? previousAgent?.options.provider ?? defaultModel?.provider,
-          model: model?.model ?? previousAgent?.options.model ?? defaultModel?.model,
+        meta: {
+          cwd,
+          ...(resolvedPreset === undefined ? {} : { agentPreset: resolvedPreset }),
         },
+        agentOptions: {
+          provider: model?.provider ?? defaultModel?.provider,
+          model: model?.model ?? defaultModel?.model,
+        },
+        ...(presetSetup === undefined ? {} : { setup: presetSetup }),
       });
-      console.error(`[dsh-telegram] session create model=${handle.agent.options.model} provider=${handle.agent.options.provider} (telegram config: ${model?.provider ?? "-"}/${model?.model ?? "-"})`);
-      const replaced = this.handle;
+      console.error(
+        `[dsh-telegram] session create model=${handle.agent.options.model} provider=${handle.agent.options.provider} preset=${resolvedPreset ?? "-"} (telegram config: ${model?.provider ?? "-"}/${model?.model ?? "-"})`,
+      );
       this.handle = handle;
       this.handles.set(handle.agent.id, handle);
-      if (replaced) {
-        this.handles.delete(replaced.agent.id);
-        void replaced
-          .dispose()
-          .catch((err) => console.error("[dsh-telegram] failed to dispose previous agent", err));
+      const replaced = options?.replaceSessionId;
+      if (replaced !== undefined && replaced !== handle.agent.id) {
+        await this.close(replaced, ctx).catch((err) => console.error("[dsh-telegram] failed to dispose replaced agent", err));
       }
       return {
         result: ok(`\u2728 New session ${handle.agent.id} in ${cwd}`),
         agentId: handle.agent.id,
+        ...(resolvedPreset === undefined ? {} : { agentPreset: resolvedPreset }),
       };
     } catch (err) {
       return { result: fail(err instanceof Error ? err.message : String(err)) };
@@ -708,13 +761,22 @@ export class SessionLifecycle {
     this.handles.set(handle.agent.id, handle);
   }
 
-  /** Close (dispose) one live agent tracked by this plugin. */
-  async close(agentId: string): Promise<AdapterResult> {
+  /** Close (dispose) one live agent. Tracked handles are preferred; a live
+   * agent this plugin adopted externally falls back to its own dispose. */
+  async close(agentId: string, ctx?: Context): Promise<AdapterResult> {
     const handle = this.handles.get(agentId);
-    if (handle === undefined) return fail(`no disposal handle for agent ${agentId}`);
-    this.handles.delete(agentId);
-    if (this.handle === handle) this.handle = undefined;
-    await handle.dispose().catch((err) => console.error("[dsh-telegram] failed to dispose agent", err));
+    if (handle !== undefined) {
+      this.handles.delete(agentId);
+      if (this.handle === handle) this.handle = undefined;
+      await handle.dispose().catch((err) => console.error("[dsh-telegram] failed to dispose agent", err));
+      return ok(`\u23F9 Closed ${agentId}`);
+    }
+    const live = ctx !== undefined ? agentsOf(ctx) : undefined;
+    const agent = live?.get(SessionId(agentId));
+    if (agent === undefined) return fail(`no disposal handle for agent ${agentId}`);
+    await (agent as unknown as { dispose(): Promise<void> }).dispose().catch((err) =>
+      console.error("[dsh-telegram] failed to dispose agent", err),
+    );
     return ok(`\u23F9 Closed ${agentId}`);
   }
 

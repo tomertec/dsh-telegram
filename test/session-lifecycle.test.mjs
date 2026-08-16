@@ -2,45 +2,72 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionLifecycle } from '../dist/harness/adapters/sessions.js';
 
-test('SessionLifecycle.create falls back to agentDefaultModel on first new', async () => {
-  const lifecycle = new SessionLifecycle();
-  let captured;
-  const ctx = {
+function makeCtx({ liveAgents = [], defaultSelection = { provider: 'opencode-go', model: 'deepseek-v4-flash' } } = {}) {
+  const created = [];
+  return {
+    created,
     agents: {
-      list: () => [],
+      list: () => liveAgents,
       async create(opts) {
-        captured = opts;
-        return { agent: { id: 'telegram-fake', options: { provider: opts.agentOptions.provider, model: opts.agentOptions.model } } };
+        const handle = {
+          agent: { id: `telegram-created-${created.length + 1}`, options: { provider: opts.agentOptions.provider, model: opts.agentOptions.model } },
+          disposed: 0,
+          dispose: async () => {
+            handle.disposed += 1;
+          },
+        };
+        created.push({ opts, handle });
+        return handle;
       },
     },
-    get: (name) => (name === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'opencode-go', model: 'deepseek-v4-flash' }) } : undefined),
+    get: (name) => (name === 'agentDefaultModel' ? { currentSelection: () => defaultSelection } : undefined),
   };
+}
+
+test('SessionLifecycle.create falls back to agentDefaultModel on first new', async () => {
+  const lifecycle = new SessionLifecycle();
+  const ctx = makeCtx();
   const res = await lifecycle.create(ctx, '/tmp');
   assert.equal(res.result.ok, true);
-  assert.equal(captured.agentOptions.provider, 'opencode-go');
-  assert.equal(captured.agentOptions.model, 'deepseek-v4-flash');
+  assert.equal(ctx.created[0].opts.agentOptions.provider, 'opencode-go');
+  assert.equal(ctx.created[0].opts.agentOptions.model, 'deepseek-v4-flash');
   await lifecycle.dispose().catch(() => {});
 });
 
-test('SessionLifecycle.create inherits from a live agent when present', async () => {
+test('SessionLifecycle.create never inherits the model of an unrelated live agent', async () => {
+  // v0.6 multichat semantics: other chats' agents must not leak into this
+  // chat's new session. Only the explicit model or the profile default wins.
   const lifecycle = new SessionLifecycle();
-  let captured;
-  const prev = { options: { provider: 'deepseek-official', model: 'deepseek-v4-pro' } };
-  const ctx = {
-    agents: {
-      list: () => [prev],
-      async create(opts) {
-        captured = opts;
-        return { agent: { id: 'telegram-fake', options: { provider: opts.agentOptions.provider, model: opts.agentOptions.model } } };
-      },
-    },
-    get: () => ({ currentSelection: () => ({ provider: 'opencode-go', model: 'deepseek-v4-flash' }) }),
-  };
+  const unrelated = { options: { provider: 'deepseek-official', model: 'deepseek-v4-pro' } };
+  const ctx = makeCtx({ liveAgents: [unrelated] });
   const res = await lifecycle.create(ctx, '/tmp');
   assert.equal(res.result.ok, true);
-  assert.equal(captured.agentOptions.provider, 'deepseek-official');
-  assert.equal(captured.agentOptions.model, 'deepseek-v4-pro');
+  assert.equal(ctx.created[0].opts.agentOptions.provider, 'opencode-go');
+  assert.equal(ctx.created[0].opts.agentOptions.model, 'deepseek-v4-flash');
   await lifecycle.dispose().catch(() => {});
+});
+
+test('SessionLifecycle.create honors an explicit Telegram model over the profile default', async () => {
+  const lifecycle = new SessionLifecycle();
+  const ctx = makeCtx();
+  const res = await lifecycle.create(ctx, '/tmp', { provider: 'telegram-provider', model: 'telegram-model' });
+  assert.equal(res.result.ok, true);
+  assert.equal(ctx.created[0].opts.agentOptions.provider, 'telegram-provider');
+  assert.equal(ctx.created[0].opts.agentOptions.model, 'telegram-model');
+  await lifecycle.dispose().catch(() => {});
+});
+
+test('SessionLifecycle.create closes only the replaced chat-owned session', async () => {
+  const lifecycle = new SessionLifecycle();
+  const ctx = makeCtx();
+  const first = await lifecycle.create(ctx, '/tmp');
+  const second = await lifecycle.create(ctx, '/tmp', undefined, { replaceSessionId: first.agentId });
+  assert.equal(second.result.ok, true);
+  assert.notEqual(second.agentId, first.agentId);
+  assert.equal(ctx.created[0].handle.disposed, 1, 'the replaced session is disposed');
+  assert.equal(ctx.created[1].handle.disposed, 0, 'the new session stays alive');
+  await lifecycle.dispose().catch(() => {});
+  assert.equal(ctx.created[1].handle.disposed, 1, 'teardown disposes every tracked session');
 });
 
 test('SessionLifecycle.create fails gracefully without agents service', async () => {

@@ -151,7 +151,7 @@ test('model detail keyboard carries a Thinking row when reasoning is available',
 test('callback chat resolves from callback_query.message.chat (Bot API shape)', async () => {
   const { callbackUpdateChatId } = await import('../dist/telegram/transport.js');
   assert.equal(callbackUpdateChatId({ message: { chat: { id: 8753447694 } } }), 8753447694);
-  assert.equal(callbackUpdateChatId({ chat: { id: 1 }, message: { chat: { id: 2 } } }), 1);
+  assert.equal(callbackUpdateChatId({ chat: { id: 1 }, message: { chat: { id: 2 } } }), 2);
   assert.equal(callbackUpdateChatId({}), undefined);
   assert.equal(callbackUpdateChatId({ message: {} }), undefined);
 });

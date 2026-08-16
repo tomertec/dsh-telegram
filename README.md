@@ -4,7 +4,7 @@ A native Telegram bridge plugin for [DeepSeek Harness](https://www.npmjs.com/pac
 
 - Fully async: long polling, a global rate-limit + per-chat FIFO send queue, and exponential backoff all run outside the agent loop.
 - Button-first UX modeled on `codex-telegram-bot` / `pi-telegram`: a persistent reply-keyboard bar plus ephemeral inline cards.
-- Mirrors the web UI's exposed surface: sessions (create/search/history/rename/fork/resume/prompt/queue/model/attachment), workspaces, goals, message feedback, skills, subagents, agent presets, host settings, credentials, models/discovery, host filesystem, commands, jobs, session-log downloads, plugin inventory + enable/disable, dynamic plugin inventory, and inline approval/question answering.
+- Covers most of the web UI's exposed surface: sessions (create/search/history/rename/fork/resume/prompt/queue/model/attachment), workspaces, goals, message feedback, skills, subagents, agent presets, host settings, credentials, models/discovery, host filesystem, commands, jobs, session-log downloads, plugin inventory + enable/disable, dynamic plugin inventory, and inline approval/question answering. **Per-method gaps and the Telegram UX plan are tracked in [`docs/WEB_PARITY_AUDIT.md`](docs/WEB_PARITY_AUDIT.md).**
 - HTML parse mode with strict escaping everywhere — user content is never parsed as markup.
 
 ## Requirements
@@ -39,19 +39,30 @@ From then on, send `/start` to the bot in Telegram to see the welcome message an
 
 ## Buttons
 
-Persistent reply-keyboard bar (3 × 3):
+Persistent reply-keyboard bar (10 keys; the Queue key embeds the live inbox
+count as `⌛ Queue · N`):
 
 ```text
-☰ Menu    ✨ New     🧹 Compact
-🧩 Models  🔌 Plugins 🎭 Mode
-🧭 Sessions 📊 Status ⏹ Stop
+☰ Menu    ✨ New     🧩 Models
+🧭 Sessions 🔌 Plugins 📊 Status
+🎭 Presets ⌛ Queue   🧹 Compact
+⏹ Stop
 ```
 
-`☰ Menu` opens the core card: status text, current model, queue depth, ✨ New / 🧹 Compact, then one row per web domain — Sessions, Status, Plugins, Mode, Workspaces, Goals, Skills, Subagents, Presets, Host settings, Credentials, Host, Jobs, Dynamic, Capabilities, Settings. The "All functions" card carries the same domains plus Usage/Queue, Allowed chats, Watch toggle, and About.
+`☰ Menu` opens a paginated core card. Page 1 carries New/Project (full-width),
+the Reasoning picker, Goals, Workspaces, Skills, Subagents, Jobs, Dynamic,
+Host, Capabilities and Watch. Page 2 carries Queue, Models, Mode, Sessions,
+Status, Plugins, Compact, Stop, Host settings, Credentials, Allowed, Settings,
+About and Presets. `More ›` / `‹ Prev` flip pages and `m:back` always returns
+to page 1.
 
-Every web-exposed ApiProxy/Typert method is reachable from Telegram. The full
-web-interface ↔ Telegram mapping lives in [`PLAN.md`](PLAN.md) (sections A–D);
-`/capabilities` shows which seams are live in the running profile.
+Final agent replies are sent as native Telegram replies to the triggering
+message. When the profile has the `messageFeedback` seam, each final reply also
+carries `👍 👎 📋` inline buttons; the feedback list supports per-item delete.
+
+The authoritative per-method audit and rollout plan are in
+[`docs/WEB_PARITY_AUDIT.md`](docs/WEB_PARITY_AUDIT.md); the mapping summary lives in
+[`PLAN.md`](PLAN.md) (sections A–D). `/capabilities` shows which seams are live in the running profile.
 
 ## Configuration
 
@@ -70,15 +81,23 @@ The plugin reads `<workspace>/.pi/telegram.json`, where the workspace is the nea
     "disableNotification": false,
     "maxRetries": 3,
     "sendRatePerSecond": 20,
-    "maxMessageLength": 4096
+    "maxMessageLength": 4096,
+    "liveFeed": true
   },
-  "mode": { "name": "headless" }
+  "workspace": { "activePath": "/abs/project" },
+  "mode": { "name": "headless" },
+  "model": { "provider": "opencode-go", "model": "deepseek-v4-pro" },
+  "reasoning": { "effort": "medium" }
 }
 ```
 
-- `security.allowedChatIds` — inbound whitelist; **empty denies all inbound traffic**.
+- `security.allowedChatIds` — inbound whitelist; **empty denies all inbound traffic**. Only whitelisted chats are added to the broadcast/panel roster.
 - `inbound.defaultMode` — `auto-handle` (agent followup turn), `queue-only` (parked in the inbox without waking the agent), or `muted` (ignored). `rules` match in order (first match wins) on `chatId` and/or case-insensitive substring `pattern`.
 - `watch.autoStart` — start polling as soon as an agent is created.
+- `outbound.liveFeed` — enable the Openclaw-style streaming thinking/tool draft when the extension is mounted.
+- `workspace.activePath` — active project folder picked via `/project`; new sessions are created under it.
+- `model` — Telegram-owned default provider/model, persisted by the Models card and inherited by `/new` and `✨ New`.
+- `reasoning.effort` — `minimal | low | medium | high | max` directive prepended to inbound text.
 - The token comes **only** from `TELEGRAM_BOT_TOKEN`; it is never persisted.
 
 ## Agent tools
@@ -95,13 +114,13 @@ The plugin registers five tools the model can call:
 
 ## Slash commands (dsh side)
 
-`/telegram status` · `/telegram start` · `/telegram stop` · `/telegram allow <chatId>` · `/telegram disallow <chatId>` · `/telegram watch on|off` · `/telegram config auto-start`
+`/telegram status` · `/telegram start` · `/telegram stop` · `/telegram allow <chatId>` · `/telegram disallow <chatId>` · `/telegram watch on|off` · `/telegram config auto-start` · `/telegram config get|set <path> [json]`
 
-Telegram-side commands: `/start /menu /new /compact /stop /models /sessions /workspaces /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help` plus `/history [id] [limit]`, `/search <query>`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/queueedit <itemId> <text>`, `/steer <text>`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
+Telegram-side commands: `/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]` plus `/history [id] [limit]`, `/search <query>`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/queueedit <itemId> <text>`, `/steer <text>`, `/cancel`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacerename <id> <title>`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/settingsreplace <ns> <json>`, `/settingsmutate <ns> <json-ops>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/openpath [path]`, `/pickdir [path]`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
 
 ## Platform limits (shown as guidance in chat)
 
-- `host.pickDirectory` / `host.openPath` have no phone-side native dialog — the bot guides with a text path instead.
+- `host.pickDirectory` / `host.openPath` have no phone-side native dialog — the bot guides with `/pickdir` (Project browser) and `/openpath` (resolved host path).
 - `downloads.sessionLog` streams the same ZIP as the web; files over 50 MB are handed off to the web download with a link/instruction.
 - `dynamicCordisRunner` run/stop/dependency mutations and plugin install/uninstall remain web-panel operations (read-only inventory + guidance in chat).
 - Long polling only (no webhook); replies are per completed assistant message (no token streaming).
@@ -118,8 +137,9 @@ Telegram-side commands: `/start /menu /new /compact /stop /models /sessions /wor
 - Disable the entry (`loader.update` / `/plugindisable` on itself, or the
   profile patch) or edit the source under the `hmr` plugin: `teardownMount()`
   reverses every mount effect (transport, bridge, interactive, panels,
-  pending state, model selections, session lifecycle), and `apply` is
-  idempotent — reload 800 次 ≡ 冷启动（论文 Theorem 73 的 Confluence 约定）。
+  typing loops, pending text-input flows, token registry, model selections,
+  session lifecycle). Re-applying is idempotent: extension registration is
+  name-keyed and polling restarts cancel the previous generation first.
 - `ctx.provide("telegram", …)` exposes `getConfig/status/chats/sendText/
   broadcast/start/stop` to other plugins.
 - Telegram-side `/config get|set <path> [json]` and dsh-side

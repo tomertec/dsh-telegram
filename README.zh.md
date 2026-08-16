@@ -4,7 +4,7 @@ DeepSeek Harness（dsh `0.1.0-rc.6`）的原生 Telegram 桥接插件：在手�
 
 - 全异步：长轮询、全局限速 + 每 chat FIFO 发送队列、指数退避全部跑在 agent 循环之外。
 - 按钮式交互（仿 `codex-telegram-bot` / `pi-telegram`）：常驻键盘栏 + 临时内联卡片。
-- 完整复刻 web 暴露面：会话（新建/搜索/历史/重命名/派生/恢复/提示词/队列/模型/附件）、工作区、目标、消息反馈、技能、子代理、预设、宿主设置、凭据、模型发现、宿主文件、命令、任务、会话日志下载、插件清单 + 开关、动态插件清单、审批/提问内联应答。
+- 覆盖 web 暴露面的大部分能力：会话（新建/搜索/历史/重命名/派生/恢复/提示词/队列/模型/附件）、工作区、目标、消息反馈、技能、子代理、预设、宿主设置、凭据、模型发现、宿主文件、命令、任务、会话日志下载、插件清单 + 开关、动态插件清单、审批/提问内联应答。**逐项缺口与 Telegram 顺手化计划见 [`docs/WEB_PARITY_AUDIT.md`](docs/WEB_PARITY_AUDIT.md)。**
 - 统一 HTML 解析模式并严格转义——用户内容永远不会被当作格式解析。
 
 ## 环境要求
@@ -39,18 +39,19 @@ export TELEGRAM_BOT_TOKEN='123456:ABC...'
 
 ## 按键栏
 
-常驻键盘栏（3 × 3）：
+常驻键盘栏（10 键；Queue 键会内嵌实时队列计数 `⌛ Queue · N`）：
 
 ```text
-☰ Menu    ✨ New     🧹 Compact
-🧩 Models  🔌 Plugins 🎭 Mode
-🧭 Sessions 📊 Status ⏹ Stop
+☰ Menu    ✨ New     🧩 Models
+🧭 Sessions 🔌 Plugins 📊 Status
+🎭 Presets ⌛ Queue   🧹 Compact
+⏹ Stop
 ```
 
-`☰ Menu` 打开核心卡：状态文本、当前模型、队列深度、✨ New / 🧹 Compact，然后每个 web 域一行 —— Sessions、Status、Plugins、Mode、Workspaces、Goals、Skills、Subagents、Presets、Host settings、Credentials、Host、Jobs、Dynamic、Capabilities、Settings。“全部功能”卡包含同样各域，外加 Queue、Allowed、Watch、About。
+`☰ Menu` 打开分页核心卡。第 1 页为 New/Project（整行）、Reasoning 选择器、Goals、Workspaces、Skills、Subagents、Jobs、Dynamic、Host、Capabilities、Watch；第 2 页为 Queue、Models、Mode、Sessions、Status、Plugins、Compact、Stop、Host settings、Credentials、Allowed、Settings、About、Presets。`More ›` / `‹ Prev` 翻页，`m:back` 一律回第 1 页。
 
-web 暴露的全部 ApiProxy/Typert 方法均可从 Telegram 触达。完整的
-web 接口 ↔ Telegram 映射见 [`PLAN.md`](PLAN.md)（A–D 节）；
+最终回复以 Telegram 原生「引用回复」形式回到触发消息；profile 具备 `messageFeedback` seam 时，每条最终回复带 `👍 👎 📋` 内联按钮，反馈列表支持逐项删除。逐项接口状态与计划见
+[`docs/WEB_PARITY_AUDIT.md`](docs/WEB_PARITY_AUDIT.md)；接口映射总表见 [`PLAN.md`](PLAN.md)（A–D 节）；
 `/capabilities` 显示当前 profile 实际可用的 seam。
 
 ## 配置
@@ -70,15 +71,23 @@ web 接口 ↔ Telegram 映射见 [`PLAN.md`](PLAN.md)（A–D 节）；
     "disableNotification": false,
     "maxRetries": 3,
     "sendRatePerSecond": 20,
-    "maxMessageLength": 4096
+    "maxMessageLength": 4096,
+    "liveFeed": true
   },
-  "mode": { "name": "headless" }
+  "workspace": { "activePath": "/abs/project" },
+  "mode": { "name": "headless" },
+  "model": { "provider": "opencode-go", "model": "deepseek-v4-pro" },
+  "reasoning": { "effort": "medium" }
 }
 ```
 
-- `security.allowedChatIds` — 入站白名单；**为空则拒绝一切入站**。
+- `security.allowedChatIds` — 入站白名单；**为空则拒绝一切入站**。只有白名单 chat 会进入广播/面板名单。
 - `inbound.defaultMode` — `auto-handle`（agent followup 回合）、`queue-only`（放入 inbox 但不唤醒 agent）、`muted`（忽略）。`rules` 按顺序匹配（先命中先生效），可匹配 `chatId` 和/或不区分大小写的子串 `pattern`。
 - `watch.autoStart` — agent 创建后自动开启轮询。
+- `outbound.liveFeed` — 挂载 Openclaw 扩展时启用流式思考/工具草稿。
+- `workspace.activePath` — `/project` 选定的活动项目目录；`✨ New` 会在其下建会话。
+- `model` — Telegram 侧默认模型，Models 卡落盘，`/new` 与 `✨ New` 继承。
+- `reasoning.effort` — `minimal | low | medium | high | max`，以指令前缀注入入站文本。
 - token **只**来自 `TELEGRAM_BOT_TOKEN`，永不写入磁盘。
 
 ## 模型工具
@@ -95,13 +104,13 @@ web 接口 ↔ Telegram 映射见 [`PLAN.md`](PLAN.md)（A–D 节）；
 
 ## dsh 侧命令
 
-`/telegram status` · `/telegram start` · `/telegram stop` · `/telegram allow <chatId>` · `/telegram disallow <chatId>` · `/telegram watch on|off` · `/telegram config auto-start`
+`/telegram status` · `/telegram start` · `/telegram stop` · `/telegram allow <chatId>` · `/telegram disallow <chatId>` · `/telegram watch on|off` · `/telegram config auto-start` · `/telegram config get|set <path> [json]`
 
-Telegram 侧命令：`/start /menu /new /compact /stop /models /sessions /workspaces /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help`，另有 `/history [id] [limit]`、`/search <query>`、`/rename <title>`、`/fork [atSeq]`、`/use <id>`、`/archive <id>`、`/queue`、`/queueedit <itemId> <text>`、`/steer <text>`、`/goalcreate <objective> [maxRounds]`、`/goaledit <text>`、`/workspacecreate <path> [title]`、`/workspacepin <workspaceId> <sessionId> [before]`、`/pluginenable|plugindisable <name>`、`/settingsdescribe [ns]`、`/settingsupdate <ns> <json>`、`/credential|credentialset|credentialunset <REF> [value]`、`/ls [path]`、`/mkdir <path>`、`/discover <settingsNs> [baseURL]`、`/subagentprompt <text>`、`/sessionlog [id]`、`/commands`、`/capabilities`。
+Telegram 侧命令：`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`，另有 `/history [id] [limit]`、`/search <query>`、`/rename <title>`、`/fork [atSeq]`、`/use <id>`、`/archive <id>`、`/queue`、`/queueedit <itemId> <text>`、`/steer <text>`、`/cancel`、`/goalcreate <objective> [maxRounds]`、`/goaledit <text>`、`/workspacecreate <path> [title]`、`/workspacerename <id> <title>`、`/workspacepin <workspaceId> <sessionId> [before]`、`/pluginenable|plugindisable <name>`、`/settingsdescribe [ns]`、`/settingsupdate <ns> <json>`、`/settingsreplace <ns> <json>`、`/settingsmutate <ns> <json-ops>`、`/credential|credentialset|credentialunset <REF> [value]`、`/ls [path]`、`/mkdir <path>`、`/openpath [path]`、`/pickdir [path]`、`/discover <settingsNs> [baseURL]`、`/subagentprompt <text>`、`/sessionlog [id]`、`/commands`、`/capabilities`。
 
 ## 平台限制（聊天内以指引呈现）
 
-- `host.pickDirectory` / `host.openPath` 无手机端原生对话框 —— bot 以文本路径指引代替。
+- `host.pickDirectory` / `host.openPath` 无手机端原生对话框 —— 用 `/pickdir`（Project 浏览卡）与 `/openpath`（解析后的宿主路径）替代。
 - `downloads.sessionLog` 与 web 同源 ZIP 流；超过 50 MB 引导去 web 下载。
 - `dynamicCordisRunner` 的 run/stop/依赖变更与插件装卸仍是 web 面板操作（聊天内只读清单 + 指引）。
 - 仅长轮询（无 webhook）；回复按完整 assistant 消息发送（无逐块流式）。
@@ -111,7 +120,7 @@ Telegram 侧命令：`/start /menu /new /compact /stop /models /sessions /worksp
 
 - `apply(ctx, config)` 消费 loader 条目配置（官方配置通道）；`.pi/telegram.json` 保留为文件回退。
 - `internal/update` 瀑布内实时应用配置变更（白名单、入站规则、外发速率/重试/长度、watch.autoStart）并否决重启，沿用 include 插件的官方模式；`SendQueue.configure` 与 `TelegramTransport.applyLimits` 热调运行中的限速器。
-- 禁用条目（`loader.update` / 自关 `/plugindisable`、或改 profile patch）或 hmr 源码重载时：`teardownMount()` 逆序回收全部挂载效应（transport/bridge/interactive/panels/待决状态/模型选择/会话生命周期），`apply` 幂等 —— 重载八百次与冷启动等价（论文 Theorem 73 Confluence 约定）。
+- 禁用条目（`loader.update` / 自关 `/plugindisable`、或改 profile patch）或 hmr 源码重载时：`teardownMount()` 逆序回收全部挂载效应（transport/bridge/interactive/panels/typing 循环/待决文本流程/token 注册表/模型选择/会话生命周期）。重复 `apply` 幂等：扩展按名字登记去重，轮询重启会先取消上一代 getUpdates。
 - `ctx.provide("telegram", …)` 向其他插件暴露 `getConfig/status/chats/sendText/broadcast/start/stop`。
 - Telegram 侧 `/config get|set <path> [json]` 与 dsh 侧 `/telegram config get|set <path> <json>` 可实时应用并持久化任意配置叶（如 `outbound.sendRatePerSecond`）。
 

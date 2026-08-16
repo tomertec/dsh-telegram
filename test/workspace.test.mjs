@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensurePiDir, findWorkspaceRoot, hasWorkspaceRoot, piDir } from '../dist/workspace.js';
 
@@ -20,13 +20,13 @@ test('findWorkspaceRoot walks up to the nearest .pi ancestor', () => {
   }
 });
 
-test('findWorkspaceRoot returns undefined without a .pi marker', () => {
-  // /tmp may carry foreign .pi markers (other tools), so anchor under the
-  // user's home where no ancestor is expected to own a workspace.
-  // The host may have real .pi markers above home (this machine has ~/.pi),
-  // so the portable invariant is: a marker-less sandbox is never mistaken for
-  // a workspace root, even if a genuine ancestor root is eventually found.
-  const base = mkdtempSync(join(homedir(), '.dsh-telegram-ws-'));
+test('findWorkspaceRoot does not mistake a marker-less sandbox for a workspace root', () => {
+  // Anchor in the system temp dir.  Some hosts have genuine .pi markers above
+  // temp (or above $HOME), so the portable invariant is: the sandbox itself is
+  // never mistaken for a workspace root, even if a genuine ancestor root is
+  // eventually found.  Never use $HOME directly: it can be read-only under
+  // macOS TCC / sandboxed CI, which fails before the assertion runs.
+  const base = mkdtempSync(join(tmpdir(), 'dsh-telegram-ws-'));
   try {
     const found = findWorkspaceRoot(base);
     assert.notEqual(found, base);

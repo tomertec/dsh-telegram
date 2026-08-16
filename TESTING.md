@@ -304,3 +304,66 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 1. 新建会话发一条消息并等回合结束 → 点 `🎭 Presets` → 选一个 preset → Select：应回复「Preset ... applied to forked session ... · Closed <原会话>」，之后继续发消息应落在新会话且新 preset 生效。
 2. 回合进行中立刻 Select：应提示「the current turn has not finished」，原会话不被关闭。
 3. 空白会话 Select：仍是原地应用，无 fork/close 文案。
+
+## 14. 上线前健壮性 + Telegram 顺手化回归（2026-08-16，自动化 147/147）
+
+本轮以“可直接上线”为标准重跑全量并修复了 8 个真实/潜在缺陷：
+
+1. **测试对只读 $HOME 的可移植性**：`test/workspace.test.mjs` 原先在 `homedir()` 下 `mkdtemp`，macOS TCC/沙箱 CI 下 `$HOME` 只读导致 `EPERM`。改为 `tmpdir()`，并把断言收紧为「无 `.pi` 标记的沙箱本身永不被误判为 workspace root」（祖先确有 `.pi` 时仍允许返回祖先）。
+2. **未授权聊天混入广播名单（安全）**：`isAllowed` 在鉴权前就把 chatId 加进 `state.chats`，任何探过 bot 的陌生人都会收到后续 approval/question 广播与 `telegram_broadcast`。现在只有白名单 chat 才进入 roster；`m:allowthis` 明确加入；dsh `/telegram disallow` 与热更新 `security.allowedChatIds` 会即时移出名单并清掉 bar 计数/防抖。
+3. **热重载/热插拔残留**：`teardownMount()` 漏清 `typingLoops` 与 `pendingSteer`，旧实例卸载后 typing 每 4s 继续向旧 transport 发送、旧 steered 输入会劫持新挂载后的第一条文本。现已全量回收。
+4. **长轮询 restart 竞态（409 根因之一）**：`TelegramTransport.start/stop` 原先不取消在途 getUpdates，`stop` 后立刻 `start`（热 re-apply/快速开关 watch）会双 poller 抢 update。现在每个轮询代际持有 `AbortController`，`start` 先 abort 并等待上一代 settle，再开新代；`stop` 只清理自己持有的代际，并发 start/stop 安全。
+5. **回调 token 注册表无上限（内存泄漏）**：卡片渲染无限累积 `tokens` Map。现在超过 1000 条逐出最旧项；旧按钮仍走既有 token-miss 提示。
+6. **内置扩展热重载重复登记**：每次 `apply` 直接 `extensions.push(reasoningExtension)`，HMR 八百次会有八百行 Reasoning 菜单。`registerExtension` 改为 name-keyed replace（detach 旧实例），内置 reasoning 也走该入口。
+7. **`/new` 与按钮路径模型选择不一致**：Models 卡持久化的 `model` 配置只被 `✨ New`/回调继承，`/new` 命令遗漏第三个参数。已补齐，三条入口行为一致。
+8. **死代码/重复分支**：删除永不使用的 `pendingDelete` 与 `dispatchCallback` 中重复的 `case "project"`（首个 case 已覆盖）。
+9. **Telegram 顺手化（解耦增量）**：
+   - 最终回复使用 Telegram 原生 `reply_parameters` 引用触发它的那条用户消息（bridge、`telegram_reply` 工具、Openclaw 最终回答三条路径一致）；`/start` 欢迎语也引用 `/start` 消息。
+   - 每条 assistant 最终回复落地后由核心回调 `attachFeedbackKeyboard` 追加 `👍 👎 📋` 内联按钮；Openclaw 扩展通过 `ExtensionHost.attachFeedback` 走同一条核心路径。反馈列表卡现在每项可删除，并把 `messageFeedback/put|list|delete` 三条 web 接口全部接线。
+   - Sessions 卡新增 `🔍 Search`：点击后回复查询即可打开搜索卡；`/search <query>` 同样走 `openSearchCard`（此前该卡是死代码）。
+   - 自由文本 question 的 `/answer <id> <questionNumber> <text>` 已实现（调用既有 `setQuestionCustom`）。
+   - 补齐 `/settingsreplace <ns> <json>`、`/settingsmutate <ns> <json-ops>`、`/openpath [path]`、`/pickdir [path]`；`/start` 现在注册 35 条高频命令到 Telegram 原生自动补全（此前只有 13 条）。
+
+### 验证
+
+- `npm run check`：`tsc` 构建 + 147/147 通过（新增 `test/transport.test.mjs` 5 例：callback chat 解析、start 取消上一代、并发 start 只建一个 loop、offset 跨代保留、stop 幂等可重启；新增 `test/security.test.mjs` 1 例：未授权探针不进广播名单，`m:allowthis` 与 dsh `/telegram disallow` 即时增删 roster；新增 `test/feedback.test.mjs` 4 例与 `test/settings.test.mjs` 3 例；`bridge-final-answer` 与 `openclaw` 增加原生 reply + feedback 回调断言）。
+- `npm pack --dry-run`：118 文件，dsh-telegram-0.2.0.tgz 完整。
+- README/README.zh 已同步当前真实 UI（10 键 bar、双页菜单、新配置字段与命令），不再保留旧版 3×3 描述。
+
+### 待人工复核（Telegram 端）
+
+1. 热重启后仅一个 poller，旧实例卸载后聊天不再周期性出现 typing。
+2. 陌生人先发消息再被授权前，不应收到任何后续广播；点「Allow this chat」后恢复正常。
+3. `/new`、`✨ New`、Models 卡无 agent 时选模型，三者使用同一持久化模型配置。
+4. 反复 `/telegram stop` + `/telegram start` 不出现 409，旧卡片按钮给出「older card」提示。
+5. 发送普通文本后，agent 最终回复应作为该消息的 Telegram 引用回复出现，且下方带 `👍 👎 📋`；点 👍/👎 收到回执，点 📋 看到反馈列表并能删除。
+6. Sessions 卡点 `🔍 Search` 后回复任意关键词，应原地打开搜索卡；`/search` 同样。
+7. `/start` 后 Telegram 输入框的命令补全应包含 30+ 条命令。
+8. `/answer <id> <题号> <文本>` 可填写自由文本 question；`/settingsreplace`、`/settingsmutate`、`/openpath`、`/pickdir` 均有响应。
+
+## 15. 上线冲刺 Round 1（2026-08-16，自动化 160/160）
+
+本轮以「多 chat 不串台 + 上线前收口」为主，修掉 1 个基线构建失败与 11 个审查发现的问题，并把自动化测试从 147 拉到 160。
+
+### 修复清单
+
+1. **基线构建失败**：`sessions.ts` 把真实 `AgentRegistry` 直接断言成要求 `Agent.dispose` 的窄接口（TS2352）。改为 `as unknown as` 结构子集适配；`SessionLifecycle.close` 回退路径运行时 cast。
+2. **`✨ New` / `/new` 会话泄漏**：两处直接 `sessionLifecycle.create`，不替换本 chat 旧绑定。现统一走 `createSessionForChat`，只关闭本 chat 的前一个会话。
+3. **死绑定串台**：chat 绑定 agent 已被释放时，`Bridge.resolveAgent` 会 fallback 到其他 chat 的 live agent。现在死绑定 fail-closed，由文本/图片路径自动建新会话。
+4. **换绑继承旧 inbound**：同 chat 切到新 session 后仍保留旧消息 id，最终回复会引用错误消息。换绑时清空旧 inbound/reminded。
+5. **畸形 assistant 事件**：`event.data.message.content` 无守卫会让监听器抛错；现在安全降级为无内容。
+6. **per-chat 入站串行**：router 增加每 chat FIFO 链；两条几乎同时到达的首条消息不会并发建两个 session；不同 chat 仍并行；handler 抛错不阻塞该 chat 后续消息。
+7. **审批/提问隐私**：approval/question 卡片与 settle/answered 状态从「全 roster 广播」改为 session→chat 绑定路由，无绑定时才广播。
+8. **回调 chat 提取顺序**：`callback_query.message.chat` 优先（Bot API 真实形状），`callback.chat` 仅兜底。
+9. **openclaw 旧 timer 串回合**：新 `turn/start` 先 clear 上一回合 throttle timer 再重建草稿。
+10. **disallow 只删 roster**：dsh `/telegram disallow` 与 `security.allowedChatIds` 热更新现在调用 `ejectChat`，同时解除 bridge 绑定、typing 循环、bar 计数与防抖。
+11. **`/use` 恢复会话不 adopt**：resume 出的 `AgentHandle` 现在进入 `SessionLifecycle` 跟踪，teardown 统一释放。
+12. **并发 `telegram_reply` 串台**：`telegram_reply` / `telegram_mark_no_reply` 改用执行 agent 的 `inboundForAgent`，不再读取「最近触碰」inbound。
+
+### 验证
+
+- `npm run check`：**160/160 pass**（新增：bridge 死绑定/换绑清态/畸形事件/detach、router FIFO 与错误不楔死、interactive 按 session 路由、openclaw 旧 timer 回归、session-lifecycle 新语义 5 例、security 解绑断言）。
+- `npm pack --dry-run --cache /tmp/dsh-telegram-npm-cache`：118 文件，dsh-telegram-0.2.0.tgz 完整。
+  - 本机 `~/.npm` 缓存目录含 root-owned 文件（环境问题），项目包内容不受影响。
+- `docs/WEB_PARITY_AUDIT.md` 已同步：多 chat 路由、首图自动建会话、审批/提问按 chat 路由均更新为完成。
+- 待 Telegram 人工复核：见第 14 节清单，外加「两个白名单 chat 并发发消息互不串话」「A 的审批不再推给 B」「快速连发两条首条消息只建一个 session」「disallow 后旧 chat 不再收到 agent 回复」。

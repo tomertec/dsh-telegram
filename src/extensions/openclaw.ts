@@ -299,9 +299,9 @@ export function apply(ctx: Context, _config?: unknown): void {
   // feed, the core forwards prose here instead of spamming the chat. The
   // plugin owns final delivery at turn/end; the core reminder is suppressed
   // by the consumer registration and replaced here when nothing answered.
-  const answers = new Map<number, string>();
-  host.setAssistantConsumer((chatId, text) => {
-    answers.set(chatId, text);
+  const answers = new Map<number, { text: string; assistantMessageId?: string }>();
+  host.setAssistantConsumer((chatId, text, assistantMessageId) => {
+    answers.set(chatId, { text, assistantMessageId });
   });
   ctx.effect(() => () => {
     host.setAssistantConsumer(undefined);
@@ -350,17 +350,22 @@ export function apply(ctx: Context, _config?: unknown): void {
   // streams from. Filtered to the bridge-bound agent; the draft targets the
   // bound chat.
   (ctx.on as (name: string, listener: (session: { id: unknown }, event: SessionEventLike) => void) => void)("session/event", (session, event) => {
-    const agentId = host.currentAgentId();
-    const chatIdRaw = host.currentChatId();
-    const type = event.type;
-    if (agentId === undefined || String(session.id) !== agentId) return;
-    const chatId = chatIdRaw;
+    // Per-chat routing: resolve the owner chat from the session id instead of
+    // trusting the most-recently-touched chat, so two chats can stream at once.
+    const chatId = host.chatIdForAgent(String(session.id));
     if (chatId === undefined) return;
+    const type = event.type;
     if (type === "turn/start") {
-      // One active turn at a time for the bound agent: drop any stale draft
-      // left over from a chat rebind mid-turn.
-      chats.clear();
-      answers.clear();
+      // Drop only this chat's stale draft; another chat's live draft stays.
+      // A previous draft's throttled edit must not fire into the new turn.
+      const previous = chats.get(chatId);
+      if (previous?.timer !== undefined) {
+        clearTimeout(previous.timer);
+        previous.timer = undefined;
+        previous.dirty = false;
+      }
+      chats.delete(chatId);
+      answers.delete(chatId);
       chats.set(chatId, {
         lines: [],
         reasoningRaw: "",
@@ -487,12 +492,21 @@ export function apply(ctx: Context, _config?: unknown): void {
       // (telegram_reply) already answered the inbound — skip both.
       const answer = answers.get(chatId);
       answers.delete(chatId);
-      if (host.pendingInbound()) {
-        const text = answer !== undefined ? escapeHtml(answer) : NO_REPLY_REMINDER;
+      if (host.pendingInbound(chatId)) {
+        const text = answer !== undefined ? escapeHtml(answer.text) : NO_REPLY_REMINDER;
+        const inboundMessageId = host.inboundMessageId(chatId);
+        const agentId = host.agentIdForChat(chatId);
+        const assistantMessageId = answer?.assistantMessageId;
         void host
-          .send(chatId, text, { parse_mode: "HTML" })
-          .then(() => {
-            host.markInboundReplied();
+          .send(chatId, text, {
+            parse_mode: "HTML",
+            ...(inboundMessageId === undefined ? {} : { reply_parameters: { message_id: inboundMessageId } }),
+          })
+          .then((telegramMessageId) => {
+            if (telegramMessageId !== undefined && agentId !== undefined && assistantMessageId !== undefined) {
+              host.attachFeedback(chatId, telegramMessageId, agentId, assistantMessageId);
+            }
+            host.markInboundReplied(chatId);
           })
           .catch(() => {});
       }

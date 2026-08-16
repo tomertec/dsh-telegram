@@ -217,6 +217,7 @@ export const CALLBACK_RE = /^m:([a-z]+)(?::([\s\S]+))?$/;
 export function buildSessionsKeyboard(ids: readonly string[]): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [
     [{ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" }],
+    [{ text: "\u{1F50D} Search", callback_data: "m:search" }],
   ];
   for (const id of ids.slice(0, 22)) {
     rows.push([{ text: `\u{1F9ED} ${id.slice(0, 30)}`, callback_data: `s:${id}`.slice(0, 64) }]);
@@ -343,11 +344,13 @@ export function buildPresetsKeyboard(entries: readonly { id: string; cb: string 
   return kb.row().text("\u2190 Back", "m:back");
 }
 
-export function buildPresetDetailKeyboard(callbacks: { select: string; read: string; copy: string; remove: string; open: string; default: string }): InlineKeyboard {
+export function buildPresetDetailKeyboard(callbacks: { select: string; read: string; create: string; copy: string; remove: string; open: string; default: string }): InlineKeyboard {
   return new InlineKeyboard()
     .row()
     .text("\u{1F3AD} Select", callbacks.select)
     .text("\u{1F4C4} Read", callbacks.read)
+    .row()
+    .text("\u2728 New with this preset", callbacks.create)
     .row()
     .text("\u{1F4CB} Copy", callbacks.copy)
     .text("\u{1F5D1} Remove", callbacks.remove)

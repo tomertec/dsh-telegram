@@ -6,9 +6,9 @@ function fakeDelivery() {
   const sent = [];
   return {
     sent,
-    async broadcast(text, keyboard) {
-      sent.push({ text, keyboard });
-      return [{ chatId: 111, messageId: 999 }];
+    async broadcast(text, keyboard, chatId) {
+      sent.push({ text, keyboard, chatId });
+      return [{ chatId: chatId ?? 111, messageId: 999 }];
     },
     async edit(chatId, messageId, text, keyboard) {
       sent.push({ edit: { chatId, messageId, text, keyboard } });
@@ -205,6 +205,7 @@ test('approval settle broadcast never removes the reply keyboard', async () => {
     signal: undefined,
   };
   const answer = listener(req, async () => 'fallback');
+  await new Promise((resolve) => setImmediate(resolve));
   const prompt = delivery.sent[0];
   const id = Number(prompt.keyboard.inline_keyboard[0][0].callback_data.split(':')[1]);
   interactive.answerApproval(id, 'allowed-once');
@@ -214,5 +215,53 @@ test('approval settle broadcast never removes the reply keyboard', async () => {
   const settles = delivery.sent.filter((entry) => !entry.edit && typeof entry.text === 'string' && entry.text.startsWith('🛡') && entry.keyboard === undefined);
   assert.equal(settles.length, 1);
   assert.equal(settles[0].keyboard, undefined);
+  interactive.detach();
+});
+
+test('approval request and settle route to the session-owned chat only', async () => {
+  const delivery = fakeDelivery();
+  delivery.chatForSession = (sessionId) => (sessionId === 's-owner' ? 777 : undefined);
+  const events = fakeEvents();
+  const ctx = { get: (name) => (name === 'approval' ? {} : undefined), on: events.on.bind(events) };
+  const interactive = attachInteractive(ctx, delivery);
+  const listener = events.listeners.get('approval/request');
+  const req = {
+    agent: { id: 's-owner', session: { events: [{ seq: 0, type: 'approval/asked', data: { id: 'app3', callId: 'c3' } }] } },
+    toolName: 'bash',
+    callId: 'c3',
+    signal: undefined,
+  };
+  const answer = listener(req, async () => 'fallback');
+  await new Promise((resolve) => setImmediate(resolve));
+  const prompt = delivery.sent[0];
+  assert.equal(prompt.chatId, 777, 'request card goes to the owner chat');
+  const id = Number(prompt.keyboard.inline_keyboard[0][0].callback_data.split(':')[1]);
+  interactive.answerApproval(id, 'allowed-once');
+  await answer;
+  const settles = delivery.sent.filter((entry) => entry.text?.startsWith('🛡') && entry.keyboard === undefined);
+  assert.equal(settles.length, 1);
+  assert.equal(settles[0].chatId, 777, 'settle goes to the same chat, not every roster chat');
+  interactive.detach();
+});
+
+test('question cards and the answered status route to the session-owned chat', async () => {
+  const delivery = fakeDelivery();
+  delivery.chatForSession = (sessionId) => (sessionId === 's-owner' ? 555 : undefined);
+  let provider;
+  const ctx = {
+    get: (name) => (name === 'userQuestions' ? { provider: undefined, registerProvider(p) { provider = p; return () => {}; } } : undefined),
+  };
+  const interactive = attachInteractive(ctx, delivery);
+  const promise = provider.ask(questionRequest('s-owner', [{ id: 'q1', question: 'Pick', options: [{ id: 'o1', label: 'One' }] }]));
+  promise.catch(() => {});
+  await new Promise((resolve) => setImmediate(resolve));
+  const prompt = delivery.sent[0];
+  assert.equal(prompt.chatId, 555);
+  const id = Number(prompt.keyboard.inline_keyboard[0][0].callback_data.split(':')[1]);
+  await interactive.toggleQuestionOption(555, id, 'q1', 'o1');
+  await interactive.submitQuestions(555, id);
+  const statuses = delivery.sent.filter((entry) => entry.text?.startsWith('✅ Questions answered'));
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0].chatId, 555);
   interactive.detach();
 });

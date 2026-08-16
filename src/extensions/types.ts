@@ -39,16 +39,28 @@ export interface ExtensionHost {
   currentAgentId(): string | undefined;
   /** The chat currently bound to the live agent (streaming target). */
   currentChatId(): number | undefined;
+  /** Agent id owned by a specific Telegram chat. */
+  agentIdForChat(chatId: number): string | undefined;
+  /** Chat that owns an agent id, for event routing across concurrent chats. */
+  chatIdForAgent(agentId: string): number | undefined;
+  /** Bind/clear the agent owned by a specific Telegram chat. */
+  bindAgent(chatId: number, agentId: string | undefined): void;
+  /** Clear a chat binding (e.g. after its session is stopped/closed). */
+  unbindChat(chatId: number): void;
   /** Stream-renderer plugins claim assistant text blocks: the core forwards
    * each `assistant/message` text block here instead of the chat, and stops
    * marking the inbound as answered. Passing `undefined` restores the
    * built-in immediate forwarding (no plugin = no behavior change). */
-  setAssistantConsumer(consumer: ((chatId: number, text: string) => void) | undefined): void;
-  /** Whether the bridge still has an unanswered inbound Telegram message. */
-  pendingInbound(): boolean;
-  /** Mark the current inbound Telegram message as answered (suppresses the
-   * core turn/end reminder when a renderer plugin owns final delivery). */
-  markInboundReplied(): void;
+  setAssistantConsumer(consumer: ((chatId: number, text: string, assistantMessageId?: string) => void) | undefined): void;
+  /** Attach 👍/👎/list buttons to a delivered assistant reply. */
+  attachFeedback(chatId: number, telegramMessageId: number, sessionId: string, assistantMessageId: string): void;
+  /** Whether a chat (default: most recent) still has an unanswered inbound. */
+  pendingInbound(chatId?: number): boolean;
+  /** Telegram message_id of the unanswered inbound, for a native reply. */
+  inboundMessageId(chatId?: number): number | undefined;
+  /** Mark a chat's inbound as answered (suppresses the core turn/end
+   * reminder when a renderer plugin owns final delivery). */
+  markInboundReplied(chatId?: number): void;
 }
 
 /** One card/reasoning domain mounted on the bridge. */

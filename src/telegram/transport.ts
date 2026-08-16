@@ -24,8 +24,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 export interface TransportHandlers {
-  onText: (chatId: number, text: string) => void | Promise<void>;
-  onPhoto: (chatId: number, fileId: string, caption: string) => void | Promise<void>;
+  onText: (chatId: number, text: string, messageId?: number) => void | Promise<void>;
+  onPhoto: (chatId: number, fileId: string, caption: string, messageId?: number) => void | Promise<void>;
   onCallback: (chatId: number, data: string) => void | Promise<void>;
 }
 
@@ -46,7 +46,7 @@ export function callbackUpdateChatId(callback: {
   chat?: { id?: number };
   message?: { chat?: { id?: number } };
 }): number | undefined {
-  return callback.chat?.id ?? callback.message?.chat?.id;
+  return callback.message?.chat?.id ?? callback.chat?.id;
 }
 
 export class TelegramTransport {
@@ -58,7 +58,12 @@ export class TelegramTransport {
   private handlers: TransportHandlers | undefined;
   private me: { id: number; username: string } | undefined;
   private polling = false;
+  private starting = false;
+  private pollAbort: AbortController | undefined;
   private pollLoop: Promise<void> | undefined;
+  /** Last confirmed update id; preserved across stop/start generations so a
+   * hot restart never asks Telegram to redeliver an already-seen batch. */
+  private pollOffset = 0;
 
   constructor(options: TransportOptions) {
     this.bot = new Bot(options.token);
@@ -85,19 +90,19 @@ export class TelegramTransport {
    * answered first so the Telegram client stops showing the spinner. */
   private async handleUpdate(update: unknown): Promise<void> {
     const entry = update as {
-      message?: { chat?: { id?: number }; text?: string; photo?: { file_id: string }[]; caption?: string };
+      message?: { message_id?: number; chat?: { id?: number }; text?: string; photo?: { file_id: string }[]; caption?: string };
       callback_query?: { chat?: { id?: number }; data?: string; id?: string; message?: { chat?: { id?: number } } };
     };
     if (!this.handlers) return;
     const message = entry.message;
     if (message?.chat?.id !== undefined && typeof message.text === "string") {
       this.log(`inbound text chatId=${message.chat.id} text=${JSON.stringify(message.text.slice(0, 80))}`);
-      await this.handlers.onText(message.chat.id, message.text);
+      await this.handlers.onText(message.chat.id, message.text, message.message_id);
       return;
     }
     if (message?.chat?.id !== undefined && Array.isArray(message.photo) && message.photo.length > 0) {
       const largest = message.photo[message.photo.length - 1]!;
-      await this.handlers.onPhoto(message.chat.id, largest.file_id, message.caption ?? "");
+      await this.handlers.onPhoto(message.chat.id, largest.file_id, message.caption ?? "", message.message_id);
       return;
     }
     const callback = entry.callback_query;
@@ -123,36 +128,67 @@ export class TelegramTransport {
   /** Own getUpdates loop with per-call timeout and automatic reconnect:
    * grammY's bot.start() silently dies on one network error (no way to
    * observe it), which surfaced as the bot going mute. This loop never
-   * stops unless stop() is called. */
+   * stops unless stop() is called.
+   *
+   * start/stop are restart-safe: starting aborts and awaits any previous
+   * generation first, so a hot re-apply can never have two in-flight
+   * getUpdates requests on the same bot token (the 409 "terminated by other
+   * getUpdates request" failure). */
   async start(): Promise<void> {
-    if (this.polling) return;
-    this.polling = true;
-    let offset = 0;
-    this.pollLoop = (async () => {
-      while (this.polling) {
-        try {
-          const updates = await withTimeout(
-            this.api.getUpdates({ offset, timeout: 25, allowed_updates: ["message", "callback_query"] }),
-            40_000,
-          );
-          for (const update of updates) {
-            offset = update.update_id + 1;
-            // Never let a slow handler block the poll loop: an agent turn can
-            // take minutes, and a serial await would freeze inbound traffic
-            // (the "bot went mute" failure).
-            void this.handleUpdate(update).catch((err) => this.log("update handler failed", err));
+    if (this.polling || this.starting) return;
+    this.starting = true;
+    try {
+      const previousAbort = this.pollAbort;
+      previousAbort?.abort();
+      const previousLoop = this.pollLoop;
+      if (previousLoop) await previousLoop.catch(() => {});
+      if (this.polling) return;
+
+      const abort = new AbortController();
+      this.pollAbort = abort;
+      this.polling = true;
+      this.pollLoop = (async () => {
+        while (this.polling && this.pollAbort === abort) {
+          try {
+            const updates = await withTimeout(
+              // grammY re-exports an AbortSignal shim for older runtimes;
+              // Node's native AbortController is compatible at runtime.
+              this.api.getUpdates({ offset: this.pollOffset, timeout: 25, allowed_updates: ["message", "callback_query"] }, abort.signal as never),
+              40_000,
+            );
+            for (const update of updates) {
+              this.pollOffset = update.update_id + 1;
+              // Never let a slow handler block the poll loop: an agent turn can
+              // take minutes, and a serial await would freeze inbound traffic
+              // (the "bot went mute" failure).
+              void this.handleUpdate(update).catch((err) => this.log("update handler failed", err));
+            }
+          } catch (err) {
+            if (abort.signal.aborted) return;
+            this.log("polling error (retrying in 2s)", err);
+            await new Promise((resolve) => setTimeout(resolve, 2000));
           }
-        } catch (err) {
-          this.log("polling error (retrying in 2s)", err);
-          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
-      }
-    })();
-    this.log("long polling started");
+      })();
+      this.log("long polling started");
+    } finally {
+      this.starting = false;
+    }
   }
 
+  /** Stop the current polling generation and wait for its in-flight request
+   * to settle so an immediate restart never overlaps getUpdates calls. */
   async stop(): Promise<void> {
+    if (!this.polling && this.pollAbort === undefined) return;
     this.polling = false;
+    const abort = this.pollAbort;
+    abort?.abort();
+    const loop = this.pollLoop;
+    if (loop) await loop.catch(() => {});
+    // A concurrent start() may have installed a new generation while this
+    // stop was awaiting the old loop; only clear what this call owned.
+    if (this.pollAbort === abort) this.pollAbort = undefined;
+    if (this.pollLoop === loop) this.pollLoop = undefined;
   }
 
   /** Download one photo through the Bot API file endpoint. */

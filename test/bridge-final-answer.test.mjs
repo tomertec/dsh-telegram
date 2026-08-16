@@ -51,14 +51,15 @@ async function setup() {
 const am = (text) => ({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } });
 const turnEnd = (reason = { kind: 'completed' }) => ({ type: 'turn/end', data: { reason } });
 
-test('legacy mode (no consumer): assistant text is forwarded immediately', async () => {
+test('legacy mode (no consumer): assistant text is forwarded immediately as a native reply', async () => {
   const { bridge, transport, ctx } = await setup();
-  assert.equal(bridge.deliver(7, 'hi').ok, true);
+  assert.equal(bridge.deliver(7, 'hi', 501).ok, true);
   ctx.emit('session/event', { id: 'agent-1' }, am('thinking out loud'));
   await sleep(10);
   assert.equal(transport.sent.length, 1);
   assert.equal(transport.sent[0].chatId, 7);
   assert.equal(transport.sent[0].text, 'thinking out loud');
+  assert.deepEqual(transport.sent[0].extra.reply_parameters, { message_id: 501 });
   assert.equal(bridge.hasPendingInbound(), false, 'prose reply satisfies the inbound');
   ctx.emit('session/event', { id: 'agent-1' }, turnEnd());
   await sleep(10);
@@ -146,4 +147,36 @@ test('turn lifecycle notifies the typing callbacks (start -> end)', async () => 
   ]);
   assert.equal(transport.sent.length, 1, 'no typing-hook chat message; only the legacy turn-end reminder');
   assert.ok(transport.sent[0].text.includes('telegram_reply'));
+});
+
+test('legacy delivery reports the Telegram message id for feedback buttons', async () => {
+  const transport = makeTransport();
+  transport.sendText = async (chatId, text, extra) => {
+    transport.sent.push({ chatId, text, extra });
+    return 321;
+  };
+  const { ctx } = makeBridge(transport);
+  const { Bridge } = await import('../dist/harness/bridge.js');
+  const deliveries = [];
+  const bridge = new Bridge({
+    ctx,
+    transport,
+    getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML' } }),
+    onStateChange: () => {},
+    onAssistantDelivered: (chatId, telegramMessageId, sessionId, assistantMessageId) => {
+      deliveries.push({ chatId, telegramMessageId, sessionId, assistantMessageId });
+    },
+    log: () => {},
+  });
+  bridge.attach();
+  bridge.deliver(7, 'hi', 501);
+  ctx.emit('session/event', { id: 'agent-1' }, {
+    type: 'assistant/message',
+    data: { message: { id: 'assistant-message-42', content: [{ type: 'text', text: 'answer' }] } },
+  });
+  await sleep(10);
+  assert.deepEqual(deliveries, [
+    { chatId: 7, telegramMessageId: 321, sessionId: 'agent-1', assistantMessageId: 'assistant-message-42' },
+  ]);
+  assert.deepEqual(transport.sent[0].extra.reply_parameters, { message_id: 501 });
 });
