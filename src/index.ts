@@ -112,6 +112,7 @@ import {
   STOP_BTN,
 } from "./telegram/keyboard.js";
 import { SendQueue } from "./telegram/queue.js";
+import { TokenRegistry } from "./telegram/tokens.js";
 import { attachRouter } from "./telegram/router.js";
 import { StatusPanel } from "./telegram/status-panel.js";
 import { TelegramTransport } from "./telegram/transport.js";
@@ -210,7 +211,7 @@ function teardownMount(): void {
   state.barCarriers.clear();
   releaseAllModelSelections();
   releaseSavedAttachments();
-  tokens.clear();
+  tokens.reset();
   menuPageIndex.clear();
   void sessionLifecycle.dispose().catch(() => {});
   ephemeral.reset();
@@ -263,20 +264,11 @@ const ephemeral = new Ephemeral();
 const statusPanel = new StatusPanel();
 const sessionLifecycle = new SessionLifecycle();
 
-/** Callback payload registry: keeps long ids out of the 64-byte data limit. */
-const tokens = new Map<number, Record<string, string>>();
-const MAX_TOKEN_ENTRIES = 1000;
-let tokenCounter = Date.now();
+/** Callback payload registry: keeps long ids out of the 64-byte data limit.
+ * Tokens are single-use so a button can never execute twice. */
+const tokens = new TokenRegistry();
 function token(payload: Record<string, string>): string {
-  tokenCounter += 1;
-  // Long-running bots render many cards; keep the registry bounded so old
-  // cards (already handled or expired) cannot leak memory forever.
-  if (tokens.size >= MAX_TOKEN_ENTRIES) {
-    const oldest = tokens.keys().next().value;
-    if (oldest !== undefined) tokens.delete(oldest);
-  }
-  tokens.set(tokenCounter, payload);
-  return `t:${tokenCounter}`;
+  return tokens.mint(payload);
 }
 
 /** Registered domain extensions. Core only dispatches to them; it owns no
@@ -1559,13 +1551,20 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     return ext.handler(chatId, {}, host);
   }
   if (data.startsWith("t:")) {
-    const payload = tokens.get(Number(data.slice(2)));
+    const payload = tokens.take(data);
     if (payload) {
       log(`token dispatch ${data} action=${payload["action"] ?? "-"}`);
       return dispatchToken(chatId, payload);
     }
-    log(`token miss ${data} (bot restarted since the card rendered)`);
-    await requireTransport().sendText(chatId, "\u26A0\uFE0F That button was from an older card (bot restarted). Reopen the card and tap again.", { parse_mode: "HTML" });
+    const used = tokens.wasUsed(data);
+    log(`token miss ${data} (${used ? "already handled" : "bot restarted since the card rendered"})`);
+    await requireTransport().sendText(
+      chatId,
+      used
+        ? "\u26A0\uFE0F That button already ran \u2014 the result is in the chat above."
+        : "\u26A0\uFE0F That button was from an older card (bot restarted). Reopen the card and tap again.",
+      { parse_mode: "HTML" },
+    );
     return;
   }
   if (data.startsWith("ap:")) {
@@ -2407,13 +2406,11 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       const space = args.indexOf(" ");
       const ref = space === -1 ? args.trim() : args.slice(0, space);
       const value = space === -1 ? "" : args.slice(space + 1);
-      // The value is a secret: remove the command message from the chat as
-      // soon as Telegram processed the follow-up, so the secret does not sit
-      // in the user's message history.
+      // The value is a secret: queue the command-message deletion BEFORE the
+      // follow-up so the same per-chat queue guarantees the secret is removed
+      // before the bot's own result arrives — no timer race, no restart gap.
       if (messageId !== undefined) {
-        setTimeout(() => {
-          void t.deleteMessage(chatId, messageId).catch((err) => log("credential command delete failed", err));
-        }, 500);
+        void t.deleteMessage(chatId, messageId).catch((err) => log("credential command delete failed", err));
       }
       const res = await setCredential(ctx, ref, value);
       await send(res.text, res.ok);

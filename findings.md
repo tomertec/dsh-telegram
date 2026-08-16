@@ -149,3 +149,8 @@
 
 - 审计遗留的展示串台：未绑定 chat 的 `boundAgentId` 回退最近 agent；已改为 chat 作用域 fail-closed，`statusSnapshot(fallbackToFirst=false)` 支撑。
 - 卡片交互不符合 Telegram 习惯：approval/question 结算另发消息、旧按钮仍可点；改为原地编辑并移除 inline keyboard。
+
+## Round 23 发现与修复
+
+- token 注册表不是 single-use：确认按钮可重复执行副作用；抽为 TokenRegistry，单次消费 + 双账本有界 + 单测。
+- /credentialset 删除命令消息依赖 500ms timer：改为队列序删除（先删密钥、再发回执）。

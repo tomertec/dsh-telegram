@@ -864,3 +864,21 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - `npm run check`：**223/223 pass**（本轮 +1，累计新增 10 个回归）。
 - 实机进程仍为 web 50755，等待 Telegram chat 真实入站消息（上轮已发提醒 message_id 1277）。
+
+## 37. Round 23：按钮一次性执行 + 密钥命令确定性删除（2026-08-19，226/226）
+
+### 本轮修复
+
+1. **回调 token 可重复执行**：token 注册表只在重启后失效，同一按钮重复点击会再次执行
+   （例如 Delete→Confirm 被点两次）。抽出独立 `TokenRegistry`（`src/telegram/tokens.ts`）：
+   - `take()` 单次消费，二次点击返回「该按钮已执行」而不是再次执行或误报重启；
+   - live/used 两个账本都有界（live ≤1000，used ≤4000 并裁剪），`reset()` 清理；
+   - 新增 3 个单测：单次消费、LRU 淘汰、reset。
+2. **`/credentialset` 密钥消息删除竞态**：原 500ms `setTimeout` 删除不受队列/重启约束。
+   改为在处理命令时立即把 `deleteMessage` 排进同一 per-chat 队列，再排后续回执——
+   Telegram FIFO 保证密钥先被删除，且重启不会中断。
+
+### 验证
+
+- `npm run check`：**226/226 pass**（+3）。
+- 实机进程仍为 web 51052；Telegram 真实入站仍待用户回复。

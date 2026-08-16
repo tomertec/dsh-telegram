@@ -127,3 +127,8 @@
 
 - 修复多聊天展示串台（未绑定 chat fail-closed）与 approval/question 卡片原地结算；223/223 pass。
 - 实机端到端仍等用户在 Telegram 回复（提醒已发，message_id 1277）。
+
+## Round 23（本轮）
+
+- 修复 callback token 重复执行与 /credentialset 删除竞态；226/226 pass。
+- 实机端到端仍等待用户在 Telegram 回复。

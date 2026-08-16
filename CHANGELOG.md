@@ -40,6 +40,8 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Long messages are split HTML-aware: never inside a tag or entity, with tags rebalanced per part.
 - Send queue retries only transient failures (429/5xx/network/timeout); permanent Telegram 4xx fail once.
 - Model/settings callback payloads are percent-encoded and decode safely; malformed legacy payloads never kill a tap.
+- Callback tokens are single-use and bounded: a button can never execute twice, even on redelivery or a stale tap.
+- `/credentialset` deletes the command message queue-ordered before its own reply, so the secret never lingers.
 - `telegram_send`/`telegram_reply`/`telegram_broadcast` always deliver their HTML body as HTML.
 - Typing keep-alive self-destructs after 10 minutes if a `turn/end` is lost.
 - Long-poll restart aborts the previous generation; offset survives stop/start; token registry bounded.
@@ -47,7 +49,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 ### Tests
 
-- `npm run check`: 223/223 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
+- `npm run check`: 226/226 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
 - ESM smoke imports for `dist/index.js`, `dist/extensions/openclaw.js`, `dist/extensions/reasoning.js`.
 
 ## 0.2.0
