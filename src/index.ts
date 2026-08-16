@@ -814,10 +814,12 @@ async function openQueueCard(chatId: number): Promise<void> {
 }
 
 async function openWorkspacesCard(chatId: number): Promise<void> {
+  log(`workspaces card open requested chatId=${chatId}`);
   try {
     const listed = listWorkspaces(requireCtx());
     const items = listed.items;
     const archivedSessionIds = listed.archivedSessionIds;
+    log(`workspaces listed items=${items.length} archived=${archivedSessionIds.length}`);
     const lines = [`\u{1F5C2} Workspaces (${items.length})`, ""];
     for (const workspace of items.slice(0, 15)) {
       const title = typeof workspace.title === "string" && workspace.title !== "" ? workspace.title : basename(workspace.path || "workspace");
@@ -826,6 +828,7 @@ async function openWorkspacesCard(chatId: number): Promise<void> {
     }
     if (items.length === 0) lines.push("No workspaces registered \u2014 /workspacecreate <path> [title]");
     if (archivedSessionIds.length > 0) lines.push("", `Archived sessions: ${archivedSessionIds.length}`);
+    log(`workspaces card rendering lines=${lines.length}`);
     await openCard(
       chatId,
       lines.join("\n"),
@@ -834,6 +837,7 @@ async function openWorkspacesCard(chatId: number): Promise<void> {
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    log(`workspaces card ERROR chatId=${chatId}: ${message}`);
     await openCard(
       chatId,
       `\u{1F5C2} Workspaces\n\n\u26A0\uFE0F ${plain(truncate(message, 120))}`,
