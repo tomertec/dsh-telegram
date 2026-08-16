@@ -94,7 +94,6 @@ import {
   buildHostKeyboard,
   buildDynamicCordisKeyboard,
   buildCapabilitiesKeyboard,
-  buildFeedbackKeyboard,
   CALLBACK_RE,
   COMPACT_BTN,
   decodeCallbackValue,
@@ -319,8 +318,9 @@ function buildExtensionHost(): ExtensionHost {
     setAssistantConsumer: (consumer) => {
       state.bridge?.setAssistantConsumer(consumer);
     },
-    attachFeedback: (chatId, telegramMessageId, sessionId, assistantMessageId) => {
-      attachFeedbackKeyboard(chatId, telegramMessageId, sessionId, assistantMessageId);
+    attachFeedback: () => {
+      // Message feedback buttons are disabled by user preference; keep the
+      // extension seam so streaming plugins can still call it harmlessly.
     },
     pendingInbound: (chatId) => state.bridge?.hasPendingInbound(chatId) ?? false,
     inboundMessageId: (chatId) => state.bridge?.inboundMessageIdValue(chatId),
@@ -440,23 +440,6 @@ function renderStatus(chatId?: number): string {
 function requireCtx(): Context {
   if (!state.context) throw new Error("dsh-telegram context is not attached");
   return state.context;
-}
-
-/** Attach the 👍/👎/feedback-list inline keyboard to an assistant reply once
- * its Telegram message id is known. The web `messageFeedback` service owns
- * storage; without that seam the reply stays clean rather than showing dead
- * buttons. */
-function attachFeedbackKeyboard(chatId: number, telegramMessageId: number, sessionId: string, assistantMessageId: string): void {
-  const ctx = requireCtx();
-  if (ctx.get("messageFeedback") === undefined) return;
-  const keyboard = buildFeedbackKeyboard({
-    positive: token({ action: "feedback", sessionId, messageId: assistantMessageId, rating: "positive" }),
-    negative: token({ action: "feedback", sessionId, messageId: assistantMessageId, rating: "negative" }),
-    list: token({ action: "feedback-list", sessionId }),
-  });
-  void requireTransport()
-    .editReplyMarkup(chatId, telegramMessageId, { inline_keyboard: keyboard.inline_keyboard })
-    .catch((err) => log("attach feedback keyboard failed", err));
 }
 
 function boundAgentId(chatId?: number): string | undefined {
@@ -2756,7 +2739,6 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       getConfig: () => state.config,
       onStateChange: refreshAllPanels,
       onTurnRunning: (chatId, running) => (running ? startTyping(chatId) : stopTyping(chatId)),
-      onAssistantDelivered: attachFeedbackKeyboard,
       log,
     });
     state.bridge.attach();

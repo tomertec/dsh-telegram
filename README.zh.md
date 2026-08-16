@@ -45,7 +45,7 @@ DeepSeek Harness 的 Web UI 是 agent 控制面的金标准：会话、模型、
 | 📬 队列 | 队列不可见 | 栏上 `⌛ Queue · N` 实时内嵌计数 |
 | 🛡️ 审批 | 手机端无入口 | 内联 Allow/Reject 卡，结算原地改卡并移除按钮 |
 | 📎 附件 | 静默丢弃 | 图片进入会话；文档/语音/视频给出明确指引 |
-| 💬 回复 | 平铺消息 | 原生引用回复触发消息 + 👍👎📋 反馈按钮 |
+| 💬 回复 | 平铺消息 | 原生引用回复触发消息（不附带反馈按钮） |
 | 📈 流式 | 一次全发 | Openclaw 风格实时草稿（思考/工具行/打字机回复） |
 
 ## 特性
@@ -106,7 +106,7 @@ export TELEGRAM_BOT_TOKEN='123456:ABC...'
 
 ### 5. 聊天
 
-直接发消息。bot 会把该 chat 绑定到它自己的 dsh 会话，挂载 Openclaw 扩展时流式渲染回合，最终以 Telegram 原生引用回复落到触发消息；profile 具备 `messageFeedback` seam 时附 `👍 👎 📋` 反馈按钮。
+直接发消息。bot 会把该 chat 绑定到它自己的 dsh 会话，挂载 Openclaw 扩展时流式渲染回合，最终以 Telegram 原生引用回复落到触发消息，回复上不附带反馈按钮。
 
 ## 配置
 
@@ -151,7 +151,7 @@ Telegram ⇄ grammY 长轮询 ⇄ 每 chat FIFO 路由
 | html | `src/telegram/html.ts` | 转义工具 + HTML 感知长文拆分 |
 | keyboard | `src/telegram/keyboard.ts` | 纯构建器（栏/菜单/卡片）、编码回调数据 |
 | tokens | `src/telegram/tokens.ts` | 有界单次消费回调 token 注册表 |
-| adapters | `src/harness/adapters/` | sessions/workspaces/goals/skills/subagents/presets/settings/credentials/llm/host/jobs/plugins/feedback/status |
+| adapters | `src/harness/adapters/` | sessions/workspaces/goals/skills/subagents/presets/settings/credentials/llm/host/jobs/plugins/status |
 | extensions | `src/extensions/` | `reasoning`（effort 指令）与 `openclaw`（流式草稿） |
 | entry | `src/index.ts` | `apply/teardown`、dsh 命令 + agent 工具、卡片派发、热配置 |
 
@@ -175,7 +175,7 @@ Telegram ⇄ grammY 长轮询 ⇄ 每 chat FIFO 路由
 2. chat 的首条消息创建并绑定 chat 专属 dsh 会话；FIFO promise 覆盖 create → bind → deliver 全链路，因此首条消息风暴也只落一个会话。
 3. Bridge 把消息作为 user turn 投递（或按入站模式排队），并记录 Telegram message id 用于原生引用回复。
 4. 挂载 openclaw 扩展且 `outbound.liveFeed` 开启时，思考/工具/回答流进同一可编辑草稿。
-5. 最终 assistant 文本以原生引用回复落到触发消息；具备 seam 时附 `👍 👎 📋`；缺少 `telegram_reply` 会显式提醒而不是沉默。
+5. 最终 assistant 文本以原生引用回复落到触发消息；缺少 `telegram_reply` 会显式提醒而不是沉默。
 6. 审批/提问卡由 bridge 认领、内联作答，并原地编辑卡片结算（移除已失效按钮）。
 
 ## 测试

@@ -45,7 +45,7 @@ DeepSeek Harness's web UI is the gold standard for controlling an agent: session
 | 📬 Queue | Invisible inbox | Live `⌛ Queue · N` count embedded in the bar key |
 | 🛡️ Approval | No path on mobile | Inline Allow/Reject cards settled in place (buttons removed) |
 | 📎 Attachments | Dropped silently | Photos enter the session; documents/voice/video get clear guidance |
-| 💬 Replies | Plain messages | Native reply-quote to the triggering message + feedback buttons |
+| 💬 Replies | Plain messages | Native reply-quote to the triggering message, clean reply surface |
 | 📈 Streaming | Everything at once | Openclaw-style live draft (thinking / tool lines / typewriter answer) |
 
 ## Features
@@ -106,7 +106,7 @@ Then send `/start` to the bot in Telegram. An unauthorized chat that sends `/sta
 
 ### 5. Chat
 
-Send a message. The bot binds the chat to its own dsh session, streams the turn (when the Openclaw extension is mounted), and replies as a native Telegram quote with `👍 👎 📋` feedback buttons when the profile has the `messageFeedback` seam.
+Send a message. The bot binds the chat to its own dsh session, streams the turn (when the Openclaw extension is mounted), and replies as a native Telegram quote; no feedback keyboard is attached to the reply.
 
 ## Configuration
 
@@ -151,7 +151,7 @@ Telegram ⇄ grammY long polling ⇄ per-chat FIFO router
 | html | `src/telegram/html.ts` | Escaping helpers + HTML-aware long-message splitter |
 | keyboard | `src/telegram/keyboard.ts` | Pure builders for bar/menu/cards, encoded callback payloads |
 | tokens | `src/telegram/tokens.ts` | Bounded single-use callback token registry |
-| adapters | `src/harness/adapters/` | sessions, workspaces, goals, skills, subagents, presets, settings, credentials, llm, host, jobs, plugins, feedback, status |
+| adapters | `src/harness/adapters/` | sessions, workspaces, goals, skills, subagents, presets, settings, credentials, llm, host, jobs, plugins, status |
 | extensions | `src/extensions/` | `reasoning` (effort directives) and `openclaw` (streaming draft) |
 | entry | `src/index.ts` | `apply/teardown`, dsh commands + agent tools, card dispatch, hot config |
 
@@ -175,7 +175,7 @@ A turn's full lifecycle:
 2. The first message in a chat creates and binds a chat-owned dsh session; the FIFO promise spans the whole create → bind → deliver path, so a burst of first messages still lands in one session.
 3. The bridge delivers the message as a user turn (or queues it per inbound mode) and records the Telegram message id for native reply quoting.
 4. The openclaw extension streams reasoning/tool/answer into one editable draft (when mounted and `outbound.liveFeed` is on).
-5. The final assistant text lands as a native reply to the triggering message; `👍 👎 📋` feedback buttons attach when the seam exists; a missing `telegram_reply` produces an explicit reminder instead of silence.
+5. The final assistant text lands as a native reply to the triggering message with no feedback keyboard attached; a missing `telegram_reply` produces an explicit reminder instead of silence.
 6. Approval/question cards are claimed by the bridge, answered inline, and settle by editing the card in place (buttons removed).
 
 ## Tests

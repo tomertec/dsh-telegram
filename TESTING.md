@@ -983,3 +983,10 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - keyboard 单测更新：queue 编号按钮、Sessions 无 Search、Project 有 Menu 返回。
 - workspace 单测新增：registry 条目缺可选字段不抛错。
 - `npm run check`：**228/228 pass**。
+
+### 追加：关闭消息反馈
+
+- 用户反馈「消息的反馈也没必要打开」：`onAssistantDelivered` 不再挂 `attachFeedbackKeyboard`；
+  `ExtensionHost.attachFeedback` 保留为空实现（openclaw 等扩展调用无害）。
+- README/CHANGELOG 已同步：最终回复保持干净，不附 👍/👎/📋 按钮；web feedback 适配器与
+  旧按钮的兼容分发保留，但不再产生任何新反馈入口。

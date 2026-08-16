@@ -25,6 +25,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Approval/question settlements edit the original card in place and remove its dead buttons.
 - A first `/start` from an unauthorized chat replays the welcome automatically after the Allow tap.
 - Project browser has an explicit `☰ Menu` return; Queue items are numbered with text previews.
+- Assistant replies stay clean: no 👍/👎/📋 feedback keyboard is attached (web feedback adapters remain for parity).
 - Preset copy asks for a custom id; `/goaledit` supports maxGoalRounds.
 - Skills card is session-scoped and user-invocable-only; subagent cards show mode/label/hasChildren/reason.
 - `/attachment <id>` reads a photo back through its exact durable ref and sends it as a Telegram photo.
@@ -58,6 +59,6 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 - Native Telegram runtime adapter: grammY long polling, send queue + rate limit + retry.
 - Web-parity cards for sessions, workspaces, goals, skills, subagents, presets, settings,
-  credentials, llm/models, host, commands, jobs, plugins, dynamic inventory, feedback.
+  credentials, llm/models, host, commands, jobs, plugins, dynamic inventory (feedback adapters retained but the Telegram reply surface no longer attaches feedback buttons).
 - Presets, menu paging, openclaw streaming draft, mid-session preset fork.
 - Hot apply/update and teardown-safe plugin lifecycle.
