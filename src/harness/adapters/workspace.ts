@@ -44,8 +44,8 @@ function registryOf(ctx: Context): WorkspaceRegistryLike | undefined {
 function view(workspace: WorkspaceLike): WorkspaceView {
   return {
     workspaceId: workspace.id,
-    path: workspace.path,
-    title: workspace.title,
+    path: typeof workspace.path === "string" ? workspace.path : String(workspace.path ?? ""),
+    title: typeof workspace.title === "string" ? workspace.title : String(workspace.title ?? workspace.path ?? workspace.id),
     // Older/alternate registry entries may omit the list; a card render must
     // never dead-button because of a missing field.
     sessionIds: Array.isArray(workspace.sessionIds) ? [...workspace.sessionIds] : [],

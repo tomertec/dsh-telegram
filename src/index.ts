@@ -814,25 +814,33 @@ async function openQueueCard(chatId: number): Promise<void> {
 }
 
 async function openWorkspacesCard(chatId: number): Promise<void> {
-  let items: { workspaceId: string; path: string; title: string; sessionIds: string[]; createdAt?: number; updatedAt?: number }[] = [];
-  let archivedSessionIds: string[] = [];
-  let error = "";
   try {
     const listed = listWorkspaces(requireCtx());
-    items = listed.items;
-    archivedSessionIds = listed.archivedSessionIds;
+    const items = listed.items;
+    const archivedSessionIds = listed.archivedSessionIds;
+    const lines = [`\u{1F5C2} Workspaces (${items.length})`, ""];
+    for (const workspace of items.slice(0, 15)) {
+      const title = typeof workspace.title === "string" && workspace.title !== "" ? workspace.title : basename(workspace.path || "workspace");
+      lines.push(`\u2022 ${plain(truncate(title, 28))} \u00B7 ${plain(truncate(workspace.path, 24))}`);
+      lines.push(`  sessions: ${workspace.sessionIds.length} \u00B7 id: ${plain(truncate(workspace.workspaceId, 20))}`);
+    }
+    if (items.length === 0) lines.push("No workspaces registered \u2014 /workspacecreate <path> [title]");
+    if (archivedSessionIds.length > 0) lines.push("", `Archived sessions: ${archivedSessionIds.length}`);
+    await openCard(
+      chatId,
+      lines.join("\n"),
+      buildWorkspaceKeyboard(items.map((workspace) => ({ id: workspace.workspaceId, title: typeof workspace.title === "string" ? workspace.title : basename(workspace.path || "workspace") }))),
+      () => openWorkspacesCard(chatId),
+    );
   } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
+    await openCard(
+      chatId,
+      `\u{1F5C2} Workspaces\n\n\u26A0\uFE0F ${plain(truncate(message, 120))}`,
+      buildWorkspaceKeyboard([]),
+      () => openWorkspacesCard(chatId),
+    );
   }
-  const lines = [`\u{1F5C2} Workspaces (${items.length})`, ""];
-  if (error !== "") lines.push(`\u26A0\uFE0F ${plain(truncate(error, 80))}`, "");
-  for (const workspace of items.slice(0, 15)) {
-    lines.push(`\u2022 ${plain(truncate(workspace.title, 28))} \u00B7 ${plain(truncate(workspace.path, 24))}`);
-    lines.push(`  sessions: ${workspace.sessionIds.length} \u00B7 id: ${plain(truncate(workspace.workspaceId, 20))}`);
-  }
-  if (items.length === 0) lines.push("No workspaces registered \u2014 /workspacecreate <path> [title]");
-  if (archivedSessionIds.length > 0) lines.push("", `Archived sessions: ${archivedSessionIds.length}`);
-  await openCard(chatId, lines.join("\n"), buildWorkspaceKeyboard(items.map((workspace) => ({ id: workspace.workspaceId, title: workspace.title }))), () => openWorkspacesCard(chatId));
 }
 
 async function openWorkspaceDetailCard(chatId: number, workspaceId: string): Promise<void> {
