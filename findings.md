@@ -191,3 +191,8 @@
 
 - buildMenuPage 的 m:page 页数按钮是无动作按钮，点击只有 spinner；已移除。
 - m:back 固定回第 0 页不符合直觉；改为回到 menuPageIndex 记录的上一页。
+
+## Round 2 追加：删除/归档修复
+
+- deleteSession 目录名错配（encodeSegment `--~id--` vs 实际原始 id），改为双候选删除。
+- archive 后回详情卡显示 archived；workspace create 后端验证通过。

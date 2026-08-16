@@ -673,15 +673,19 @@ export async function deleteSession(ctx: Context, sessionId: string): Promise<Ad
   }
   const { dshHome } = await import("./mode.js");
   const root = join(dshHome(), "sessions");
-  const encoded = encodeSegment(sessionId);
+  // Backends have used both `encodeSegment(id)` (wrapped `--…--`) and the raw
+  // id as the session directory name; delete whichever one exists.
+  const candidates = [...new Set([encodeSegment(sessionId), sessionId])];
   let removed = false;
   try {
     for (const project of await readdir(root, { withFileTypes: true })) {
       if (!project.isDirectory()) continue;
-      const dir = join(root, project.name, encoded);
-      if (existsSync(dir)) {
-        await rm(dir, { recursive: true, force: true });
-        removed = true;
+      for (const candidate of candidates) {
+        const dir = join(root, project.name, candidate);
+        if (existsSync(dir)) {
+          await rm(dir, { recursive: true, force: true });
+          removed = true;
+        }
       }
     }
   } catch {

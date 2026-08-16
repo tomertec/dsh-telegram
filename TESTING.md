@@ -1095,3 +1095,17 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - Telegram Sessions 卡之前按钮/列表主标签显示 session id（“编码”），即使 harness 有自定义标题。
 - `buildSessionsKeyboard` 改为接收 `{id,title}`，有标题时按钮显示标题 + 短 id；
 - Sessions 卡文本与详情卡同样以自定义标题为主，id 降为辅助信息。
+
+## 51. Round 2 追加：Session 删除真正生效（2026-08-19，230/230）
+
+### 实机发现
+
+用户删除 session 后，`session.list` 里该会话依然存在——`deleteSession` 用
+`encodeSegment(id)`（`--~id--`）去找目录，但实际后端落盘的是**原始 id** 目录名，
+所以永远删不到文件。
+
+### 修复
+
+- `deleteSession` 现在同时尝试 `encodeSegment(id)` 与原始 id 两种目录名，删到哪个删哪个；
+- Archive 后返回 Session 详情卡，让 archived 状态立即可见；
+- 新增删除目录双形态回归测试（raw + wrapped），`npm run check` **230/230 pass**。

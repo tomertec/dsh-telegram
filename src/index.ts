@@ -1701,7 +1701,8 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     if (sub === "archive") {
       const res = await archiveSession(requireCtx(), id);
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-      return openSessionsCard(chatId);
+      // Return to the DETAIL card so the archive state is immediately visible.
+      return openSessionDetailCard(chatId, id);
     }
     if (sub === "model") return openProviderModelsCard(chatId, currentSessionModel(requireCtx(), id).provider ?? "deepseek");
     if (sub === "stop") {

@@ -175,3 +175,34 @@ test('saved photo attachments read back through their exact durable ref', async 
   releaseSavedAttachments();
   assert.equal((await readImageAttachment(ctx, 'img-1')).ok, false);
 });
+
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+test('deleteSession removes both raw and wrapped session directories', async () => {
+  const { deleteSession } = await import('../dist/harness/adapters/sessions.js');
+  const home = mkdtempSync(join(tmpdir(), 'dsh-delete-session-'));
+  const oldHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = home;
+  try {
+    const project = join(home, 'sessions', '--proj--');
+    const raw = join(project, 'session-abc-123');
+    const wrapped = join(project, '--~session-wrapped--');
+    const untouched = join(project, 'session-keep');
+    mkdirSync(raw, { recursive: true });
+    mkdirSync(wrapped, { recursive: true });
+    mkdirSync(untouched, { recursive: true });
+    writeFileSync(join(raw, 'session.jsonl'), 'x');
+    const ctx = { agents: { get: () => undefined } };
+    await deleteSession(ctx, 'session-abc-123');
+    await deleteSession(ctx, 'session-wrapped');
+    assert.equal(existsSync(raw), false, 'raw id dir removed');
+    assert.equal(existsSync(wrapped), false, 'wrapped id dir removed');
+    assert.equal(existsSync(untouched), true, 'other sessions untouched');
+  } finally {
+    if (oldHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
