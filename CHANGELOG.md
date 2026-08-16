@@ -23,6 +23,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Models provider card 12/page; Plugins 20/page; Jobs 20/page; Search results 10/page.
 - Confirm-before-destructive for session/workspace delete, preset remove, subagent interrupt.
 - Approval/question settlements edit the original card in place and remove its dead buttons.
+- A first `/start` from an unauthorized chat replays the welcome automatically after the Allow tap.
 - Preset copy asks for a custom id; `/goaledit` supports maxGoalRounds.
 - Skills card is session-scoped and user-invocable-only; subagent cards show mode/label/hasChildren/reason.
 - `/attachment <id>` reads a photo back through its exact durable ref and sends it as a Telegram photo.

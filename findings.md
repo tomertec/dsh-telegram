@@ -159,3 +159,7 @@
 
 - 真实 Telegram 出现同一 chat 双会话：onUserText 首消息路径未 await，router FIFO 对会话创建窗口无效。
 - 修复 + apply-race 集成回归（假 agents.create 延迟 30ms），227/227。
+
+## Round 24 发现与修复
+
+- 审计遗留 UX：未授权 /start 放行后不会自动进入欢迎流程；已改为 allow 后重放 /start。

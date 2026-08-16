@@ -45,7 +45,7 @@ test('router prompts unauthorized chats and gates their traffic', async () => {
     onCallback: () => calls.push('callback'),
     onUserText: () => calls.push('text'),
     onPhoto: () => calls.push('photo'),
-    onUnauthorized: (chatId) => calls.push(`unauthorized:${chatId}`),
+    onUnauthorized: (chatId, reason) => calls.push(`unauthorized:${chatId}:${reason ?? 'text'}`),
   });
   const h = t.handlers();
   await h.onText(9, '/start');
@@ -55,9 +55,9 @@ test('router prompts unauthorized chats and gates their traffic', async () => {
   await h.onCallback(9, 'm:sessions');
   await h.onCallback(9, 'm:allowthis');
   await h.onPhoto(9, 'file', '');
-  assert.deepEqual(calls, ['unauthorized:9', 'unauthorized:9', 'text', 'command', 'callback', 'unauthorized:9']);
+  assert.deepEqual(calls, ['unauthorized:9:command:start', 'unauthorized:9:text', 'text', 'command', 'callback', 'unauthorized:9:text']);
   await h.onPhoto(7, 'file', '');
-  assert.deepEqual(calls, ['unauthorized:9', 'unauthorized:9', 'text', 'command', 'callback', 'unauthorized:9', 'photo']);
+  assert.deepEqual(calls, ['unauthorized:9:command:start', 'unauthorized:9:text', 'text', 'command', 'callback', 'unauthorized:9:text', 'photo']);
 });
 
 test('router serializes updates per chat in arrival order and isolates chats', async () => {

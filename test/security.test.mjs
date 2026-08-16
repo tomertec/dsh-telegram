@@ -12,6 +12,7 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
   const oldToken = process.env.TELEGRAM_BOT_TOKEN;
 
   const subscribed = [];
+  const sent = [];
   const ctx = {
     get: () => undefined,
     provide: (_name, value) => {
@@ -34,13 +35,18 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
   const originalSendText = TelegramTransport.prototype.sendText;
   const originalEditText = TelegramTransport.prototype.editText;
   const originalDeleteMessage = TelegramTransport.prototype.deleteMessage;
+  const originalSetCommands = TelegramTransport.prototype.setCommands;
   TelegramTransport.prototype.setHandlers = function (value) {
     handlers = value;
     return originalSetHandlers.call(this, value);
   };
-  TelegramTransport.prototype.sendText = async () => 71;
+  TelegramTransport.prototype.sendText = async (chatId, text, options) => {
+    sent.push({ chatId, text, options });
+    return sent.length;
+  };
   TelegramTransport.prototype.editText = async () => true;
   TelegramTransport.prototype.deleteMessage = async () => {};
+  TelegramTransport.prototype.setCommands = async () => {};
 
   try {
     mkdirSync(join(base, '.pi'));
@@ -67,9 +73,9 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
       assert.ok(subscribed.includes(name), `missing subscription: ${name}`);
     }
 
-    // An unauthorized probe gets the allow prompt but must not enter the
-    // roster that receives broadcasts and approval/question cards.
-    await handlers.onText(222, 'hello');
+    // An unauthorized `/start` gets the allow prompt and queues a welcome
+    // replay for after the allow tap; it must not enter the roster yet.
+    await handlers.onText(222, '/start');
     assert.deepEqual(telegram.chats(), []);
 
     // Agent tools must not bypass the whitelist either.
@@ -80,9 +86,11 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
     assert.equal(broadcast.ok, false);
     assert.match(broadcast.results[0].error, /not in the allowed roster/);
 
-    // The self-service allow button promotes the chat.
+    // The self-service allow button promotes the chat and replays the /start
+    // welcome the user originally asked for.
     await handlers.onCallback(222, 'm:allowthis');
     assert.deepEqual(telegram.chats(), [222]);
+    assert.ok(sent.some((entry) => String(entry.text).includes('ready')), 'the queued /start welcome must land after allow');
 
     // A bound session must be unbound together with the roster slot so it
     // cannot keep receiving assistant events after losing whitelist access.
@@ -102,6 +110,7 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
     TelegramTransport.prototype.sendText = originalSendText;
     TelegramTransport.prototype.editText = originalEditText;
     TelegramTransport.prototype.deleteMessage = originalDeleteMessage;
+    TelegramTransport.prototype.setCommands = originalSetCommands;
     rmSync(base, { recursive: true, force: true });
   }
 });

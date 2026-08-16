@@ -906,3 +906,21 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - 当前 live 实例中由该 bug 产生的两个会话为历史数据；重启新版后 chat 会重新绑定
   新会话（旧会话保留在 sessions 列表，不影响运行）。
+
+## 39. Round 24：/start 白名单后的自然落地（2026-08-19，227/227）
+
+### 修复
+
+- 审计遗留 UX：新 chat 第一次发 `/start` 未授权时只收到 allow 提示，点 Allow 后
+  还必须**重新发一次** `/start` 才能看到欢迎语，不符合 Telegram 用户预期。
+- `RouterDeps.onUnauthorized` 增加 `reason`；router 把 `command:start` 传给宿主，
+  宿主记录 `pendingStartAfterAllow`。`m:allowthis` 放行后自动重放 `/start`：
+  注册命令菜单 + 发送欢迎语 + 持久命令栏。
+- 普通未授权文本行为不变；`pendingStartAfterAllow` 在 teardown 清空。
+
+### 测试
+
+- router 测试锁定未授权 `/start` 传递 `command:start`、普通文本不带 reason；
+- security 集成测试锁定：未授权 `/start` 不入白名单 → 点 Allow → 白名单加入且
+  sent 流里出现包含 `ready` 的欢迎语。
+- `npm run check`：**227/227 pass**。

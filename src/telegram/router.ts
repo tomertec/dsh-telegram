@@ -17,7 +17,7 @@ export interface RouterDeps {
   onUserText: (chatId: number, text: string, messageId?: number) => void | Promise<void>;
   onPhoto: (chatId: number, fileId: string, caption: string, messageId?: number) => void | Promise<void>;
   onDocument: (chatId: number, kind: "document" | "voice" | "video", fileId: string, name: string, mimeType: string, messageId?: number) => void | Promise<void>;
-  onUnauthorized: (chatId: number) => void | Promise<void>;
+  onUnauthorized: (chatId: number, reason?: string) => void | Promise<void>;
 }
 
 const COMMAND_RE = /^\/([a-zA-Z0-9_]+)(?:\s+([\s\S]*))?$/;
@@ -48,10 +48,10 @@ export function attachRouter(deps: RouterDeps): void {
   deps.transport.setHandlers({
     onText: (chatId, text, messageId) =>
       enqueue(chatId, async () => {
-        if (!deps.isAllowed(chatId)) return deps.onUnauthorized(chatId);
+        const match = COMMAND_RE.exec(text.trim());
+        if (!deps.isAllowed(chatId)) return deps.onUnauthorized(chatId, match ? `command:${match[1]}` : undefined);
         const barLabel = normalizeBarLabel(text);
         if (barLabel !== undefined) return deps.onBarButton(chatId, barLabel);
-        const match = COMMAND_RE.exec(text.trim());
         if (match) return deps.onCommand(chatId, match[1]!, (match[2] ?? "").trim(), messageId);
         return deps.onUserText(chatId, text, messageId);
       }),

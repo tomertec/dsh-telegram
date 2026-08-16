@@ -203,6 +203,7 @@ function teardownMount(): void {
   pendingSearch = undefined;
   pendingPresetCopy = undefined;
   pendingMkdir = undefined;
+  pendingStartAfterAllow.clear();
   for (const timer of typingLoops.values()) clearInterval(timer);
   typingLoops.clear();
   for (const timer of state.barTimers.values()) clearTimeout(timer);
@@ -1824,6 +1825,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
         writeConfig(state.configRoot, state.config);
       }
       state.chats.add(chatId);
+      // A first touch of `/start` landed on the unauthorized prompt; after
+      // granting access land the user in the real welcome instead of making
+      // them resend the command.
+      if (pendingStartAfterAllow.delete(chatId)) return dispatchCommand(chatId, "start", "");
       return openAllowedCard(chatId);
     }
     case "watchtoggle":
@@ -1865,6 +1870,9 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
 
 let pendingRename: { chatId: number; sessionId: string } | undefined;
 let pendingQueueEdit: { chatId: number; itemId: string } | undefined;
+/** Chats whose first touch was `/start` while unauthorized: once they tap
+ * Allow, replay the welcome instead of making them resend the command. */
+const pendingStartAfterAllow = new Set<number>();
 
 // ---------------------------------------------------------------------------
 // Bar + command dispatch
@@ -2809,8 +2817,9 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           { parse_mode: "HTML" },
         );
       },
-      onUnauthorized: (chatId) => {
-        log(`unauthorized prompt -> chatId ${chatId}`);
+      onUnauthorized: (chatId, reason) => {
+        if (reason === "command:start") pendingStartAfterAllow.add(chatId);
+        log(`unauthorized prompt -> chatId ${chatId}${reason === undefined ? "" : ` (${reason})`}`);
         void state.transport?.sendText(chatId, "\u{1F6AB} This chat is not allowed yet. Tap below to grant access:", {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [[{ text: "\u2795 Allow this chat", callback_data: "m:allowthis" }]] },
