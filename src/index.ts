@@ -703,7 +703,7 @@ async function openPluginsCard(chatId: number, page = 0): Promise<void> {
     lines.push("", `Dynamic plugin packages: ${dynamic.length}`);
     for (const row of dynamic.slice(0, 10)) lines.push(`\u2022 ${plain(String(row.pluginId))}`);
   }
-  lines.push("", "Toggle: /pluginenable <name> \u00B7 /plugindisable <name>");
+  lines.push("", "Toggle: /pluginenable &lt;name&gt; \u00B7 /plugindisable &lt;name&gt;");
   await openCard(chatId, lines.join("\n"), buildPagingKeyboard({
     ...(safe > 0 ? { previous: token({ action: "plugins-page", page: String(safe - 1) }) } : {}),
     ...(safe + 1 < totalPages ? { next: token({ action: "plugins-page", page: String(safe + 1) }) } : {}),
@@ -826,7 +826,10 @@ async function openWorkspacesCard(chatId: number): Promise<void> {
       lines.push(`\u2022 ${plain(truncate(title, 28))} \u00B7 ${plain(truncate(workspace.path, 24))}`);
       lines.push(`  sessions: ${workspace.sessionIds.length} \u00B7 id: ${plain(truncate(workspace.workspaceId, 20))}`);
     }
-    if (items.length === 0) lines.push("No workspaces registered \u2014 /workspacecreate <path> [title]");
+    if (items.length === 0) {
+      lines.push(`\u2022 Current project: ${plain(truncate(state.workspaceRoot, 48))}`);
+      lines.push("No registered workspaces yet \u2014 /workspacecreate &lt;path&gt; [title], or use Project to register this one.");
+    }
     if (archivedSessionIds.length > 0) lines.push("", `Archived sessions: ${archivedSessionIds.length}`);
     log(`workspaces card rendering lines=${lines.length}`);
     await openCard(
@@ -978,7 +981,7 @@ async function openGoalsCard(chatId: number): Promise<void> {
     complete: token({ ...goalPayload, op: "complete" }),
     clear: token({ ...goalPayload, op: "clear" }),
   };
-  lines.push("", "Edit: /goaledit <text> \u00B7 Create: /goalcreate <objective> [maxRounds]");
+  lines.push("", "Edit: /goaledit &lt;text&gt; \u00B7 Create: /goalcreate &lt;objective&gt; [maxRounds]");
   await openCard(chatId, lines.join("\n"), buildGoalsKeyboard(hasGoal, callbacks));
 }
 
@@ -1089,7 +1092,7 @@ async function openHostSettingsCard(chatId: number): Promise<void> {
     lines.push(`\u2022 ${plain(truncate(ns.ns, 36))} \u00B7 applies: ${ns.applies} \u00B7 rev ${ns.revision} \u00B7 secrets set: ${secrets}`);
   }
   if (namespaces.length === 0) lines.push("No settings namespaces registered.");
-  lines.push("", "Describe: /settingsdescribe [ns] \u00B7 Update: /settingsupdate <ns> <json patch>");
+  lines.push("", "Describe: /settingsdescribe [ns] \u00B7 Update: /settingsupdate &lt;ns&gt; &lt;json patch&gt;");
   await openCard(chatId, lines.join("\n"), buildSettingsKeyboard(namespaces.map((ns) => ns.ns)));
 }
 
@@ -1113,8 +1116,8 @@ async function openCredentialsCard(chatId: number): Promise<void> {
   const lines = [
     "\u{1F511} Credentials",
     "",
-    "Describe: /credential <REF> [REF...] (configured/source/writable, value never shown)",
-    "Set: /credentialset <REF> <value> \u00B7 Unset: /credentialunset <REF>",
+    "Describe: /credential &lt;REF&gt; [REF...] (configured/source/writable, value never shown)",
+    "Set: /credentialset &lt;REF&gt; &lt;value&gt; \u00B7 Unset: /credentialunset &lt;REF&gt;",
     "",
     "The secret value never rides back \u2014 same as the web form.",
   ];
@@ -1130,7 +1133,7 @@ async function openHostCard(chatId: number): Promise<void> {
     `model default: ${host.provider ? `${plain(host.provider)}/` : ""}${host.model ? plain(host.model) : "default"}`,
     `attached sessions: ${host.attachedSessions} \u00B7 canOpenPath: ${host.canOpenPath}`,
     "",
-    "Browse: pick a folder below \u00B7 Text: /ls [path] \u00B7 Mkdir: /mkdir <path>",
+    "Browse: pick a folder below \u00B7 Text: /ls [path] \u00B7 Mkdir: /mkdir &lt;path&gt;",
   ];
   await openCard(chatId, lines.join("\n"), buildHostKeyboard());
 }
@@ -1242,7 +1245,7 @@ async function openModeCard(chatId: number): Promise<void> {
     plain(mode.note),
     `Profiles: ${mode.profiles.length > 0 ? mode.profiles.map(plain).join(", ") : "none found"}`,
   ];
-  lines.push("", "Switch profile by restarting dsh with `dsh --profile <name>`.");
+  lines.push("", "Switch profile by restarting dsh with `dsh --profile &lt;name&gt;`.");
   await openCard(chatId, lines.join("\n"), buildBackKeyboard());
 }
 
@@ -1387,7 +1390,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const goal = getGoal(requireCtx(), agent.id);
       const t = requireTransport();
       if (op === "create") {
-        await t.sendText(chatId, "/goalcreate <objective> [maxRounds]", { parse_mode: "HTML" });
+        await t.sendText(chatId, "/goalcreate &lt;objective&gt; [maxRounds]", { parse_mode: "HTML" });
       } else if (!goal) {
         await t.sendText(chatId, "\u274C No current goal.", { parse_mode: "HTML" });
       } else {
@@ -1397,7 +1400,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
         else if (op === "complete") res = await completeGoal(requireCtx(), agent.id, goal.id, goal.revision);
         else if (op === "clear") res = await clearGoal(requireCtx(), agent.id, goal.id, goal.revision);
         else if (op === "edit") {
-          await t.sendText(chatId, "/goaledit <new objective>", { parse_mode: "HTML" });
+          await t.sendText(chatId, "/goaledit &lt;new objective&gt;", { parse_mode: "HTML" });
           return;
         }
         if (res) await t.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
@@ -1744,11 +1747,11 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   if (data.startsWith("w:")) {
     const [, id, sub] = data.split(":");
     if (sub === "create") {
-      await requireTransport().sendText(chatId, "/workspacecreate <path> [title]", { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, "/workspacecreate &lt;path&gt; [title]", { parse_mode: "HTML" });
       return;
     }
     if (sub === "rename") {
-      await requireTransport().sendText(chatId, `/workspacerename ${id} <title>`, { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, `/workspacerename ${id} &lt;title&gt;`, { parse_mode: "HTML" });
       return;
     }
     if (sub === "delete") {
@@ -1770,7 +1773,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openWorkspacesCard(chatId);
     }
     if (sub === "pin") {
-      await requireTransport().sendText(chatId, "/workspacepin <workspaceId> <sessionId> [beforeSessionId]", { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, "/workspacepin &lt;workspaceId&gt; &lt;sessionId&gt; [beforeSessionId]", { parse_mode: "HTML" });
       return;
     }
     return openWorkspaceDetailCard(chatId, id);
@@ -1833,7 +1836,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openHostDirectoryCard(chatId, state.workspaceRoot);
     }
     if (sub === "mkdir") {
-      await requireTransport().sendText(chatId, "/mkdir <path>", { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, "/mkdir &lt;path&gt;", { parse_mode: "HTML" });
       return;
     }
     return;
@@ -1955,10 +1958,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "capabilities":
       return openCapabilitiesCard(chatId);
     case "discover":
-      await requireTransport().sendText(chatId, "/discover <settingsNs> [baseURL]", { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, "/discover &lt;settingsNs&gt; [baseURL]", { parse_mode: "HTML" });
       return;
     case "cred-describe":
-      await requireTransport().sendText(chatId, "/credential <REF> [REF...]", { parse_mode: "HTML" });
+      await requireTransport().sendText(chatId, "/credential &lt;REF&gt; [REF...]", { parse_mode: "HTML" });
       return;
     default:
       return;

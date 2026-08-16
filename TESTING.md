@@ -1056,3 +1056,21 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - 更新 `keyboard.test.mjs` 与 `menu.test.mjs`：断言没有页数假按钮、导航按钮组合正确。
 - `npm run check`：**229/229 pass**。
+
+## 46. Round 2 追加：HTML 转义批量修复 + Workspace 空态提示（2026-08-19，229/229）
+
+### 实机发现
+
+用户连续点多个菜单卡，日志暴露一类系统性 bug：**多处卡片/直接 sendText 使用 `parse_mode: HTML`
+但命令占位符直接写 `<REF>` `<name>` `<path>` 等，Telegram 把它当 HTML 标签拒绝（400）**。
+涉及 Host settings、Credentials、Plugins、Mode、Goal、Host、Workspace 等卡片。
+
+### 修复
+
+- 把所有 HTML 卡片中的命令占位符改为 `&lt;...&gt;`（例如 `&lt;REF&gt;`、`&lt;name&gt;`、`&lt;path&gt;`）；
+- `send()` 路径本来就用 `plain()` 转义，不受影响；本次修复 `openCard`/直接 `sendText(..., parse_mode: "HTML")` 的裸尖括号。
+- Workspaces 空列表时增加「Current project」提示，并说明如何注册/用 Project 登记，避免看起来像点不开。
+
+### 验证
+
+- `npm run check`：**229/229 pass**。
