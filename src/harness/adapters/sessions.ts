@@ -760,6 +760,7 @@ export class SessionLifecycle {
       const replaced = options?.replaceSessionId;
       if (replaced !== undefined && replaced !== handle.agent.id) {
         await this.close(replaced, ctx).catch((err) => console.error("[dsh-telegram] failed to dispose replaced agent", err));
+        releaseModelSelection(replaced);
       }
       return {
         result: ok(`\u2728 New session ${handle.agent.id} in ${cwd}`),

@@ -183,8 +183,14 @@ function teardownMount(): void {
   for (const dispose of refreshEventDisposers.splice(0)) dispose();
   state.bridge?.detach();
   state.bridge = undefined;
+  const teardownTransport = state.transport;
   void state.transport?.stop().catch(() => {});
   state.transport = undefined;
+  // Remove dedicated bar-carrier messages so a hot reload never leaves a
+  // stale reply keyboard button behind.
+  for (const [carrierChat, carrierId] of state.barCarriers) {
+    void teardownTransport?.deleteMessage(carrierChat, carrierId).catch(() => {});
+  }
   state.watching = false;
   state.chats.clear();
   state.context = null;
@@ -3016,8 +3022,8 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       // Route by the calling agent, not by the most-recently-touched chat:
       // two sessions in two chats may run telegram_reply concurrently.
       const agentId = exec.agent?.id === undefined ? undefined : String(exec.agent.id);
-      const inbound = (agentId !== undefined ? bridge?.inboundForAgent(agentId) : undefined) ?? bridge?.currentInbound();
-      if (!bridge || !inbound) throw new Error("no active inbound message");
+      const inbound = agentId !== undefined ? bridge?.inboundForAgent(agentId) : undefined;
+      if (!bridge || !inbound) throw new Error(agentId === undefined ? "no agent context for telegram_reply" : "no active inbound message");
       await bridge.sendOutbound(inbound.chatId, args.text, {
         replyToInbound: true,
         parseMode: validateParseMode(args.parseMode),
@@ -3085,8 +3091,8 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
     async execute(args, exec: ToolRunContext) {
       const bridge = state.bridge;
       const agentId = exec.agent?.id === undefined ? undefined : String(exec.agent.id);
-      const inbound = (agentId !== undefined ? bridge?.inboundForAgent(agentId) : undefined) ?? bridge?.currentInbound();
-      if (!bridge || !inbound) return JSON.stringify({ ok: false, text: "no active inbound message for this agent" });
+      const inbound = agentId !== undefined ? bridge?.inboundForAgent(agentId) : undefined;
+      if (!bridge || !inbound) return JSON.stringify({ ok: false, text: agentId === undefined ? "no agent context for telegram_mark_no_reply" : "no active inbound message for this agent" });
       return JSON.stringify(bridge.markNoReply(args.reason ?? undefined, inbound.chatId));
     },
   }));

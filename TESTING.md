@@ -728,3 +728,29 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 ### 结论
 
 自动化侧达到上线门槛；真实发布前仍待 Telegram 实机执行 §25 checklist（当前环境无 bot token 与 dsh CLI）。
+
+## 32. Round 18：独立审计修复 + 实机冒烟（2026-08-16，211/211）
+
+### 独立审计发现并修复
+
+1. **telegram_reply 失败被吞**：`sendOutbound` 原来在入队前就标记 replied；发送失败时 turn/end 错误路径与提醒都被抑制。现改为确认 `message_id` 后才标记（新增回归测试）。
+2. **telegram_reply/mark_no_reply 无 agent 上下文时回退「最近触碰」chat**：可能把 A 的消息回进 B。现改为直接失败，禁止跨 chat fallback。
+3. **stop/start 竞态**：stop 在 start 等待旧 poll 世代期间到达时，start 仍会开新世代。新增 `stopGeneration` 世代令牌，旧 start 检测到新 stop 即退出（新增竞态回归测试）。
+4. **长文本拆分重复引用/键盘**：`sendText` 拆分后第 2..N 段仍带 `reply_parameters`/`reply_markup`。现仅第一段携带（新增测试）。
+5. **面板刷新异常逃逸进 cordis 事件监听器**：Bridge 统一 `notifyStateChange` try/catch。
+6. **teardown 遗留 bar carrier**：卸载时 fire-and-forget 删除旧载体消息。
+7. **被替换 session 的 ModelSelectionRef 泄漏**：`createSessionForChat` 替换旧会话时释放其 model selection。
+8. `npm audit --omit=dev`：0 vulnerabilities。
+
+### 实机冒烟（真实 bot 与真实 token，隔离 DSH_HOME）
+
+- 安装 `@deepseek-ai/dsh@0.1.0-rc.6` 到 `/tmp/dsh-cli`（不污染项目/系统 profile）；
+- 临时 `DSH_HOME=/tmp/dsh-live-home-6Qqb`（复制 web profile + symlink 本仓库）；
+- `--dump-config` 确认 `dsh-telegram`、`telegram-reasoning`、`telegram-openclaw` 三插件挂载，`agent-default-model → opencode-go/deepseek-v4-pro`；
+- 真实启动：`dsh web: http://127.0.0.1:49439` + `[dsh-telegram] long polling started` + `[dsh-telegram] openclaw streaming feed mounted`；
+- Bot API `getMe`：`@XosEvolvesbot`（id 8739701145）；
+- 白名单 chat 8753447694 的 bar sync 实测：`bar sync chatId=8753447694 count=0 last=-1`，bot 已向该 chat 投递带计数的新 bar。
+
+### 结论
+
+自动化与真实长轮询冒烟均通过；剩余完整 §25 交互 checklist 仍需在 Telegram 客户端人工点按后回填。

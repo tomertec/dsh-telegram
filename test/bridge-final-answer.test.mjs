@@ -204,3 +204,22 @@ test('outbound.liveFeed=false ignores a mounted stream consumer and restores leg
   assert.deepEqual(transport.sent[0].extra.reply_parameters, { message_id: 501 });
   assert.equal(bridge.hasPendingInbound(), false);
 });
+
+test('a failed telegram_reply leaves the inbound pending for the error path', async () => {
+  const transport = {
+    sent: [],
+    sendText: async () => { throw new Error('send failed'); },
+  };
+  const { ctx } = makeBridge(transport);
+  const { Bridge } = await import('../dist/harness/bridge.js');
+  const bridge = new Bridge({
+    ctx,
+    transport,
+    getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML' } }),
+    onStateChange: () => {},
+    log: () => {},
+  });
+  bridge.deliver(7, 'hi', 501);
+  await assert.rejects(bridge.sendOutbound(7, 'reply', { replyToInbound: true }));
+  assert.equal(bridge.hasPendingInbound(7), true, 'failed send must not mark the inbound answered');
+});

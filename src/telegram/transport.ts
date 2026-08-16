@@ -63,6 +63,9 @@ export class TelegramTransport {
   private me: { id: number; username: string } | undefined;
   private polling = false;
   private starting = false;
+  /** Bumped on every stop so a start that was awaiting an old generation
+   * can detect a stop that arrived while it was waiting. */
+  private stopGeneration = 0;
   private pollAbort: AbortController | undefined;
   private pollLoop: Promise<void> | undefined;
   /** Last confirmed update id; preserved across stop/start generations so a
@@ -164,12 +167,13 @@ export class TelegramTransport {
   async start(): Promise<void> {
     if (this.polling || this.starting) return;
     this.starting = true;
+    const generation = this.stopGeneration;
     try {
       const previousAbort = this.pollAbort;
       previousAbort?.abort();
       const previousLoop = this.pollLoop;
       if (previousLoop) await previousLoop.catch(() => {});
-      if (this.polling) return;
+      if (this.polling || this.stopGeneration !== generation) return;
 
       const abort = new AbortController();
       this.pollAbort = abort;
@@ -206,7 +210,8 @@ export class TelegramTransport {
   /** Stop the current polling generation and wait for its in-flight request
    * to settle so an immediate restart never overlaps getUpdates calls. */
   async stop(): Promise<void> {
-    if (!this.polling && this.pollAbort === undefined) return;
+    if (!this.polling && this.pollAbort === undefined && !this.starting) return;
+    this.stopGeneration += 1;
     this.polling = false;
     const abort = this.pollAbort;
     abort?.abort();
@@ -288,9 +293,12 @@ export class TelegramTransport {
     const parts = splitText(text, this.maxMessageLength);
     return this.queue.push(chatId, async () => {
       let first: number | undefined;
-      for (const part of parts) {
-        const msg = await withTimeout(this.api.sendMessage(chatId, part, options), 20_000);
-        if ((options as { reply_markup?: unknown }).reply_markup !== undefined) {
+      for (let index = 0; index < parts.length; index += 1) {
+        // Reply quoting and reply keyboards are per-message Telegram state:
+        // only the FIRST part carries them; later parts must be plain text.
+        const partOptions = index === 0 ? options : { ...options, reply_markup: undefined, reply_parameters: undefined };
+        const msg = await withTimeout(this.api.sendMessage(chatId, parts[index]!, partOptions), 20_000);
+        if (index === 0 && (options as { reply_markup?: unknown }).reply_markup !== undefined) {
           this.log(`sendText reply_markup echo -> ${JSON.stringify(msg.reply_markup ?? null)}`);
         }
         first ??= msg.message_id;

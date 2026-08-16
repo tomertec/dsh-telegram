@@ -158,3 +158,53 @@ test('sendPhoto uploads image bytes through the per-chat send queue', async () =
   assert.equal(captured.options.caption, 'caption');
   assert.equal(captured.input !== undefined, true);
 });
+
+test('sendText strips reply quote and keyboard from later split parts', async () => {
+  const transport = makeTransport();
+  const calls = [];
+  transport.api.sendMessage = async (chatId, text, options) => {
+    calls.push({ chatId, text, options });
+    return { message_id: calls.length };
+  };
+  await transport.sendText(7, 'a'.repeat(100), { reply_parameters: { message_id: 9 }, reply_markup: { keyboard: [[{ text: 'x' }]] } });
+  // queue stub executes fn synchronously; transport max length defaults 4096,
+  // so override the splitter by monkey-patching maxMessageLength via applyLimits.
+  transport.applyLimits({ maxMessageLength: 10 });
+  calls.length = 0;
+  await transport.sendText(7, 'a'.repeat(25), { reply_parameters: { message_id: 9 }, reply_markup: { keyboard: [[{ text: 'x' }]] } });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0].options.reply_parameters, { message_id: 9 });
+  assert.equal(calls[1].options.reply_parameters, undefined);
+  assert.equal(calls[2].options.reply_markup, undefined);
+});
+
+test('stop requested while start is awaiting the old generation wins', async () => {
+  const transport = makeTransport();
+  const calls = [];
+  let releaseFirst = () => {};
+  const gate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  transport.api.getUpdates = async (_opts, signal) => {
+    calls.push(signal);
+    await new Promise((resolve) => {
+      const done = () => resolve([]);
+      if (signal.aborted) return done();
+      signal.addEventListener('abort', async () => {
+        await gate; // hold the old generation until the second stop arrived
+        done();
+      }, { once: true });
+    });
+    return [];
+  };
+
+  await transport.start(); // generation 1, pending
+  const stopping = transport.stop(); // aborts generation 1
+  const restarting = transport.start(); // enters its await-previous-loop window
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const stoppingDuringRestart = transport.stop();
+  releaseFirst();
+  await Promise.all([stopping, restarting, stoppingDuringRestart]);
+  assert.equal(calls.length, 1, 'the start in flight must not launch a second generation');
+  assert.equal(transport.polling, false);
+});

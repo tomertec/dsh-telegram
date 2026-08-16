@@ -122,3 +122,9 @@
 
 - `npm publish --dry-run` 通过（registry public access，真实发布需登录）。
 - 自动化发布门槛已过；创建本地 tag `v0.3.0-rc.1`（推送/发布待实机验收）。
+
+## Round 18 独立审计 + 实机冒烟
+
+- 独立审计确认 2 个 P1（telegram_reply 失败吞、stop/start 竞态）与 5 个 P2；全部修复并加回归测试。
+- npm audit --omit=dev：0 漏洞。
+- 实机冒烟：真实 bot @XosEvolvesbot 长轮询启动、openclaw 挂载、getMe 正确、bar sync 已向 chat 8753447694 投递。

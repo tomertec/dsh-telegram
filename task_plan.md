@@ -22,7 +22,8 @@
 - [x] Round 15：settings expectedRevision（208/208）
 - [x] Round 16：Subagent activity/时区/信号对齐 web（208/208）
 - [x] Round 17：Release gate（npm publish dry-run + v0.3.0-rc.1 tag）
-- [ ] Round 18+：Telegram 实机 checklist + 最终发布决策（见下）
+- [x] Round 18：独立审计修复 + 实机冒烟（211/211）
+- [ ] Round 19+：Telegram 客户端完整 §25 checklist + 最终发布决策（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -125,3 +126,8 @@
 
 - subagent.activity 按 web 重映射 live agent status。
 - promptSubagent 携带 clientTimeZone + AbortSignal。
+
+## Round 18 已完成
+
+- 独立审计 7 项修复（replied 时序、跨 chat fallback、stop/start 竞态、分片 quote、listener 异常、carrier 清理、selection 泄漏）。
+- 实机冒烟：真实 bot 长轮询 + openclaw + bar sync 投递成功。

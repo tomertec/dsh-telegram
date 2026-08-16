@@ -88,6 +88,12 @@
 - Release gate：npm publish --dry-run OK；tag v0.3.0-rc.1（commit `3bccf34`）。
 - 详见 TESTING.md §31。
 
-## 下一步（Round 18 候选）
+## Round 18（本轮）
 
-Telegram 实机执行 §25 checklist；实机通过后推 tag 与正式发布。
+- 独立审计 7 项修复；211/211 tests。
+- 实机冒烟：@XosEvolvesbot 长轮询、openclaw 挂载、bar sync 投递成功。
+- 详见 TESTING.md §32。
+
+## 下一步（Round 19 候选）
+
+Telegram 客户端完整执行 §25 checklist；实机通过后推 tag 与正式发布。

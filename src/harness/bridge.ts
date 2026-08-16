@@ -118,6 +118,15 @@ export class Bridge {
     return existing;
   }
 
+  private notifyStateChange(): void {
+    try {
+      this.notifyStateChange();
+    } catch (err) {
+      // A throwing panel refresh must never escape a cordis event listener.
+      this.log("state change handler failed", err);
+    }
+  }
+
   /** Bind (or clear) the agent owned by one Telegram chat. */
   bindAgent(chatId: number, agentId: string | undefined): void {
     if (agentId === undefined) {
@@ -152,7 +161,7 @@ export class Bridge {
       }
       this.touch(chatId, id);
     }
-    this.onStateChange();
+    this.notifyStateChange();
   }
 
   /** Legacy single-binding setter; when a chat is active it updates that
@@ -163,7 +172,7 @@ export class Bridge {
       return;
     }
     this.currentAgentId = agentId === undefined ? undefined : SessionId(agentId);
-    this.onStateChange();
+    this.notifyStateChange();
   }
 
   currentAgentIdValue(): string | undefined {
@@ -277,10 +286,12 @@ export class Bridge {
         ? { reply_parameters: { message_id: inbound.messageId } }
         : {}),
     };
-    if (inbound && !inbound.replied) {
+    const sent = await this.transport.sendText(chatId, text, extra);
+    // Only a confirmed Telegram message satisfies the inbound: a queued send
+    // that ultimately fails must leave the turn open for the error/reminder.
+    if (inbound && !inbound.replied && sent !== undefined) {
       inbound.replied = true;
     }
-    await this.transport.sendText(chatId, text, extra);
   }
 
   /** Telegram message id of the pending inbound for a chat. */
@@ -423,7 +434,7 @@ export class Bridge {
               })
               .catch(() => {});
           }
-          this.onStateChange();
+          this.notifyStateChange();
         }
         // Live status feed: every event that changes turn/step/tool/usage
         // figures refreshes the open panels and the bar queue counter.
@@ -436,11 +447,11 @@ export class Bridge {
           event.type === "turn/start"
         ) {
           if (event.type === "tool/call") noteToolCall(String(session.id));
-          this.onStateChange();
+          this.notifyStateChange();
         }
       }),
     );
-    this.disposers.push(this.ctx.on("agent/status", () => this.onStateChange()));
+    this.disposers.push(this.ctx.on("agent/status", () => this.notifyStateChange()));
   }
 
   detach(): void {
