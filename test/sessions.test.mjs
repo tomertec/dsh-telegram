@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession, listSessionDetails } from '../dist/harness/adapters/sessions.js';
+import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession, listSessionDetails, saveImageAttachment, readImageAttachment, releaseSavedAttachments } from '../dist/harness/adapters/sessions.js';
 
 function queueAgent(id, nextTurn, nextStep, status = 'idle') {
   const make = (items) => items.map((item) => ({ id: item.id, content: [{ type: 'text', text: item.text }] }));
@@ -147,4 +147,31 @@ test('listSessionDetails sorts by most recent prompt (web updatedAt desc)', asyn
   assert.equal(details[0].lastPromptAt, 300);
   assert.equal(details[1].title, 'old prompt');
   assert.equal(details[2].lastPromptAt, undefined);
+});
+
+
+test('saved photo attachments read back through their exact durable ref', async () => {
+  const ref = { attachmentId: 'img-1', mediaType: 'image/jpeg', bytes: 3, width: 1, height: 1 };
+  const ctx = {
+    agents: { list: () => [], get: () => undefined },
+    get: (name) => (name === 'attachments' ? {
+      saveImage: async () => ref,
+      readImage: async (received) => {
+        assert.equal(received, ref, 'readImage must receive the real ref, not a reconstructed one');
+        return { ref, data: new Uint8Array([1, 2, 3]) };
+      },
+    } : undefined),
+  };
+  const saved = await saveImageAttachment(ctx, new Uint8Array([1, 2, 3]), 'image/jpeg');
+  assert.equal(saved.ok, true);
+  const read = await readImageAttachment(ctx, 'img-1');
+  assert.equal(read.ok, true);
+  assert.equal(read.data, Buffer.from([1, 2, 3]).toString('base64'));
+  assert.equal(read.mediaType, 'image/jpeg');
+
+  const missing = await readImageAttachment(ctx, 'other');
+  assert.equal(missing.ok, false);
+  assert.match(missing.text, /not saved by this bridge/);
+  releaseSavedAttachments();
+  assert.equal((await readImageAttachment(ctx, 'img-1')).ok, false);
 });

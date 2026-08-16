@@ -37,6 +37,8 @@ import {
   listQueue,
   updateQueueItem,
   saveImageAttachment,
+  readImageAttachment,
+  releaseSavedAttachments,
   SessionLifecycle,
   releaseAllModelSelections,
 } from "./harness/adapters/sessions.js";
@@ -199,6 +201,7 @@ function teardownMount(): void {
   state.barCounts.clear();
   state.barCarriers.clear();
   releaseAllModelSelections();
+  releaseSavedAttachments();
   tokens.clear();
   menuPageIndex.clear();
   void sessionLifecycle.dispose().catch(() => {});
@@ -1845,6 +1848,7 @@ const TELEGRAM_COMMANDS = [
   { command: "credentials", description: "Credential list" },
   { command: "host", description: "Host details and files" },
   { command: "ls", description: "List a directory" },
+  { command: "attachment", description: "Send a saved photo attachment back" },
   { command: "mkdir", description: "Create a directory" },
   { command: "jobs", description: "Jobs list" },
   { command: "capabilities", description: "Profile capability matrix" },
@@ -1939,7 +1943,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
           "/workspacecreate <path> [title] \u00B7 /workspacepin <workspaceId> <sessionId> [beforeSessionId]",
           "/pluginenable <name> \u00B7 /plugindisable <name> \u00B7 /settingsdescribe [ns] \u00B7 /settingsupdate <ns> <json> \u00B7 /settingsreplace <ns> <json> \u00B7 /settingsmutate <ns> <json ops>",
           "/credential <REF> [REF...] \u00B7 /credentialset <REF> <value> \u00B7 /credentialunset <REF> \u00B7 /answer <id> <question-number> <text>",
-          "/ls [path] \u00B7 /mkdir <path> \u00B7 /pickdir [path] \u00B7 /openpath [path] \u00B7 /discover <settingsNs> [baseURL] \u00B7 /subagentprompt <text>",
+          "/attachment <attachmentId> \u00B7 /ls [path] \u00B7 /mkdir <path> \u00B7 /pickdir [path] \u00B7 /openpath [path] \u00B7 /discover <settingsNs> [baseURL] \u00B7 /subagentprompt <text>",
           "/sessionlog [sessionId] \u00B7 /commands \u00B7 /capabilities \u00B7 /config get|set <path> [json]",
           "/menucheck \u00B7 self-checks every menu card's data source",
         ].join("\n"),
@@ -2371,6 +2375,22 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       await send(res.text, res.ok);
       return;
     }
+    case "attachment": {
+      const attachmentId = args.trim();
+      if (!attachmentId) {
+        await send("usage: /attachment <attachmentId> \u2014 send a photo first to create an attachment.");
+        return;
+      }
+      const res = await readImageAttachment(ctx, attachmentId);
+      if (!res.ok || res.data === undefined) {
+        await send(res.text, res.ok);
+        return;
+      }
+      const ext = res.mediaType === "image/png" ? "png" : res.mediaType === "image/jpeg" ? "jpg" : "img";
+      const sent = await t.sendPhoto(chatId, Buffer.from(res.data, "base64"), `attachment-${attachmentId.slice(0, 16)}.${ext}`, `\u{1F5BC} ${plain(truncate(attachmentId, 24))}`);
+      await send(sent === undefined ? `\u274C ${plain(res.text)}` : res.text, sent !== undefined);
+      return;
+    }
     case "mkdir": {
       const res = await createDirectory(args.trim());
       await send(res.text, res.ok);
@@ -2479,7 +2499,7 @@ async function dispatchPhoto(chatId: number, fileId: string, caption: string, me
   const res = state.bridge?.deliverImage(chatId, saved.attachment, caption, messageId);
   if (res && !res.ok) await t.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
   else {
-    await t.sendText(chatId, res?.text ?? "Image delivered.", { parse_mode: "HTML" });
+    await t.sendText(chatId, `${plain(res?.text ?? "Image delivered.")} \u00B7 ${plain(saved.text)} \u00B7 /attachment ${plain(saved.attachment.attachmentId)}`, { parse_mode: "HTML" });
     scheduleBarSync(chatId, 0);
   }
 }

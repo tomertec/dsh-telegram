@@ -564,3 +564,27 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 2. `/credential REF REF` → 去重后只显示一行。
 3. `/credential bad-ref!` → POSIX 名称错误提示。
 4. Host 卡 version 显示 `0.2.0`（与 package.json 一致）。
+
+## 24. Round 10：session.attachment 读回 + Host 默认模型（2026-08-16，201/201）
+
+### 改动
+
+1. **图片附件读回闭环（web `session.attachment`）**：
+   - `saveImageAttachment` 记录本 bridge 保存的 durable ref（上限 500 逐出最旧）；
+   - `readImageAttachment` 用真实 ref 调 `ctx.attachments.readImage`（web 会校验 bytes 与 ref 完全一致，旧实现伪造 ref 永远读不回）；
+   - 新增 `/attachment <attachmentId>`：读回 base64 → `TelegramTransport.sendPhoto` 发回聊天；发图成功回执现在附上 attachment id 与 `/attachment <id>` 提示；teardown 清空内存 ref 注册表。
+2. **Host 默认模型对齐 web seam**：`describeHost` 优先 `agentDefaultModel.currentSelection()`（web host.describe 与 session.create fallback 的同一来源），无该服务时回退第一个 live agent。
+3. **测试**：sessions 附件真实 ref 读回 1 例、transport sendPhoto 1 例、host 默认模型优先 1 例。
+
+### 验证
+
+- `npm run check`：**201/201 pass**（新增 3 例）。
+- ESM smoke import：`dist/index.js`、`dist/extensions/openclaw.js`、`dist/extensions/reasoning.js` 三个入口均可直接 `import()`。
+- round 1–9 的 198 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步 session.attachment 与 host.describe 状态。
+
+### Telegram 人工复核
+
+1. 发一张图 → 回执含 `Attachment <id>` 与 `/attachment <id>`；执行该命令应把同一张图发回。
+2. `/attachment unknown` → 提示「was not saved by this bridge」。
+3. Host 卡 provider/model 应与 profile 的 `agent-default-model` 一致，而不是某个已打开会话的模型。

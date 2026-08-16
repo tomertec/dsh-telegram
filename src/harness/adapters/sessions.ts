@@ -539,6 +539,10 @@ export function updateQueueItem(ctx: Context, sessionId: string, itemId: string,
   return ok("Queue updated.");
 }
 
+/** Durable refs for images this bridge saved; `ctx.attachments.readImage`
+ * verifies the exact recorded ref, so a read-back must use the real one. */
+const savedAttachments = new Map<string, AttachmentRefLike>();
+
 /** session.attachment admission: promote image bytes, mirroring the web gate. */
 export async function saveImageAttachment(
   ctx: Context,
@@ -550,27 +554,41 @@ export async function saveImageAttachment(
   if (!attachments) return fail("attachments service is unavailable in this profile");
   try {
     const ref = await attachments.saveImage({ data, mediaType, ...(name === undefined ? {} : { name }) });
+    savedAttachments.set(String(ref.attachmentId), ref);
+    if (savedAttachments.size > 500) {
+      const oldest = savedAttachments.keys().next().value;
+      if (oldest !== undefined) savedAttachments.delete(oldest);
+    }
     return { ok: true, text: `\u{1F5BC} Attachment ${ref.attachmentId}`, attachment: ref };
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
 }
 
-/** session.attachment read (base64, same as the web response). */
+/** session.attachment read (base64, same as the web response). The web seam
+ * verifies bytes against the exact durable ref, so only attachments this
+ * bridge saved can be read back through Telegram. */
 export async function readImageAttachment(ctx: Context, attachmentId: string): Promise<AdapterResult & { data?: string; mediaType?: string }> {
   const attachments = attachmentsOf(ctx);
   if (!attachments) return fail("attachments service is unavailable in this profile");
+  const ref = savedAttachments.get(attachmentId);
+  if (!ref) return fail(`attachment ${attachmentId} was not saved by this bridge (send a photo first)`);
   try {
-    const ref = await attachments.readImage({ attachmentId, mediaType: "image/png", bytes: 0, width: 0, height: 0 });
+    const stored = await attachments.readImage(ref);
     return {
       ok: true,
-      text: `\u{1F5BC} ${attachmentId} (${ref.data.byteLength} bytes)`,
-      data: Buffer.from(ref.data).toString("base64"),
-      mediaType: ref.ref.mediaType,
+      text: `\u{1F5BC} ${attachmentId} (${stored.data.byteLength} bytes)`,
+      data: Buffer.from(stored.data).toString("base64"),
+      mediaType: stored.ref.mediaType,
     };
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
+}
+
+/** Plugin teardown: drop the in-memory ref registry (durable refs stay). */
+export function releaseSavedAttachments(): void {
+  savedAttachments.clear();
 }
 
 /** Deliver a promoted image into the session, as one followup turn. */

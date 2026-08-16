@@ -80,3 +80,9 @@
 - web `credentials.describe` 是批量 `refs[]` 契约，TG 只能查一个；新增批量适配（≤64/去重/校验）。
 - Host 卡 version 写死 0.0.1，误导用户；改为传入插件真实 version（0.2.0）。
 - 权威确认：credentials 无枚举 seam，web 也不列出 ref 列表；卡片保持命令指引是正确的。
+
+## Round 10 发现与修复
+
+- `readImageAttachment` 用伪造的零字段 ref 读图，真实 `ctx.attachments.readImage` 会校验 bytes 与 ref 失败——这是死代码级 bug；改为记录真实 durable ref，并新增 `/attachment` UI 闭环。
+- Host provider/model 取第一个 live agent，不符合 web `host.describe` 的 `agentDefaultModel` seam；已对齐并测试。
+- 发布前 smoke import 验证三个 ESM 入口均可加载。

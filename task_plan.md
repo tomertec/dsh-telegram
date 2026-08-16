@@ -14,7 +14,8 @@
 - [x] Round 7：Subagents 对齐 web 目录语义（190/190）
 - [x] Round 8：非图片媒体明确指引 + downloads 单测（194/194）
 - [x] Round 9：credentials 批量 + Host 版本真实化（198/198）
-- [ ] Round 10+：继续收敛剩余项（见下），每轮回归 `npm run check` + pack
+- [x] Round 10：session.attachment 读回 + Host 默认模型对齐（201/201）
+- [ ] Round 11+：继续收敛剩余项（见下），每轮回归 `npm run check` + pack
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -27,8 +28,8 @@
 ## 剩余候选（按性价比排序）
 
 1. Telegram 实机回归 + 最终上线复测记录。
-2. 审计剩余 🟡 收敛（session history message 边界、host 默认 model seam、settings 边界等）。
-3. 发布前最终 `npm pack` / README 复核。
+2. 审计剩余 🟡 收敛（history tool view、settings 边界、workspace confirm 等）。
+3. 发布前最终 `npm pack` / README 复核与版本号决策。
 
 ## 错误记录
 
@@ -81,3 +82,9 @@
 - `describeCredentials` 批量 ≤64 refs（去重 + POSIX 校验）；/credential 与文案同步。
 - `describeHost` version 参数：Host 卡显示插件 0.2.0。
 - 新增 credentials.test.mjs（3 例）+ host 版本断言。
+
+## Round 10 已完成
+
+- `/attachment <id>` 读回真实 durable ref 并 sendPhoto 发回；发图回执附 attachment id。
+- `describeHost` 优先 agentDefaultModel；ESM 三入口 smoke import。
+- 新增附件读回、sendPhoto、host 默认模型测试。

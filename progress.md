@@ -41,13 +41,18 @@
 - document/voice/video 明确指引；downloads 单测；README 平台限制同步。
 - 194/194 tests；提交 `8d77095`；详见 TESTING.md §22。
 
-## 2026-08-16 Round 9（本轮）
+## 2026-08-16 Round 9（已完成）
 
-- `/credential` 批量 ≤64 refs；Host 卡显示真实 0.2.0 版本。
-- `npm run check`：**198/198 pass**。
-- 文档已同步 TESTING.md §23 与 WEB_PARITY_AUDIT.md。
+- `/credential` 批量；Host 版本真实化。
+- 198/198 tests；提交 `22c028a`；详见 TESTING.md §23。
+
+## 2026-08-16 Round 10（本轮）
+
+- `/attachment <id>` 读回真实 ref；Host 默认模型对齐 agentDefaultModel。
+- `npm run check`：**201/201 pass**；ESM 三入口 smoke import 通过。
+- 文档已同步 TESTING.md §24 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 10 候选）
+## 下一步（Round 11 候选）
 
-Telegram 实机回归、审计剩余 🟡 收敛、发布前最终复测与 README 复核。
+Telegram 实机回归、审计剩余 🟡 收敛、发布前版本号决策与最终 README 复核。

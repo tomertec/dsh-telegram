@@ -19,12 +19,17 @@ export interface HostView {
 }
 
 export function describeHost(ctx: Context, activeCwd: string = process.cwd(), version = "0.0.1"): HostView {
+  // Same source as web host.describe and session.create's fallback: the
+  // saved default selection is what the NEXT session will start from.
+  const selection = (
+    ctx.get("agentDefaultModel") as { currentSelection(): { provider: string; model: string } } | undefined
+  )?.currentSelection();
   const agent = ctx.agents?.list()[0];
   return {
     version,
     cwd: activeCwd,
-    provider: agent?.options.provider,
-    model: agent?.options.model,
+    provider: selection?.provider ?? agent?.options.provider,
+    model: selection?.model ?? agent?.options.model,
     attachedSessions: ctx.agents?.list().length ?? 0,
     canOpenPath: false,
   };

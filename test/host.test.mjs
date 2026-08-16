@@ -53,8 +53,20 @@ test('host path helpers resolve, degrade, and walk up', async () => {
 
 
 test('describeHost reports the bridge version instead of a fake host version', () => {
-  const view = describeHost({ agents: { list: () => [] } }, '/tmp', '0.2.0');
+  const view = describeHost({ agents: { list: () => [] }, get: () => undefined }, '/tmp', '0.2.0');
   assert.equal(view.version, '0.2.0');
   assert.equal(view.cwd, '/tmp');
   assert.equal(view.attachedSessions, 0);
+});
+
+test('describeHost prefers agentDefaultModel like web host.describe', () => {
+  const ctx = {
+    agents: { list: () => [{ options: { provider: 'live-provider', model: 'live-model' } }] },
+    get: (name) => (name === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) } : undefined),
+  };
+  const view = describeHost(ctx, '/tmp', '0.2.0');
+  assert.equal(view.provider, 'default-provider');
+  assert.equal(view.model, 'default-model');
+  const fallback = describeHost({ agents: ctx.agents, get: () => undefined }, '/tmp');
+  assert.equal(fallback.provider, 'live-provider');
 });

@@ -244,6 +244,16 @@ export class TelegramTransport {
     });
   }
 
+  /** Send saved image bytes back to the chat (session.attachment read-back). */
+  sendPhoto(chatId: number, buffer: Uint8Array, filename: string, caption?: string): Promise<number | undefined> {
+    return this.queue.push(chatId, async () => {
+      const msg = await withTimeout(this.api.sendPhoto(chatId, new InputFile(buffer, filename), {
+        ...(caption === undefined ? {} : { caption, parse_mode: "HTML" as const }),
+      }), 60_000);
+      return msg.message_id;
+    });
+  }
+
   /** Remove/replace an inline keyboard in place (approval/question settles). */
   editReplyMarkup(chatId: number, messageId: number, markup: unknown): Promise<boolean> {
     return this.queue.push(chatId, async () => {

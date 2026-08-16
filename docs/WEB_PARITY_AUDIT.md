@@ -70,14 +70,14 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | session.rename | 详情按钮、/rename | ✅ | |
 | session.fork | 详情 Fork、/fork [atSeq] | ✅ | fork 后未一键绑定/恢复，需再点 Use |
 | session.prompt | 普通文本、Steer 按钮、/steer、queue-only 入站规则 | 🟡 | 只支持纯文本/图片 caption；对非当前会话的 prompt 只有 steer/queue，没有独立 followup 路由 |
-| session.attachment | 发图片自动 `saveImage` → 进 agent | 🟡 | 只处理当前 agent；无 web 图片限制预检；`readImageAttachment`（读回附件）无 UI |
+| session.attachment | 发图片自动 `saveImage` → 进 agent；`/attachment <id>` 读回 | 🟡 | 只处理当前 agent；无 web 图片限制预检；读回仅限本 bridge 保存的 ref（web 校验同语义） |
 | session.updateQueue | Queue 卡编辑/删除/立即执行、/queueedit | ✅ | |
 | session.cancel | /stop、Stop 键 | ✅ | |
 | subagent.list | Subagents 卡 | 🟡 | 已显示 kind/activity/mode/label/hasChildren/diagnostic reason；parentAvailable 由「必须有 live parent 才能开卡」隐式表达 |
 | subagent.history | 详情 History | 🟡 | 复用通用 history，缺分页/projections/tool view |
 | subagent.prompt | 详情 Prompt → 回复文本 | 🟡 | 已做 continuable 校验（非 continuable 只读 history）；仍缺时区、AbortSignal |
 | subagent.interrupt | 详情 Interrupt | ✅ | 仅 continuable 显示；二次确认；错误纯文本 |
-| host.describe | Host 卡 | 🟡 | `version` 已显示 dsh-telegram 版本（0.2.0）；provider/model 仍取第一个 live agent，不是宿主默认 seam |
+| host.describe | Host 卡 | 🟡 | `version` 显示 dsh-telegram 0.2.0；provider/model 已改读 `agentDefaultModel`（与 web 同 seam），fallback live agent；canOpenPath 平台限制为 false |
 | host.pickDirectory | /pickdir、Project 选择器 | ✅ | 平台限制下用路径式选择代替原生对话框；无参数时给提示并打开 Project 卡 |
 | host.listDirectory | /ls（文本）、Host 卡 `Browse cwd` 逐级浏览 | ✅ | 点击文件夹进入、Up/~// 导航、目录 20/页、文件只计数；`/ls` 保留文本形式 |
 | host.createDirectory | /mkdir | 🟡 | 只接受完整路径；web 语义是 parent+name；没有浏览卡里“New folder”按钮 |
@@ -323,6 +323,8 @@ Map<chatId, {
 - [x] document/voice/video 入站不再静默丢弃：transport/router 提取并白名单检查后回明确指引；未授权媒体也会收到 allow 提示。
 - [x] downloads 单测（50MB 常量 + seam 缺失降级指引）。
 - [x] credentials.describe 支持批量 refs（≤64、去重、POSIX 校验）；Host 卡显示真实 bridge version。
+- [x] `session.attachment` 读回闭环：`/attachment <id>` 用真实 durable ref 读回并以图片发回；Host provider/model 改读 `agentDefaultModel`。
+- [x] ESM smoke import 三入口全通。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

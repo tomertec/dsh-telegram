@@ -144,3 +144,17 @@ test('unsupported media routes to the document handler with metadata', async () 
   assert.equal(calls[1].kind, 'voice');
   assert.equal(calls[1].messageId, 78);
 });
+
+test('sendPhoto uploads image bytes through the per-chat send queue', async () => {
+  const transport = makeTransport();
+  let captured;
+  transport.api.sendPhoto = async (chatId, input, options) => {
+    captured = { chatId, input, options };
+    return { message_id: 88 };
+  };
+  const id = await transport.sendPhoto(7, new Uint8Array([9, 8, 7]), 'photo.jpg', 'caption');
+  assert.equal(id, 88);
+  assert.equal(captured.chatId, 7);
+  assert.equal(captured.options.caption, 'caption');
+  assert.equal(captured.input !== undefined, true);
+});
