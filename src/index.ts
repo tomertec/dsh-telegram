@@ -66,6 +66,7 @@ import {
   buildBackKeyboard,
   buildBarKeyboard,
   buildConfirmKeyboard,
+  buildHistoryKeyboard,
   buildMenuPage,
   buildProjectKeyboard,
   queueBarLabel,
@@ -189,6 +190,7 @@ function teardownMount(): void {
   pendingQueueEdit = undefined;
   pendingSteer = undefined;
   pendingSearch = undefined;
+  pendingPresetCopy = undefined;
   for (const timer of typingLoops.values()) clearInterval(timer);
   typingLoops.clear();
   for (const timer of state.barTimers.values()) clearTimeout(timer);
@@ -630,12 +632,17 @@ async function openPluginsCard(chatId: number): Promise<void> {
   await openCard(chatId, lines.join("\n"), kb);
 }
 
-async function openSessionsCard(chatId: number): Promise<void> {
+const SESSIONS_PAGE_SIZE = 10;
+
+async function openSessionsCard(chatId: number, page = 0): Promise<void> {
   const ctx = requireCtx();
   const details = await listSessionDetails(ctx);
+  const totalPages = Math.max(1, Math.ceil(details.length / SESSIONS_PAGE_SIZE));
+  const safe = Math.max(0, Math.min(page, totalPages - 1));
+  const pageItems = details.slice(safe * SESSIONS_PAGE_SIZE, (safe + 1) * SESSIONS_PAGE_SIZE);
   const current = state.bridge?.agentIdForChat(chatId) ?? state.bridge?.currentAgentIdValue();
-  const lines = [`\u{1F9ED} Sessions (${details.length})`, ""];
-  for (const session of details.slice(0, 15)) {
+  const lines = [`\u{1F9ED} Sessions (${details.length}) \u00B7 page ${safe + 1}/${totalPages}`, ""];
+  for (const session of pageItems) {
     const flags = [session.live ? "live" : "cold", session.running ? "running" : "idle"];
     if (session.archived) flags.push("archived");
     lines.push(
@@ -644,7 +651,10 @@ async function openSessionsCard(chatId: number): Promise<void> {
     if (session.lastPromptAt !== undefined) lines.push(`   last prompt: ${plain(new Date(session.lastPromptAt).toLocaleString())}`);
   }
   lines.push("", "Tap a session for Use/History/Rename/Fork/Archive/Model/Queue.");
-  await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(details.map((session) => session.id)));
+  await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => session.id), {
+    ...(safe > 0 ? { previous: token({ action: "sessions-page", page: String(safe - 1) }) } : {}),
+    ...(safe + 1 < totalPages ? { next: token({ action: "sessions-page", page: String(safe + 1) }) } : {}),
+  }));
 }
 
 async function openSessionDetailCard(chatId: number, sessionId: string): Promise<void> {
@@ -667,14 +677,19 @@ async function openSessionDetailCard(chatId: number, sessionId: string): Promise
 }
 
 async function openHistoryCard(chatId: number, sessionId: string, beforeSeq?: number): Promise<void> {
-  const items = await readHistory(requireCtx(), sessionId, 20, beforeSeq);
-  const lines = [`\u{1F4DC} History \u00B7 ${plain(truncate(sessionId, 32))} (${items.length})`, ""];
-  for (const item of items) {
+  const items = await readHistory(requireCtx(), sessionId, 21, beforeSeq);
+  const hasMore = items.length > 20;
+  const visible = items.slice(0, 20);
+  const olderBefore = hasMore ? visible[0]?.seq : undefined;
+  const lines = [`\u{1F4DC} History \u00B7 ${plain(truncate(sessionId, 32))} (${visible.length}${hasMore ? "+" : ""})`, ""];
+  for (const item of visible) {
     lines.push(`[${item.seq}] ${item.role === "user" ? "\u{1F464}" : item.role === "assistant" ? "\u{1F916}" : "\u2699\uFE0F"} ${plain(truncate(item.text, 120))}`);
   }
-  if (items.length === 0) lines.push("(no events)");
-  const kb = buildSessionDetailKeyboard(sessionId, false);
-  await openCard(chatId, lines.join("\n"), kb);
+  if (visible.length === 0) lines.push("(no events)");
+  await openCard(chatId, lines.join("\n"), buildHistoryKeyboard(
+    sessionId,
+    olderBefore === undefined ? undefined : token({ action: "history-older", sessionId, beforeSeq: String(olderBefore) }),
+  ));
 }
 
 async function openSearchCard(chatId: number, query: string): Promise<void> {
@@ -1253,6 +1268,14 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       await requireTransport().sendText(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
       return openSessionsCard(chatId);
     }
+    case "sessions-page": {
+      const page = Number(payload["page"] ?? "0");
+      return openSessionsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "history-older": {
+      const beforeSeq = Number(payload["beforeSeq"] ?? "");
+      return openHistoryCard(chatId, payload["sessionId"] ?? "", Number.isFinite(beforeSeq) ? beforeSeq : undefined);
+    }
     case "preset-read": {
       const res = await readAgentPreset(requireCtx(), payload["presetId"] ?? "");
       const t = requireTransport();
@@ -1264,9 +1287,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       return;
     }
     case "preset-copy": {
-      const res = await copyAgentPreset(requireCtx(), payload["presetId"] ?? "", `${payload["presetId"] ?? "preset"}-copy`);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
-      return openPresetsCard(chatId);
+      const sourceId = payload["presetId"] ?? "";
+      pendingPresetCopy = { chatId, sourceId };
+      await requireTransport().sendText(chatId, `\u{1F4CB} Reply with the new preset id for a copy of ${plain(truncate(sourceId, 32))} (or /cancel):`, { parse_mode: "HTML" });
+      return;
     }
     case "preset-remove": {
       const presetId = payload["presetId"] ?? "";
@@ -1326,6 +1350,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
 let pendingSubagentPrompt: { chatId: number; parentId: string; childId: string } | undefined;
 let pendingSteer: { chatId: number; sessionId: string } | undefined;
 let pendingSearch: { chatId: number } | undefined;
+let pendingPresetCopy: { chatId: number; sourceId: string } | undefined;
 
 async function dispatchCallback(chatId: number, data: string): Promise<void> {
   const ext = extensionForCallback(data);
@@ -1802,6 +1827,9 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       if (pendingQueueEdit && pendingQueueEdit.chatId === chatId) {
         pendingQueueEdit = undefined;
         await send("Queue edit cancelled.");
+      } else if (pendingPresetCopy && pendingPresetCopy.chatId === chatId) {
+        pendingPresetCopy = undefined;
+        await send("Preset copy cancelled.");
       } else {
         await send("Nothing to cancel.");
       }
@@ -2038,13 +2066,19 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       return;
     }
     case "goaledit": {
-      const text = args.trim();
+      const parts = args.trim().split(/\s+/);
+      const candidate = parts.length > 1 ? Number(parts[parts.length - 1]) : undefined;
+      const maxRounds = Number.isFinite(candidate) ? candidate : undefined;
+      const objective = (maxRounds === undefined ? parts : parts.slice(0, -1)).join(" ");
       const goal = agent ? getGoal(ctx, agent.id) : undefined;
-      if (!agent || !goal || !text) {
-        await send("usage: /goaledit <text> (needs a current goal)");
+      if (!agent || !goal || !objective) {
+        await send("usage: /goaledit <objective> [maxRounds] (needs a current goal)");
         return;
       }
-      const res = await editGoal(ctx, agent.id, goal.id, goal.revision, { objective: text });
+      const res = await editGoal(ctx, agent.id, goal.id, goal.revision, {
+        objective,
+        ...(maxRounds === undefined ? {} : { maxGoalRounds: maxRounds }),
+      });
       await send(res.text, res.ok);
       return;
     }
@@ -2586,6 +2620,22 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           pendingSubagentPrompt = undefined;
           void promptSubagent(requireCtx(), parentId, childId, text)
             .then((res) => state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" }))
+            .catch(() => {});
+          return;
+        }
+        if (pendingPresetCopy && pendingPresetCopy.chatId === chatId) {
+          const { sourceId } = pendingPresetCopy;
+          pendingPresetCopy = undefined;
+          const newId = text.trim();
+          if (!newId) {
+            void state.transport?.sendText(chatId, "\u274C Preset id must not be blank.", { parse_mode: "HTML" });
+            return;
+          }
+          void copyAgentPreset(requireCtx(), sourceId, newId)
+            .then((res) => {
+              void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+              if (res.ok) void openPresetsCard(chatId);
+            })
             .catch(() => {});
           return;
         }

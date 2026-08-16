@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildMenuPage, buildQueueKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildQueueKeyboard, buildSessionsKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -164,4 +164,22 @@ test('buildConfirmKeyboard lays out confirm and cancel side by side', () => {
       { text: '\u2716 Cancel', callback_data: 't:2' },
     ],
   ]);
+});
+
+test('buildSessionsKeyboard paginates ids and adds nav callbacks', () => {
+  const ids = Array.from({ length: 25 }, (_, i) => `session-${i}`);
+  const first = buildSessionsKeyboard(ids, { next: 't:next' });
+  assert.equal(first.inline_keyboard.filter((row) => row.some((b) => b.text.startsWith('🧭'))).length, 10);
+  const nav = first.inline_keyboard.find((row) => row.some((b) => b.callback_data === 't:next'));
+  assert.ok(nav);
+  const last = buildSessionsKeyboard(ids.slice(10), { previous: 't:prev', next: 't:next2' });
+  assert.ok(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:prev')));
+});
+
+test('buildHistoryKeyboard adds Load older only when there is an older window', () => {
+  const withOlder = buildHistoryKeyboard('s1', 't:older');
+  assert.ok(withOlder.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:older')));
+  const last = buildHistoryKeyboard('s1');
+  assert.ok(last.inline_keyboard.some((row) => row.some((b) => b.callback_data === 's:s1')));
+  assert.equal(last.inline_keyboard.some((row) => row.some((b) => b.text === '⏪ Load older')), false);
 });

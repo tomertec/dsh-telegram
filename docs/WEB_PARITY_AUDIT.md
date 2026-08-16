@@ -61,10 +61,10 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 
 | web 接口 | 当前入口 | 状态 | 没做到的部分 |
 | --- | --- | --- | --- |
-| session.list | Sessions 卡、/sessions | 🟡 | 只显示前 15 条；未按 web 的 `updatedAt desc` 排序；blank/lastPromptAt 是内存事件近似，不是 projection 语义；无 cursor |
+| session.list | Sessions 卡、/sessions | 🟡 | 已按 `lastPromptAt desc` 排序并 10 条/页翻页；blank/lastPromptAt 仍是内存事件近似，不是 projection 语义；无 cursor |
 | session.search | Sessions 卡 Search 按钮（回复查询）、/search | 🟡 | 入口已通；仍只扫 live/persisted 事件，不是 web 的 sqlite/索引路径；无 `hasMore` |
 | session.create | /new、✨ New、无 agent 时自动建 | 🟡 | 不支持 web 的 `agentPreset` / `sessionId` 幂等 / `workspaceId`；只有 cwd + telegram 自有默认模型 |
-| session.history | /history、详情 History 按钮 | 🟡 | 按原始事件窗口截取，不是 web 的“整消息边界分页”；无 `hasMore`/加载更早按钮；无 `projections`、tool view |
+| session.history | /history、详情 History 按钮 | 🟡 | 已加 `Load older` 分页；仍是原始事件窗口，不是 web 的“整消息边界分页”；无 `projections`、tool view |
 | session.models | Models 卡 | 🟡 | 缺 web `SessionModels.routable` 与完整失败投影；卡上不显示 reasoning 元数据 |
 | session.selectModel | Models 卡模型行 | 🟡 | **`reasoningEffort` 未暴露**（web 支持按模型路由选择）；无 agent 时自动建会话，与 web 的 session-not-found 语义不同（对手机更顺手，但不是复刻） |
 | session.rename | 详情按钮、/rename | ✅ | |
@@ -93,11 +93,11 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | agentPreset.list | Presets 卡 | 🟡 | 缺 web `hasDocument` 字段 |
 | agentPreset.select | 详情 Select；已开始会话自动 fork 切换 | ✅ | 比 web 更顺手（web 会拒绝） |
 | agentPreset.read | 详情 Read | ✅ | 只切前 3800 字符 |
-| agentPreset.copy | 详情 Copy | 🟡 | 新名字固定 `<id>-copy`，不能输入自定义名 |
+| agentPreset.copy | 详情 Copy → 回复新 id | ✅ | 点击后回复新 preset id 完成复制；`/cancel` 可中止 |
 | agentPreset.openDocument | 详情 Open document | 🟡 | 只给文字指引，没有目录/路径 |
 | agentPreset.remove | 详情 Remove | 🟡 | 无确认 |
 | goal.create | Goals 卡、/goalcreate | ✅ | |
-| goal.edit | Goals 卡、/goaledit | 🟡 | 只改 objective；web 还能改 maxGoalRounds |
+| goal.edit | Goals 卡、/goaledit | ✅ | `/goaledit <objective> [maxRounds]` 同时支持 maxGoalRounds |
 | goal.pause/resume/complete/clear | Goals 卡按钮 | ✅ | |
 | settings.describe | Host settings 卡、/settingsdescribe | 🟡 | web 只暴露 model-provider 边界的 namespace；这里全部 namespace 都列出；缺 schema |
 | settings.openDocument | 卡片显示 documentPath | ➖ | 只显示路径（可接受） |
@@ -190,8 +190,8 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 - [x] **把每 chat 会话绑定从 bridge 层做完到 UI 层**：`chatStates` 路由已有，`chatId` 已传入
       `currentAgent()` / `boundAgentId()`，`/new`、`/use`、Stop、Queue、Models、Status、Goals 均按本 chat 作用域；
       router 入站按 chat FIFO。
-- [ ] session.list 按 `updatedAt desc` 排序并翻页。
-- [ ] session.history 按 message 边界分页，给 `Load older` 按钮和 `hasMore`。
+- [x] session.list 按 `lastPromptAt desc` 排序并 10 条/页翻页（无 projection 依赖）。
+- [x] session.history 给 `Load older` 按钮和窗口分页（message 边界分页仍未实现）。
 - [ ] skill.list 传入当前 session 的 `cwd` + scope，并过滤 user-invocable。
 - [ ] llm.providers 展示 `settingsNs/settingsPath/active/declared`；Models 卡提供单独 Providers 视图。
 - [ ] selectModel 暴露 `reasoningEffort`（模型行 → Thinking 选择）。
@@ -201,8 +201,8 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 - [ ] host.describe 不写死版本；用真实宿主默认 model/provider seam。
 - [ ] host.listDirectory 在 /ls 之外提供 breadcrumb 逐级按钮（复用 Project 选择器或独立浏览卡）。
 - [ ] settings.describe 按 web 边界过滤 namespace，或至少标记哪些 namespace web 不暴露。
-- [ ] goal.edit 支持 maxGoalRounds。
-- [ ] agentPreset.copy 支持输入新名字。
+- [x] goal.edit 支持 maxGoalRounds（`/goaledit <objective> [maxRounds]`）。
+- [x] agentPreset.copy 支持回复自定义新 id（`/cancel` 中止）。
 - [ ] downloads 超过 50 MB 时给出 web URL/路径指引，而非只报错。
 
 ### P2：让 Telegram 真正“顺手”（体验增强）
@@ -314,6 +314,7 @@ Map<chatId, {
 - [x] 15 个 web 转发/host 事件（11 remote + session/created、session/disposed、agent/error、domain/changed）全部订阅并触发 `refreshAllPanels()`；disposer 随 teardown 回收。
 - [x] 危险操作统一确认卡：session delete、workspace delete、preset remove、subagent interrupt；`buildConfirmKeyboard` 纯函数 + 单测。
 - [x] `/credentialset` 原消息 500ms 后自动删除，secret 不留聊天历史。
+- [x] Sessions 卡 10 条/页（`lastPromptAt desc`）、History `Load older`、`/goaledit <objective> [maxRounds]`、Preset copy 自定义 id。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

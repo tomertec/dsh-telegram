@@ -221,15 +221,33 @@ export const CALLBACK_RE = /^m:([a-z]+)(?::([\s\S]+))?$/;
 // pure — callback payloads are encoded by index.ts and passed in as strings.
 // ---------------------------------------------------------------------------
 
-export function buildSessionsKeyboard(ids: readonly string[]): InlineKeyboard {
+export interface SessionsPaging {
+  previous?: string;
+  next?: string;
+}
+
+export function buildSessionsKeyboard(ids: readonly string[], paging?: SessionsPaging): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [
     [{ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" }],
     [{ text: "\u{1F50D} Search", callback_data: "m:search" }],
   ];
-  for (const id of ids.slice(0, 22)) {
+  for (const id of ids.slice(0, 10)) {
     rows.push([{ text: `\u{1F9ED} ${id.slice(0, 30)}`, callback_data: `s:${id}`.slice(0, 64) }]);
   }
+  if (paging !== undefined && (paging.previous !== undefined || paging.next !== undefined)) {
+    const nav: { text: string; callback_data: string }[] = [];
+    if (paging.previous !== undefined) nav.push({ text: "\u2039 Prev", callback_data: paging.previous });
+    if (paging.next !== undefined) nav.push({ text: "More \u203A", callback_data: paging.next });
+    rows.push(nav);
+  }
   rows.push([{ text: "\u2190 Back", callback_data: "m:back" }]);
+  return InlineKeyboard.from(rows);
+}
+
+export function buildHistoryKeyboard(sessionId: string, older?: string): InlineKeyboard {
+  const rows: { text: string; callback_data: string }[][] = [];
+  if (older !== undefined) rows.push([{ text: "\u23EA Load older", callback_data: older }]);
+  rows.push([{ text: "\u2190 Session", callback_data: `s:${sessionId}`.slice(0, 64) }]);
   return InlineKeyboard.from(rows);
 }
 

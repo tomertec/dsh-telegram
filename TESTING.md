@@ -397,3 +397,25 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 2. 删除 Workspace / 删除 Session / 删除 Preset / 中断 Subagent 都应先出现 `✅ Confirm · ✖ Cancel`，点 Cancel 无副作用，点 Confirm 原地显示结果。
 3. `/credentialset <REF> <value>` 发送约 0.5s 后，你自己的这条命令消息应从聊天中消失，只留下成功回执。
 4. 在另一个面板修改 settings/credentials/插件后，返回 Telegram 打开对应卡片应看到最新数据（无需重启 bot）。
+
+## 17. Round 3：Sessions/History 分页 + goal edit maxRounds + preset copy 自定义（2026-08-16，173/173）
+
+### 改动
+
+1. **Sessions 卡对齐 web 排序 + 翻页**：`listSessionDetails` 按 `lastPromptAt desc` 排序（无 prompt 的会话稳定排在底部）；卡片 10 条/页，`‹ Prev` / `More ›` 由 token 回调翻页，键盘不再一次塞 22 个 id。
+2. **History 支持 Load older**：详情 History 每次取 21 条窗口（显示 20 条），有更早事件时出现 `⏪ Load older`，点击按当前窗口最旧 seq 继续回看；新增 `buildHistoryKeyboard` 纯函数。
+3. **`/goaledit` 支持 maxGoalRounds**：`/goaledit <objective> [maxRounds]`，解析语义与 `/goalcreate` 一致；新增 `test/goals.test.mjs` 锁 create/edit/pause/clear 的 payload 与降级。
+4. **Preset Copy 改为人类顺手流**：详情点 Copy → bot 回复「Reply with the new preset id…」→ 用户回复自定义 id 完成复制并回到 Presets 卡；`/cancel` 可中止；新增 `copyAgentPreset` 适配器测试。
+
+### 验证
+
+- `npm run check`：**173/173 pass**（新增 goals 5 例、session 排序 1 例、sessions/history 键盘 2 例、preset copy 2 例）。
+- round 1/2 的 163 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 已同步 session.list/history、agentPreset.copy、goal.edit 状态。
+
+### Telegram 人工复核
+
+1. 建 25+ 个会话（或临时代码填充 live/persisted 会话）→ Sessions 卡第一页 10 条、最新 prompt 在最上，`More ›` 翻页、`‹ Prev` 回退。
+2. 打开任一长会话 History → 显示 20 条，点 `⏪ Load older` 继续往前翻，`← Session` 回到详情。
+3. `/goaledit 新目标 9` → 目标 objective 与 maxGoalRounds 都更新；`/goalcreate x 5` 行为不变。
+4. Presets → 任一 preset → Copy → 回复自定义 id → 收到 `Copied to <id>` 并回到 Presets；回复 `/cancel` → 提示 cancelled 且不复制。

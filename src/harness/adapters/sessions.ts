@@ -238,7 +238,9 @@ export async function listSessionDetails(ctx: Context): Promise<SessionDetail[]>
       /* persistence listing failure degrades to the live roster */
     }
   }
-  return [...entries.values()];
+  // Web session.list order: most recently prompted first (`updatedAt desc`),
+  // with never-prompted sessions at the bottom in stable id order.
+  return [...entries.values()].sort((a, b) => (b.lastPromptAt ?? -Infinity) - (a.lastPromptAt ?? -Infinity) || a.id.localeCompare(b.id));
 }
 
 function archivedSessionIds(ctx: Context): string[] {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession } from '../dist/harness/adapters/sessions.js';
+import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession, listSessionDetails } from '../dist/harness/adapters/sessions.js';
 
 function queueAgent(id, nextTurn, nextStep, status = 'idle') {
   const make = (items) => items.map((item) => ({ id: item.id, content: [{ type: 'text', text: item.text }] }));
@@ -127,4 +127,24 @@ test('promptSession queues without waking', () => {
   const res = promptSession(ctx, 's1', 'later', 'queue');
   assert.equal(res.ok, true);
   assert.deepEqual(calls[0], ['next-turn', false]);
+});
+
+
+test('listSessionDetails sorts by most recent prompt (web updatedAt desc)', async () => {
+  const sessions = {
+    list: () => [
+      { id: 'old', events: [{ seq: 0, type: 'user/message', at: 100, data: { content: [{ type: 'text', text: 'old prompt' }] } }] },
+      { id: 'new', events: [{ seq: 0, type: 'user/message', at: 300, data: { content: [{ type: 'text', text: 'new prompt' }] } }] },
+      { id: 'never', events: [] },
+    ],
+  };
+  const ctx = {
+    agents: { list: () => [], get: () => undefined },
+    get: (name) => (name === 'sessions' ? sessions : undefined),
+  };
+  const details = await listSessionDetails(ctx);
+  assert.deepEqual(details.map((d) => d.id), ['new', 'old', 'never']);
+  assert.equal(details[0].lastPromptAt, 300);
+  assert.equal(details[1].title, 'old prompt');
+  assert.equal(details[2].lastPromptAt, undefined);
 });

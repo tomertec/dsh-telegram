@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { selectAgentPreset, sessionHasStarted, switchAgentPresetMidSession } from '../dist/harness/adapters/presets.js';
+import { copyAgentPreset, selectAgentPreset, sessionHasStarted, switchAgentPresetMidSession } from '../dist/harness/adapters/presets.js';
 
 function key(id) {
   return typeof id === 'object' && id !== null ? String(id.value ?? id) : String(id);
@@ -185,4 +185,19 @@ test('mid-session switch disposes the resumed fork when recompose fails', async 
   assert.ok(res.text.includes('preset conflict'));
   assert.equal(disposed, 1);
   assert.equal(calls.fork.length, 1);
+});
+
+
+test('copyAgentPreset forwards the user-chosen new preset id', async () => {
+  const calls = [];
+  const ctx = { get: (name) => (name === 'agentPresets' ? { copy: async (from, to, name) => { calls.push({ from, to, name }); } } : undefined) };
+  const res = await copyAgentPreset(ctx, 'source-preset', 'my-copy');
+  assert.equal(res.ok, true);
+  assert.deepEqual(calls, [{ from: 'source-preset', to: 'my-copy', name: undefined }]);
+  assert.match(res.text, /my-copy/);
+});
+
+test('copyAgentPreset degrades without the presets service', async () => {
+  const res = await copyAgentPreset({ get: () => undefined }, 'source', 'copy');
+  assert.equal(res.ok, false);
 });
