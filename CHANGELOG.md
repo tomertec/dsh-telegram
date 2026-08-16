@@ -10,6 +10,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 ### Multi-chat isolation
 
 - Per-chat agent bindings route sessions/events back to their own chat; dead bindings fail closed.
+- Unbound chats fail closed for display too: Menu/Queue/Status never show another chat's agent or queue.
 - Per-chat FIFO inbound router (rapid first messages cannot create two sessions).
 - Rebinding a chat clears stale inbound quote state; `disallow`/security hot-update ejects the chat fully.
 - `telegram_reply`/`telegram_mark_no_reply` resolve the inbound by the executing agent.
@@ -21,6 +22,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Sessions card sorted by latest prompt, 10/page; History `Load older`.
 - Models provider card 12/page; Plugins 20/page; Jobs 20/page; Search results 10/page.
 - Confirm-before-destructive for session/workspace delete, preset remove, subagent interrupt.
+- Approval/question settlements edit the original card in place and remove its dead buttons.
 - Preset copy asks for a custom id; `/goaledit` supports maxGoalRounds.
 - Skills card is session-scoped and user-invocable-only; subagent cards show mode/label/hasChildren/reason.
 - `/attachment <id>` reads a photo back through its exact durable ref and sends it as a Telegram photo.
@@ -45,7 +47,7 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 
 ### Tests
 
-- `npm run check`: 222/222 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
+- `npm run check`: 223/223 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
 - ESM smoke imports for `dist/index.js`, `dist/extensions/openclaw.js`, `dist/extensions/reasoning.js`.
 
 ## 0.2.0

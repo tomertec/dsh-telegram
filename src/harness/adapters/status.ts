@@ -179,11 +179,14 @@ function eventStatsFor(agent: unknown): StatusStats | undefined {
   };
 }
 
-export function statusSnapshot(ctx: Context, preferAgentId?: string): StatusSnapshot {
+export function statusSnapshot(ctx: Context, preferAgentId?: string, fallbackToFirst = true): StatusSnapshot {
   const agents = ctx.agents?.list() ?? [];
   // The bridge-bound session drives the bar/status figures; `agents[0]` is
-  // only a fallback for profiles where the bridge has not bound one yet.
-  const agent = preferAgentId !== undefined ? agents.find((entry) => String(entry.id) === preferAgentId) ?? agents[0] : agents[0];
+  // only a fallback for profiles/views without a bound chat. Chat-scoped
+  // callers pass `fallbackToFirst: false` so an unbound chat shows "none"
+  // instead of borrowing another chat's live agent.
+  const preferred = preferAgentId !== undefined ? agents.find((entry) => String(entry.id) === preferAgentId) : undefined;
+  const agent = preferred ?? (fallbackToFirst ? agents[0] : undefined);
   const sessions = ctx.get("sessions");
   const agentId = agent?.id;
   const values = projectionValuesFor(ctx, agentId === undefined ? undefined : String(agentId));

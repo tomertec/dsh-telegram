@@ -422,7 +422,7 @@ function stopTyping(chatId: number): void {
 import { renderStatsStrip } from "./harness/adapters/status.js";
 export { renderStatsStrip };
 function renderStatus(chatId?: number): string {
-  const snapshot = statusSnapshot(requireCtx(), boundAgentId(chatId));
+  const snapshot = statusSnapshot(requireCtx(), boundAgentId(chatId), chatId === undefined);
   const profile = modeSummary().profile ?? "?";
   const workspace = state.workspaceRoot;
   const lines = [
@@ -468,8 +468,9 @@ function attachFeedbackKeyboard(chatId: number, telegramMessageId: number, sessi
 
 function boundAgentId(chatId?: number): string | undefined {
   if (chatId !== undefined) {
-    const bound = state.bridge?.agentIdForChat(chatId);
-    if (bound !== undefined) return bound;
+    // Chat-scoped resolution fails closed: an unbound chat never borrows
+    // another chat's live agent, even for display-only cards.
+    return state.bridge?.agentIdForChat(chatId);
   }
   return state.bridge?.currentAgentIdValue();
 }
@@ -534,7 +535,7 @@ function widenCard(text: string): string {
 /** Paginated core menu. Page 0 = non-bar frequent actions; bar-mirrored
  * functions live on page 1; display-only/rare cards on pages 2-3. */
 async function openMenuAt(chatId: number, page: number): Promise<void> {
-  const snapshot = statusSnapshot(requireCtx(), boundAgentId(chatId));
+  const snapshot = statusSnapshot(requireCtx(), boundAgentId(chatId), false);
   const model = snapshot.provider ? `${snapshot.provider}/${snapshot.model ?? "default"}` : (snapshot.model ?? "default");
   const project = basename(state.workspaceRoot) || "/";
   const mode = state.config.mode?.name || modeSummary().profile || "default";
@@ -771,7 +772,7 @@ async function openSearchCard(chatId: number, query: string, page = 0): Promise<
 async function openQueueCard(chatId: number): Promise<void> {
   const ctx = requireCtx();
   const agent = currentAgent(chatId);
-  const snapshot = statusSnapshot(ctx, boundAgentId(chatId));
+  const snapshot = statusSnapshot(ctx, boundAgentId(chatId), false);
   const items = agent ? listQueue(ctx, agent.id) : [];
   const lines = [`\u231B Queue`, "", `Agent inbox: ${snapshot.queue} \u00B7 Outbound sends pending: ${state.transport?.pending() ?? 0}`, ""];
   for (const item of items.slice(0, 12)) {
@@ -2585,7 +2586,7 @@ function refreshAllPanels(): void {
 /** Live agent inbox size for one chat — the web's `status.queue` value. */
 function currentQueueCount(chatId: number): number {
   try {
-    return statusSnapshot(requireCtx(), boundAgentId(chatId)).queue;
+    return statusSnapshot(requireCtx(), boundAgentId(chatId), false).queue;
   } catch {
     return 0;
   }
@@ -2774,7 +2775,9 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         if (!t) return false;
         const edited = await t.editText(chatId, messageId, plain(text), {
           parse_mode: "HTML",
-          ...(keyboard === undefined ? {} : { reply_markup: keyboard as never }),
+          // `undefined` means "settle this card": edit the text and remove
+          // its inline keyboard in place instead of leaving dead buttons.
+          reply_markup: keyboard === undefined ? { inline_keyboard: [] } : (keyboard as never),
         });
         return edited;
       },

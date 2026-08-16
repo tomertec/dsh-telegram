@@ -31,6 +31,13 @@ test('statusSnapshot degrades without the projection registry', () => {
   assert.equal(snap.stats, undefined);
 });
 
+test('statusSnapshot fails closed for an unbound chat when fallback is disabled', () => {
+  const snap = statusSnapshot(fakeCtx('s1', undefined), undefined, false);
+  assert.equal(snap.agentId, undefined);
+  assert.equal(snap.status, 'none');
+  assert.equal(snap.queue, 0);
+});
+
 test('statusSnapshot folds sessionStats and tokenUsage projections', () => {
   const snap = statusSnapshot(
     fakeCtx('s1', {

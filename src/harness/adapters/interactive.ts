@@ -43,6 +43,7 @@ interface PendingApproval {
   reason?: string;
   resolve: (outcome: ApprovalOutcome) => void;
   messageIds: Map<number, number>;
+  cardText: string;
 }
 
 interface QuestionOptionLike {
@@ -143,11 +144,20 @@ function broadcastForSession(delivery: InteractiveDelivery, sessionId: string, t
   return delivery.broadcast(text, keyboard, delivery.chatForSession?.(sessionId));
 }
 
-/** Settle/status text goes only to chats that actually received the card. */
-async function broadcastToCardChats(delivery: InteractiveDelivery, chats: Iterable<number>, fallbackChat: number | undefined, text: string): Promise<void> {
-  const targets = [...chats];
-  if (targets.length === 0 && fallbackChat !== undefined) targets.push(fallbackChat);
-  await Promise.all(targets.map((chatId) => delivery.broadcast(text, undefined, chatId).catch(() => {})));
+/** Settle/status text edits each card that actually received it in place
+ * (Telegram users expect the answered card to lose its buttons, not spawn a
+ * second status message next to a stale clickable card). When no card ever
+ * landed, fall back to a bare status message so the outcome is not lost. */
+async function settleCards(delivery: InteractiveDelivery, messageIds: ReadonlyMap<number, number>, fallbackChat: number | undefined, text: string): Promise<void> {
+  if (messageIds.size === 0) {
+    if (fallbackChat !== undefined) await delivery.broadcast(text, undefined, fallbackChat).catch(() => {});
+    return;
+  }
+  await Promise.all(
+    [...messageIds].map(([chatId, messageId]) =>
+      delivery.edit(chatId, messageId, text, undefined).catch(() => {}),
+    ),
+  );
 }
 
 export function questionIdAt(id: number, index: number): string | undefined {
@@ -234,26 +244,23 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery): 
           const settle = (outcome: ApprovalOutcome) => {
             if (!approvals.delete(id)) return;
             req.signal?.removeEventListener("abort", onAbort);
-            // No reply-markup here: a `remove_keyboard` reply would wipe the
-            // persistent command bar for the whole chat.
-            void broadcastToCardChats(
+            // Edit the requested card in place and drop its inline buttons.
+            // No remove_keyboard reply: that would wipe the persistent command
+            // bar for the whole chat.
+            void settleCards(
               delivery,
-              pending.messageIds.keys(),
+              pending.messageIds,
               delivery.chatForSession?.(pending.sessionId),
-              `\u{1F6E1} Approval ${outcome} \u00B7 ${req.toolName}${req.reason ? ` \u00B7 ${req.reason}` : ""}`,
+              `${pending.cardText}\n\n\u{1F6E1} Approval ${outcome} \u00B7 ${req.toolName}${req.reason ? ` \u00B7 ${req.reason}` : ""}`,
             );
             resolve(outcome);
           };
           const onAbort = () => settle("cancelled");
-          const pending: PendingApproval = { id, approvalId, sessionId: req.agent.id, toolName: req.toolName, ...(req.reason === undefined ? {} : { reason: req.reason }), resolve: settle, messageIds: new Map() };
+          const cardText = `\u{1F6E1} Approval requested \u00B7 ${req.toolName}${req.reason ? `\nReason: ${req.reason}` : ""}\nSession: ${req.agent.id}`;
+          const pending: PendingApproval = { id, approvalId, sessionId: req.agent.id, toolName: req.toolName, ...(req.reason === undefined ? {} : { reason: req.reason }), resolve: settle, messageIds: new Map(), cardText };
           approvals.set(id, pending);
           req.signal?.addEventListener("abort", onAbort, { once: true });
-          void broadcastForSession(
-            delivery,
-            req.agent.id,
-            `\u{1F6E1} Approval requested \u00B7 ${req.toolName}${req.reason ? `\nReason: ${req.reason}` : ""}\nSession: ${req.agent.id}`,
-            approvalKeyboard(id),
-          )
+          void broadcastForSession(delivery, req.agent.id, cardText, approvalKeyboard(id))
             .then((delivered) => {
               for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
             })
@@ -345,7 +352,7 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery): 
       }
       questions.delete(id);
       pending.resolve({ answers });
-      void broadcastToCardChats(delivery, pending.messageIds.keys(), delivery.chatForSession?.(pending.sessionId), `\u2705 Questions answered (id ${id}).`);
+      void settleCards(delivery, pending.messageIds, delivery.chatForSession?.(pending.sessionId), `\u2705 Questions answered (id ${id}).`);
       return true;
     },
     async cancelQuestions(chatId, id) {
@@ -353,7 +360,7 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery): 
       if (!pending) return false;
       questions.delete(id);
       pending.reject(new Error("the user cancelled ask_user_question"));
-      void broadcastToCardChats(delivery, pending.messageIds.keys(), delivery.chatForSession?.(pending.sessionId), `\u2716 Questions cancelled (id ${id}).`);
+      void settleCards(delivery, pending.messageIds, delivery.chatForSession?.(pending.sessionId), `\u2716 Questions cancelled (id ${id}).`);
       void chatId;
       return true;
     },

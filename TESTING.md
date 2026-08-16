@@ -848,3 +848,19 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - 在 Telegram chat 发一条消息触发真实入站 → openclaw 流 → `telegram_reply` 最终交付（HTTP 会话不绑定 chat，只能证明 LLM/工具链路）。
 - 完成后执行 §25 checklist 剩余项与发布动作。
+
+## 36. Round 22：多聊天隔离与卡片交互收尾（2026-08-19，223/223）
+
+### 本轮修复
+
+1. **未绑定 chat 的展示串台**：`boundAgentId(chatId)` 原来会回退到「最近触碰」agent，未绑定会话的 chat 打开 Menu/Queue/Status 会看到另一个 chat 的模型、队列和状态。
+   - chat 作用域解析现在 fail-closed；`statusSnapshot` 增加 `fallbackToFirst`（默认 true 保全局视图），chat 卡片调用传 `false`。
+   - 新增 `statusSnapshot fails closed for an unbound chat` 回归测试。
+2. **approval/question 结算不原地改卡**：结算时发新消息，原卡片按钮仍是活的，再点只会得到「already settled」。
+   - approval/question 的 settle/cancel 现在**编辑原卡片**并清空 inline keyboard（`{inline_keyboard: []}`，不影响持久命令栏），只有卡片从未送达时才回退广播。
+   - 更新 3 个 interactive 测试断言 settle 是 `edit` 而非新消息、且只发到 session 所属 chat。
+
+### 验证
+
+- `npm run check`：**223/223 pass**（本轮 +1，累计新增 10 个回归）。
+- 实机进程仍为 web 50755，等待 Telegram chat 真实入站消息（上轮已发提醒 message_id 1277）。

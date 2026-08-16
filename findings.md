@@ -144,3 +144,8 @@
 - 独立审计确认 3 个发布阻断：版本导出漂移 0.2.0；HTML 长文本拆坏标签；SendQueue 对永久 4xx 全部重试。
 - 另修复 3 个非阻塞：mo/set 回调 URI 编码、telegram_* 工具 HTML 契约、typing 循环 10 分钟自毁。
 - `npm run check` 222/222；实机 opencode-go 全链路 LLM turn 完成（turn/end completed）。
+
+## Round 22 发现与修复
+
+- 审计遗留的展示串台：未绑定 chat 的 `boundAgentId` 回退最近 agent；已改为 chat 作用域 fail-closed，`statusSnapshot(fallbackToFirst=false)` 支撑。
+- 卡片交互不符合 Telegram 习惯：approval/question 结算另发消息、旧按钮仍可点；改为原地编辑并移除 inline keyboard。

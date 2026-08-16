@@ -192,7 +192,7 @@ test('userQuestions provider yields to a mounted web api proxy', () => {
   interactive.detach();
 });
 
-test('approval settle broadcast never removes the reply keyboard', async () => {
+test('approval settle edits the card in place and removes its keyboard', async () => {
   const delivery = fakeDelivery();
   const events = fakeEvents();
   const ctx = { get: (name) => (name === 'approval' ? {} : undefined), on: events.on.bind(events) };
@@ -210,11 +210,13 @@ test('approval settle broadcast never removes the reply keyboard', async () => {
   const id = Number(prompt.keyboard.inline_keyboard[0][0].callback_data.split(':')[1]);
   interactive.answerApproval(id, 'allowed-once');
   await answer.catch(() => {});
-  // The requested card carries a keyboard; the settle broadcast must not
-  // (a remove_keyboard reply would wipe the persistent command bar).
-  const settles = delivery.sent.filter((entry) => !entry.edit && typeof entry.text === 'string' && entry.text.startsWith('🛡') && entry.keyboard === undefined);
-  assert.equal(settles.length, 1);
-  assert.equal(settles[0].keyboard, undefined);
+  // The settle must edit the existing card (not spawn a second message) and
+  // hand over no keyboard so the host can remove the now-dead buttons.
+  const settle = delivery.sent.find((entry) => entry.edit && entry.edit.text.startsWith('🛡 Approval requested') && entry.edit.text.includes('allowed-once'));
+  assert.ok(settle, 'settlement must edit the card in place');
+  assert.equal(settle.edit.keyboard, undefined);
+  assert.equal(settle.edit.messageId, 999);
+  assert.equal(delivery.sent.filter((entry) => !entry.edit).length, 1, 'no separate settle message next to the card');
   interactive.detach();
 });
 
@@ -238,9 +240,9 @@ test('approval request and settle route to the session-owned chat only', async (
   const id = Number(prompt.keyboard.inline_keyboard[0][0].callback_data.split(':')[1]);
   interactive.answerApproval(id, 'allowed-once');
   await answer;
-  const settles = delivery.sent.filter((entry) => entry.text?.startsWith('🛡') && entry.keyboard === undefined);
-  assert.equal(settles.length, 1);
-  assert.equal(settles[0].chatId, 777, 'settle goes to the same chat, not every roster chat');
+  const settle = delivery.sent.find((entry) => entry.edit && entry.edit.text.startsWith('🛡 Approval requested'));
+  assert.ok(settle, 'settlement edits the card');
+  assert.equal(settle.edit.chatId, 777, 'settle edit goes to the same chat, not every roster chat');
   interactive.detach();
 });
 
@@ -260,8 +262,10 @@ test('question cards and the answered status route to the session-owned chat', a
   const id = Number(prompt.keyboard.inline_keyboard[0][0].callback_data.split(':')[1]);
   await interactive.toggleQuestionOption(555, id, 'q1', 'o1');
   await interactive.submitQuestions(555, id);
-  const statuses = delivery.sent.filter((entry) => entry.text?.startsWith('✅ Questions answered'));
-  assert.equal(statuses.length, 1);
-  assert.equal(statuses[0].chatId, 555);
+  const settle = delivery.sent.find((entry) => entry.edit && entry.edit.text?.startsWith('✅ Questions answered'));
+  assert.ok(settle, 'answered status edits the card in place');
+  assert.equal(settle.edit.chatId, 555);
+  assert.equal(settle.edit.keyboard, undefined);
+  assert.equal(delivery.sent.filter((entry) => !entry.edit && entry.text?.startsWith('✅ Questions answered')).length, 0);
   interactive.detach();
 });
