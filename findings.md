@@ -92,3 +92,8 @@
 - agentPreset.list 缺 web `hasDocument` deployment fact；补透传并在 Presets 卡显示。
 - 发布物缺 CHANGELOG；新增并把其纳入 package files。
 - 版本号长期停在 0.2.0，与大量新功能不匹配；升至 0.3.0（package.json + lock）。
+
+## Round 12 发现与修复
+
+- host.createDirectory 没有浏览器内的 parent+name 按钮流，只能背路径；新增 New folder 单段回复流。
+- 审计中 agentPreset.remove 仍标「无确认」，实际 Round 2 已实现；状态修正。

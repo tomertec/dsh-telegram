@@ -16,7 +16,8 @@
 - [x] Round 9：credentials 批量 + Host 版本真实化（198/198）
 - [x] Round 10：session.attachment 读回 + Host 默认模型对齐（201/201）
 - [x] Round 11：v0.3.0 release candidate（版本/CHANGELOG/preset hasDocument/202 tests）
-- [ ] Round 12+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
+- [x] Round 12：Host 浏览卡 New folder + 审计状态修正（203/203）
+- [ ] Round 13+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -95,3 +96,8 @@
 - 版本升至 0.3.0；新增 CHANGELOG.md 并纳入 npm files。
 - agentPreset.list 补 hasDocument；Presets 卡显示 document yes/no。
 - 202/202 tests；上线前人工 checklist 写入 TESTING §25。
+
+## Round 12 已完成
+
+- Host 浏览卡 New folder（parent+name、单段校验、/cancel、原地刷新）。
+- buildProjectKeyboard newFolder 动作 + 单测；审计状态修正。

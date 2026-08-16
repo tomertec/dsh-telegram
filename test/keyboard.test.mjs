@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -217,4 +217,11 @@ test('buildSubagentDetailKeyboard hides prompt/interrupt for non-continuable chi
   const full = buildSubagentDetailKeyboard({ prompt: 't:p', interrupt: 't:i', history: 't:h' });
   assert.ok(full.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:p')));
   assert.ok(full.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:i')));
+});
+
+test('buildProjectKeyboard renders a New folder action when provided', () => {
+  const kb = buildProjectKeyboard([], { newFolder: 't:mkdir', close: 'm:host' });
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:mkdir')));
+  const without = buildProjectKeyboard([], { close: 'm:host' });
+  assert.equal(without.inline_keyboard.some((row) => row.some((b) => b.text === '📁 New folder')), false);
 });

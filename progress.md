@@ -51,13 +51,18 @@
 - `/attachment <id>` 读回真实 ref；Host 默认模型对齐 agentDefaultModel。
 - 201/201 tests；提交 `4338240`；详见 TESTING.md §24。
 
-## 2026-08-16 Round 11（本轮）
+## 2026-08-16 Round 11（已完成）
 
-- 版本升至 0.3.0；新增 CHANGELOG.md；preset list 补 hasDocument。
-- `npm run check`：**202/202 pass**。
-- 上线前人工 checklist 写入 TESTING §25。
+- v0.3.0 RC：版本、CHANGELOG、preset hasDocument、§25 人工 checklist。
+- 202/202 tests；提交 `876302f`；详见 TESTING.md §25。
+
+## 2026-08-16 Round 12（本轮）
+
+- Host 浏览卡 `New folder` 按钮流（单段校验、/cancel、原地刷新）。
+- `npm run check`：**203/203 pass**。
+- 文档已同步 TESTING.md §26 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 12 候选）
+## 下一步（Round 13 候选）
 
-Telegram 实机执行 §25 checklist 并回填结果；审计剩余 🟡 收敛；实机通过后 tag/publish。
+Telegram 实机执行 §25 checklist（需要 token/实机）；剩余审计 🟡 收敛；实机通过后 tag/publish。

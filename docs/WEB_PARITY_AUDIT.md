@@ -80,7 +80,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | host.describe | Host 卡 | 🟡 | `version` 显示 dsh-telegram 0.2.0；provider/model 已改读 `agentDefaultModel`（与 web 同 seam），fallback live agent；canOpenPath 平台限制为 false |
 | host.pickDirectory | /pickdir、Project 选择器 | ✅ | 平台限制下用路径式选择代替原生对话框；无参数时给提示并打开 Project 卡 |
 | host.listDirectory | /ls（文本）、Host 卡 `Browse cwd` 逐级浏览 | ✅ | 点击文件夹进入、Up/~// 导航、目录 20/页、文件只计数；`/ls` 保留文本形式 |
-| host.createDirectory | /mkdir | 🟡 | 只接受完整路径；web 语义是 parent+name；没有浏览卡里“New folder”按钮 |
+| host.createDirectory | /mkdir + Host 浏览卡 `New folder` | 🟡 | 浏览卡按钮走 parent+name（web 语义）；/mkdir 保留完整路径快速通道 |
 | host.openPath | /openpath [path] | ✅ | 返回宿主路径指引，符合平台限制设计 |
 | workspace.list | Workspaces 卡 | ✅ | |
 | workspace.create | /workspacecreate | ✅ | |
@@ -95,7 +95,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | agentPreset.read | 详情 Read | ✅ | 只切前 3800 字符 |
 | agentPreset.copy | 详情 Copy → 回复新 id | ✅ | 点击后回复新 preset id 完成复制；`/cancel` 可中止 |
 | agentPreset.openDocument | 详情 Open document | 🟡 | 只给文字指引，没有目录/路径 |
-| agentPreset.remove | 详情 Remove | 🟡 | 无确认 |
+| agentPreset.remove | 详情 Remove | ✅ | 确认卡 + 独立回执，已实现 |
 | goal.create | Goals 卡、/goalcreate | ✅ | |
 | goal.edit | Goals 卡、/goaledit | ✅ | `/goaledit <objective> [maxRounds]` 同时支持 maxGoalRounds |
 | goal.pause/resume/complete/clear | Goals 卡按钮 | ✅ | |
@@ -327,6 +327,7 @@ Map<chatId, {
 - [x] agentPreset.list 补 `hasDocument` deployment fact。
 - [x] ESM smoke import 三入口全通。
 - [x] 版本升至 0.3.0，新增 CHANGELOG.md 并纳入 npm 包 files。
+- [x] Host 浏览卡新增 `New folder`：回复单段目录名在当前目录创建并原地刷新（/cancel 可中止）；/mkdir 快速通道保留。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

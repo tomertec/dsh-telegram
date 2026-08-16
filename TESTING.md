@@ -617,3 +617,22 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 8. 发图片 → 附件入站 → `/attachment <id>` 读回同一张图；发文档 → 明确指引。
 9. `/credential A B`、`/credentialset` 原消息自删；Host 卡 version=0.3.0。
 10. `/telegram stop && /telegram start` 无 409；卸载/热重载无残留 typing/panel。
+
+## 26. Round 12：Host 浏览卡 New folder（2026-08-16，203/203）
+
+### 改动
+
+1. **`host.createDirectory` 按钮流**：Host 浏览卡新增 `📁 New folder`，点击后回复目录名（校验单段、拒绝 `/`/`\`），在当前浏览路径创建并原地重开浏览器；`/cancel` 可中止；`/mkdir <path>` 保留为完整路径快速通道。
+2. `buildProjectKeyboard` 增加可选 `newFolder` 动作（纯函数 + 单测）。
+3. 审计同步：agentPreset.remove 确认卡此前已实现，状态修正为 ✅。
+
+### 验证
+
+- `npm run check`：**203/203 pass**（新增 project keyboard newFolder 1 例）。
+- round 1–11 的 202 个用例全部保持绿色。
+
+### Telegram 人工复核
+
+1. Host → Browse cwd → `📁 New folder` → 回复 `my-dir` → 回执 Created + 浏览器原地刷新并出现 `my-dir`。
+2. 回复 `a/b` → 提示 must be a single path segment，浏览器回到原路径。
+3. `/cancel` → New-folder cancelled，不创建目录。

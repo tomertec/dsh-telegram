@@ -194,6 +194,7 @@ function teardownMount(): void {
   pendingSteer = undefined;
   pendingSearch = undefined;
   pendingPresetCopy = undefined;
+  pendingMkdir = undefined;
   for (const timer of typingLoops.values()) clearInterval(timer);
   typingLoops.clear();
   for (const timer of state.barTimers.values()) clearTimeout(timer);
@@ -1083,6 +1084,7 @@ async function openHostDirectoryCard(chatId: number, path: string, page = 0): Pr
         ...(safe > 0 ? [{ text: "\u2039 Prev", cb: token({ action: "host-page", path: target, page: String(safe - 1) }) }] : []),
         ...(safe + 1 < totalPages ? [{ text: "More \u203A", cb: token({ action: "host-page", path: target, page: String(safe + 1) }) }] : []),
       ],
+      newFolder: token({ action: "host-mkdir-prompt", path: target }),
       close: "m:host",
     },
   ));
@@ -1241,6 +1243,12 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       return applyProjectPath(chatId, payload["path"] ?? state.workspaceRoot);
     case "host-open":
       return openHostDirectoryCard(chatId, payload["path"] ?? state.workspaceRoot);
+    case "host-mkdir-prompt": {
+      const path = payload["path"] ?? state.workspaceRoot;
+      pendingMkdir = { chatId, path };
+      await requireTransport().sendText(chatId, `\u{1F4C1} Reply with the new folder name under ${plain(truncate(path, 48))} (or /cancel):`, { parse_mode: "HTML" });
+      return;
+    }
     case "host-page": {
       const page = Number(payload["page"] ?? "0");
       return openHostDirectoryCard(chatId, payload["path"] ?? state.workspaceRoot, Number.isFinite(page) && page > 0 ? page : 0);
@@ -1497,6 +1505,7 @@ let pendingSubagentPrompt: { chatId: number; parentId: string; childId: string }
 let pendingSteer: { chatId: number; sessionId: string } | undefined;
 let pendingSearch: { chatId: number } | undefined;
 let pendingPresetCopy: { chatId: number; sourceId: string } | undefined;
+let pendingMkdir: { chatId: number; path: string } | undefined;
 
 async function dispatchCallback(chatId: number, data: string): Promise<void> {
   const ext = extensionForCallback(data);
@@ -1976,6 +1985,9 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       } else if (pendingPresetCopy && pendingPresetCopy.chatId === chatId) {
         pendingPresetCopy = undefined;
         await send("Preset copy cancelled.");
+      } else if (pendingMkdir && pendingMkdir.chatId === chatId) {
+        pendingMkdir = undefined;
+        await send("New-folder cancelled.");
       } else {
         await send("Nothing to cancel.");
       }
@@ -2768,6 +2780,21 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         if (pendingSearch && pendingSearch.chatId === chatId) {
           pendingSearch = undefined;
           void openSearchCard(chatId, text);
+          return;
+        }
+        if (pendingMkdir && pendingMkdir.chatId === chatId) {
+          const { path } = pendingMkdir;
+          pendingMkdir = undefined;
+          const name = text.trim();
+          if (!name || name.includes("/") || name.includes("\\")) {
+            void state.transport?.sendText(chatId, "\u274C Folder name must be a single path segment (no / or \\).", { parse_mode: "HTML" });
+            return openHostDirectoryCard(chatId, path);
+          }
+          void (async () => {
+            const res = await createDirectory(join(path, name));
+            void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+            return openHostDirectoryCard(chatId, path);
+          })().catch((err) => log("new folder failed", err));
           return;
         }
         if (pendingSteer && pendingSteer.chatId === chatId) {

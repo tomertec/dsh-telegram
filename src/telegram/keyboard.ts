@@ -175,6 +175,7 @@ export interface ProjectActions {
   root?: string;
   use?: string;
   close?: string;
+  newFolder?: string;
   quick?: readonly ProjectRow[];
   paging?: readonly { text: string; cb: string }[];
 }
@@ -207,6 +208,7 @@ export function buildProjectKeyboard(dirs: readonly ProjectRow[], actions: Proje
     paging.push({ text: button.text.slice(0, 40), callback_data: button.cb });
   }
   if (paging.length > 0) rows.push(paging);
+  if (actions.newFolder !== undefined) rows.push([{ text: "\u{1F4C1} New folder", callback_data: actions.newFolder }]);
   const footer: { text: string; callback_data: string }[] = [];
   if (actions.use !== undefined) footer.push({ text: "\u2705 Use this folder", callback_data: actions.use });
   if (actions.close !== undefined) footer.push({ text: "\u2716 Close", callback_data: actions.close });
