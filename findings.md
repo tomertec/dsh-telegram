@@ -108,3 +108,7 @@
 
 - `ctx.settings.describe` 的 schema envelope 被 adapter 丢弃；补透传并在 namespace 卡展示。
 - settings.describe 审计状态进一步收敛（web 同语义：全部 namespace + schema）。
+
+## Round 15 发现与修复
+
+- settings update/replace/mutate 未透传 web expectedRevision（并发编辑保护缺失）；命令支持尾随 revision，且 parser 保证 JSON 字符串内部空白不破坏。

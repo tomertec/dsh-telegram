@@ -48,7 +48,7 @@ import { listFeedback, putFeedback, deleteFeedback } from "./harness/adapters/fe
 import { listSkills } from "./harness/adapters/skills.js";
 import { listSubagents, promptSubagent, interruptSubagent, subagentHistory } from "./harness/adapters/subagents.js";
 import { listAgentPresets, selectAgentPreset, setDefaultAgentPreset, readAgentPreset, copyAgentPreset, removeAgentPreset, openAgentPresetDocument, switchAgentPresetMidSession, sessionHasStarted } from "./harness/adapters/presets.js";
-import { describeSettings, updateSettings, replaceSettings, mutateSettings } from "./harness/adapters/settings.js";
+import { describeSettings, updateSettings, replaceSettings, mutateSettings, parseJsonWithRevision } from "./harness/adapters/settings.js";
 import { describeCredential, describeCredentials, setCredential, unsetCredential } from "./harness/adapters/credentials.js";
 import { modelCatalog, discoverModels } from "./harness/adapters/llm.js";
 import { REASONING_DEFAULT, REASONING_EFFORTS, isReasoningEffort, reasoningLabel } from "./reasoning.js";
@@ -2332,17 +2332,16 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       const ns = space === -1 ? args.trim() : args.slice(0, space);
       const raw = space === -1 ? "" : args.slice(space + 1).trim();
       if (!ns || !raw) {
-        await send("usage: /settingsupdate <ns> <json patch>");
+        await send("usage: /settingsupdate <ns> <json patch> [expectedRevision]");
         return;
       }
-      let patch: unknown;
-      try {
-        patch = JSON.parse(raw);
-      } catch {
+      const parsed = parseJsonWithRevision(raw);
+      if (parsed === undefined) {
         await send("patch must be valid JSON");
         return;
       }
-      const res = await updateSettings(ctx, ns, patch as object);
+      const patch = JSON.parse(parsed.json) as object;
+      const res = await updateSettings(ctx, ns, patch, parsed.revision);
       await send(res.text, res.ok);
       return;
     }
@@ -2351,21 +2350,20 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       const ns = space === -1 ? args.trim() : args.slice(0, space);
       const raw = space === -1 ? "" : args.slice(space + 1).trim();
       if (!ns || !raw) {
-        await send("usage: /settingsreplace <ns> <json section>");
+        await send("usage: /settingsreplace <ns> <json section> [expectedRevision]");
         return;
       }
-      let section: unknown;
-      try {
-        section = JSON.parse(raw);
-      } catch {
+      const parsed = parseJsonWithRevision(raw);
+      if (parsed === undefined) {
         await send("section must be valid JSON");
         return;
       }
+      const section = JSON.parse(parsed.json) as unknown;
       if (section === null || typeof section !== "object" || Array.isArray(section)) {
         await send("section must be a JSON object");
         return;
       }
-      const res = await replaceSettings(ctx, ns, section as object);
+      const res = await replaceSettings(ctx, ns, section as object, parsed.revision);
       await send(res.text, res.ok);
       return;
     }
@@ -2374,21 +2372,20 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       const ns = space === -1 ? args.trim() : args.slice(0, space);
       const raw = space === -1 ? "" : args.slice(space + 1).trim();
       if (!ns || !raw) {
-        await send("usage: /settingsmutate <ns> <json ops> \u2014 ops: [{\"op\":\"set|unset\",\"path\":[\"a\",\"b\"],\"value\":1}]");
+        await send("usage: /settingsmutate <ns> <json ops> [expectedRevision] \u2014 ops: [{\"op\":\"set|unset\",\"path\":[\"a\",\"b\"],\"value\":1}]");
         return;
       }
-      let ops: unknown;
-      try {
-        ops = JSON.parse(raw);
-      } catch {
+      const parsed = parseJsonWithRevision(raw);
+      if (parsed === undefined) {
         await send("ops must be valid JSON");
         return;
       }
+      const ops = JSON.parse(parsed.json) as unknown;
       if (!Array.isArray(ops)) {
         await send("ops must be a JSON array");
         return;
       }
-      const res = await mutateSettings(ctx, ns, ops as { op: "set" | "unset"; path: string[]; value?: unknown }[]);
+      const res = await mutateSettings(ctx, ns, ops as { op: "set" | "unset"; path: string[]; value?: unknown }[], parsed.revision);
       await send(res.text, res.ok);
       return;
     }

@@ -676,3 +676,22 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 1. Host settings → 点任一 namespace → 应看到 `schema: …` 与 value/user/secrets。
 2. 未声明 schema 的 provider → 显示 `schema: (not declared)` 且不报错。
+
+## 29. Round 15：settings 命令支持 expectedRevision（2026-08-16，208/208）
+
+### 改动
+
+1. 新增纯函数 `parseJsonWithRevision`：先整串解析 JSON，失败再从尾部向前找 `\s+<int>` 后缀，保证 JSON 字符串内部空白不被破坏；
+2. `/settingsupdate`、`/settingsreplace`、`/settingsmutate` 语法升级为 `... [expectedRevision]`，透传给 web seam；
+3. 新增 parser 单测 1 例。
+
+### 验证
+
+- `npm run check`：**208/208 pass**。
+- round 1–14 的 207 个用例全部保持绿色。
+
+### Telegram 人工复核
+
+1. `/settingsupdate llm {"a":1} 3` → 以 expectedRevision=3 调用；
+2. `/settingsreplace llm {"a":2} 4`、`/settingsmutate llm [{"op":"set","path":["a"],"value":1}] 5` 同样带 revision；
+3. JSON 字符串内多空格：`/settingsupdate llm {"note":"x  y"}` 仍原样解析。

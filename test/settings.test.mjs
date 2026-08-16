@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { replaceSettings, mutateSettings, describeSettings } from '../dist/harness/adapters/settings.js';
+import { replaceSettings, mutateSettings, describeSettings, parseJsonWithRevision } from '../dist/harness/adapters/settings.js';
 
 function ctxWith(service) {
   return { get: (key) => (key === 'settings' ? service : undefined) };
@@ -55,4 +55,12 @@ test('describeSettings carries the serialized schema envelope', () => {
   const description = describeSettings(ctx);
   assert.deepEqual(description.namespaces[0].schema, schema);
   assert.equal(description.hasDocument, false);
+});
+
+
+test('parseJsonWithRevision keeps JSON string whitespace intact', () => {
+  assert.deepEqual(parseJsonWithRevision('{"a": 1}'), { json: '{"a": 1}' });
+  assert.deepEqual(parseJsonWithRevision('{"a": "x  y"} 7'), { json: '{"a": "x  y"}', revision: 7 });
+  assert.deepEqual(parseJsonWithRevision('[1, 2] 3'), { json: '[1, 2]', revision: 3 });
+  assert.equal(parseJsonWithRevision('not json'), undefined);
 });

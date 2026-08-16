@@ -101,9 +101,9 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | goal.pause/resume/complete/clear | Goals 卡按钮 | ✅ | |
 | settings.describe | Host settings 卡、/settingsdescribe | 🟡 | 已展示 schema envelope；缺按钮表单与 expectedRevision 流程（命令仍可用） |
 | settings.openDocument | 卡片显示 documentPath | ➖ | 只显示路径（可接受） |
-| settings.update | /settingsupdate `<ns> <json>` | 🟡 | 无按钮流、无 expectedRevision |
-| settings.replace | /settingsreplace `<ns> <json section>` | ✅ | 无按钮流、无 expectedRevision |
-| settings.mutate | /settingsmutate `<ns> <json ops>` | ✅ | 无按钮流、无 expectedRevision |
+| settings.update | /settingsupdate `<ns> <json> [expectedRevision]` | 🟡 | expectedRevision 已支持；仍无按钮表单流 |
+| settings.replace | /settingsreplace `<ns> <json section> [expectedRevision]` | ✅ | expectedRevision 已支持；仍无按钮表单流 |
+| settings.mutate | /settingsmutate `<ns> <json ops> [expectedRevision]` | ✅ | expectedRevision 已支持；仍无按钮表单流 |
 | credentials.describe | /credential `<REF> [REF...]` | ✅ | 批量查询（≤64 ref、去重、校验）与 web `refs[]` 语义一致；无枚举 seam，所以卡上仍无 ref 列表（web 同样不枚举） |
 | credentials.set | /credentialset `<REF> <value>` | 🟡 | 命令原消息在 500ms 后自动删除，值不回显；Telegram 服务端短期缓存仍非本项目可控 |
 | credentials.unset | /credentialunset `<REF>` | ✅ | |
@@ -330,6 +330,7 @@ Map<chatId, {
 - [x] Host 浏览卡新增 `New folder`：回复单段目录名在当前目录创建并原地刷新（/cancel 可中止）；/mkdir 快速通道保留。
 - [x] `session.models.routable` 接入 Models 卡；per-session reasoningEffort 五档选择（Thinking 行 → picker → selectSessionModel）。
 - [x] settings namespace 卡透出 serialized schema envelope。
+- [x] `/settingsupdate|replace|mutate` 支持尾随 `expectedRevision`（安全解析，不破坏 JSON 字符串内空白）。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。

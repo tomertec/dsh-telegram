@@ -19,7 +19,8 @@
 - [x] Round 12：Host 浏览卡 New folder + 审计状态修正（203/203）
 - [x] Round 13：Models routable + per-session thinking（206/206）
 - [x] Round 14：Settings schema envelope（207/207）
-- [ ] Round 15+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
+- [x] Round 15：settings expectedRevision（208/208）
+- [ ] Round 16+：Telegram 实机 checklist + 剩余 🟡 收敛（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -113,3 +114,7 @@
 ## Round 14 已完成
 
 - settings schema 透传与卡片展示；settings 单测 +1。
+
+## Round 15 已完成
+
+- parseJsonWithRevision + settings 三命令 expectedRevision。

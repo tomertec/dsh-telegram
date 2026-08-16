@@ -49,6 +49,33 @@ function settingsOf(ctx: Context): SettingsProviderLike | undefined {
   return ctx.get("settings") as SettingsProviderLike | undefined;
 }
 
+/** Split a Telegram command argument of the form `<json> [expectedRevision]`
+ * without disturbing whitespace inside JSON string values: full JSON first,
+ * then a backwards scan for a trailing integer after the closing token. */
+export function parseJsonWithRevision(raw: string): { json: string; revision?: number } | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  try {
+    JSON.parse(trimmed);
+    return { json: trimmed };
+  } catch {
+    /* try the optional revision suffix below */
+  }
+  for (let index = trimmed.length - 1; index >= 0; index -= 1) {
+    if (!/\s/.test(trimmed[index]!)) continue;
+    const head = trimmed.slice(0, index).trimEnd();
+    const tail = trimmed.slice(index).trim();
+    if (!/^\d+$/.test(tail)) continue;
+    try {
+      JSON.parse(head);
+      return { json: head, revision: Number(tail) };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 export function describeSettings(ctx: Context): SettingsDescription {
   const settings = settingsOf(ctx);
   if (!settings) return { writable: false, hasDocument: false, namespaces: [] };
