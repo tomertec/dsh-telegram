@@ -1079,3 +1079,7 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - `openPluginsCard` 与 `openJobsCard` 的 `buildPagingKeyboard(back: "m:plugins"/"m:jobs")` 会让
   「← Back」重新打开当前卡片，看起来像点了没反应。改为 `m:back`（回到上次菜单页）。
+
+## 48. Round 2 追加：Watch 开关可见反馈（2026-08-19，229/229）
+
+- `m:watchtoggle` 现在会在停止/恢复轮询时发送一条明确提示（“Polling resumed.” / “Polling stopped — tap Watch → Start…”），避免用户以为 bot 坏了。

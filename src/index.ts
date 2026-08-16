@@ -1934,6 +1934,13 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "watchtoggle":
       if (state.watching) await stopWatching();
       else await startWatching();
+      await requireTransport().sendText(
+        chatId,
+        state.watching
+          ? "\u{1F4E1} Polling resumed."
+          : "\u23F8 Polling stopped \u2014 tap Watch \u2192 Start to resume, or send /telegram start.",
+        { parse_mode: "HTML" },
+      );
       return openWatchCard(chatId);
     case "workspaces":
       return openWorkspacesCard(chatId);
