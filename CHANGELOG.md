@@ -3,7 +3,7 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
-## 0.3.0 (unreleased, current working tree)
+## 0.3.0-rc.1
 
 Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 

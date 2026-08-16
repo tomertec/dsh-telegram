@@ -713,3 +713,18 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 1. Subagents 卡 activity 应反映 live agent status（running/idle），而不是持久化快照。
 2. continuable 子代理 Prompt 后，宿主侧消息 source 应含 `clientTimeZone` 与 signal（dsh 侧日志/事件可确认）。
+
+## 31. Round 17：Release gate（2026-08-16，208/208）
+
+### 发布物检查（全部通过）
+
+- `npm run check`：208/208；
+- `npm pack --dry-run`：119 files，dsh-telegram-0.3.0.tgz；
+- `npm publish --dry-run`：publishing to registry with public access **dry-run OK**（真实发布需登录凭据）；
+- ESM smoke：index/openclaw/reasoning 三入口；
+- `git diff --check`：clean；
+- tag：`v0.3.0-rc.1`（本地 release-candidate 标记，真实 publish/tag push 待实机验收后执行）。
+
+### 结论
+
+自动化侧达到上线门槛；真实发布前仍待 Telegram 实机执行 §25 checklist（当前环境无 bot token 与 dsh CLI）。
