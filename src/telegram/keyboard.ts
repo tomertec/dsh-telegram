@@ -239,10 +239,16 @@ export function buildPagingKeyboard(callbacks: { previous?: string; next?: strin
   return InlineKeyboard.from(rows);
 }
 
-export function buildSearchKeyboard(ids: readonly string[]): InlineKeyboard {
+export function buildSearchKeyboard(ids: readonly string[], paging?: SessionsPaging): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [];
   for (const id of ids.slice(0, 8)) {
     rows.push([{ text: `\u{1F9ED} ${id.slice(0, 30)}`, callback_data: `s:${id}`.slice(0, 64) }]);
+  }
+  if (paging !== undefined && (paging.previous !== undefined || paging.next !== undefined)) {
+    const nav: { text: string; callback_data: string }[] = [];
+    if (paging.previous !== undefined) nav.push({ text: "\u2039 Prev", callback_data: paging.previous });
+    if (paging.next !== undefined) nav.push({ text: "More \u203A", callback_data: paging.next });
+    rows.push(nav);
   }
   rows.push([{ text: "\u{1F50D} New search", callback_data: "m:search" }, { text: "\u2190 Sessions", callback_data: "m:sessions" }]);
   return InlineKeyboard.from(rows);

@@ -55,3 +55,9 @@
 - 旧客户端残留 `h:ls` 按钮需兼容；路由统一映射到新浏览卡。
 - Jobs 卡截断 20 条且无翻页；改为 20/页 + `buildPagingKeyboard`。
 - Search 卡误用 Sessions 键盘（New/Stop/Search 与搜索结果混在一起）；新增专用 `buildSearchKeyboard`。
+
+## Round 6 发现与修复
+
+- `listSkills` 从不传 sessionId，违背 web skill.list 的「按会话项目根解析」契约；补 session 选项并兼容无 session 调用。
+- Skills 卡把 model-only 技能和 user-invocable 混在一起；改为只展示 user-invocable 并显示隐藏数量。
+- Search 取 20 条但 UI 只显示 10 条且无法翻页；改为取 100、10/页、token 翻页。

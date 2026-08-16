@@ -10,7 +10,8 @@
 - [x] Round 3：Sessions/History 分页 + goal edit maxRounds + preset copy 自定义（173/173）
 - [x] Round 4：Models/Plugins 分页 + 工具白名单 + host/commands/jobs/dynamic 单测（183/183）
 - [x] Round 5：Host 目录逐级浏览 + Jobs/Search 卡片顺手化（184/184）
-- [ ] Round 6+：继续 P1/P2 候选（见下），每轮回归 `npm run check` + pack
+- [x] Round 6：Skills 按 session 查询 + Search 结果分页（187/187）
+- [ ] Round 7+：继续 P1/P2 候选（见下），每轮回归 `npm run check` + pack
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
 ## Round 2 已完成
@@ -23,8 +24,8 @@
 ## 剩余候选（按性价比排序）
 
 1. 文档/语音/视频附件接纳（当前只支持图片）。
-2. skills 按 session cwd/scope 查询；subagent 详情补 mode/label 等字段。
-3. downloads/events forwarding 单测补全；Search 结果分页。
+2. subagent 详情补 mode/label 等字段（如 host service 可用）。
+3. downloads/events forwarding 单测补全。
 4. Telegram 实测清单持续更新。
 
 ## 错误记录
@@ -55,3 +56,8 @@
 - Host 卡 `Browse cwd`：目录两列、Up/~//、20/页、文件只计数、旧 `h:ls` 兼容。
 - Jobs 卡 20/页分页。
 - Search 卡专用 `buildSearchKeyboard`（命中会话 + New search/Sessions）。
+
+## Round 6 已完成
+
+- Skills 卡传 sessionId + 只显示 user-invocable；`test/skills.test.mjs` 3 例。
+- Search 结果 100 取回 / 10 每页 / `‹ Prev`/`More ›`；search keyboard 支持 paging。

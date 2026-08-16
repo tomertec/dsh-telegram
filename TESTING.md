@@ -467,3 +467,28 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 2. 无权限目录：卡片显示 `Cannot list this path: …`，Up 仍可逐级回退。
 3. 大目录（>20 个子目录）出现 `More ›`/`‹ Prev`；文件只出现在计数里。
 4. `/jobs` 超过 20 条时 `More ›` 翻页；`/search <词>` 只出现命中会话按钮与 New search/Sessions。
+
+## 20. Round 6：Skills 按 session 查询 + Search 结果分页（2026-08-16，187/187）
+
+### 改动
+
+1. **Skills 卡对齐 web 契约**：
+   - `listSkills(ctx, sessionId?)` 现在传 `{ sessionId }` 选项（无 session 时保持兼容）；
+   - 卡片只展示 `userInvocable` 技能，并显示隐藏的 model-only 技能数量；
+   - invocation 兼容 `{model,user}` 与 `{modelInvocable,userInvocable}` 两种形状，缺省仍按 true。
+2. **Search 结果分页**：
+   - `openSearchCard` 一次取 100 条命中，10/页展示，`‹ Prev`/`More ›` token 翻页；
+   - `buildSearchKeyboard` 支持 paging 行；`/search`、Sessions 卡 Search 流程共用。
+3. **新增 `test/skills.test.mjs`（3 例）**：sessionId 选项透传、两种 invocation 形状、缺失/抛错降级。
+
+### 验证
+
+- `npm run check`：**187/187 pass**（新增 skills 3 例；search keyboard paging 断言并入既有用例）。
+- round 1–5 的 184 个用例全部保持绿色。
+- `docs/WEB_PARITY_AUDIT.md` 同步 skill.list 与 Search 分页状态。
+
+### Telegram 人工复核
+
+1. 打开 Skills 卡：应只列出 user-invocable 技能；标题含 `N user-invocable`；model-only 技能以隐藏数呈现。
+2. `/search` 一个在 10+ 个事件中出现的词 → 第一页 10 条 + `More ›`；翻页后 `‹ Prev` 出现。
+3. 无 live session 时打开 Skills 卡：适配器不带 sessionId 调用，仍优雅返回 catalog。

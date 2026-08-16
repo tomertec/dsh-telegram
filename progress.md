@@ -21,14 +21,18 @@
 - Models/Plugins 分页、工具白名单、host/commands/jobs/dynamic 单测。
 - 183/183 tests；提交 `683e7d7`；详见 TESTING.md §18。
 
-## 2026-08-16 Round 5（本轮）
+## 2026-08-16 Round 5（已完成）
 
-- Host `Browse cwd` 目录逐级浏览卡（Up/~//、20/页、文件计数）。
-- Jobs 卡 20/页分页；Search 卡专用键盘。
-- `npm run check`：**184/184 pass**。
-- 文档已同步 TESTING.md §19 与 WEB_PARITY_AUDIT.md。
+- Host `Browse cwd` 目录浏览、Jobs 分页、Search 专用键盘。
+- 184/184 tests；提交 `9fe482e`；详见 TESTING.md §19。
+
+## 2026-08-16 Round 6（本轮）
+
+- Skills 按 sessionId 查询并只显示 user-invocable；Search 结果 10/页分页。
+- `npm run check`：**187/187 pass**。
+- 文档已同步 TESTING.md §20 与 WEB_PARITY_AUDIT.md。
 - 待办：npm pack 验证 + git 提交本轮改动。
 
-## 下一步（Round 6 候选）
+## 下一步（Round 7 候选）
 
-文档/语音附件、skills scope、subagent 详情字段、downloads 单测、Search 结果分页。
+文档/语音附件、subagent 详情字段、downloads 单测、Telegram 实测清单。

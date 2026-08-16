@@ -714,14 +714,23 @@ async function openHistoryCard(chatId: number, sessionId: string, beforeSeq?: nu
   ));
 }
 
-async function openSearchCard(chatId: number, query: string): Promise<void> {
-  const hits = await searchSessions(requireCtx(), query, 20);
-  const lines = [`\u{1F50D} Search "${plain(truncate(query, 40))}" \u2014 ${hits.length} hit(s)`, ""];
-  for (const hit of hits.slice(0, 10)) {
+const SEARCH_PAGE_SIZE = 10;
+
+async function openSearchCard(chatId: number, query: string, page = 0): Promise<void> {
+  const hits = await searchSessions(requireCtx(), query, 100);
+  const totalPages = Math.max(1, Math.ceil(hits.length / SEARCH_PAGE_SIZE));
+  const safe = Math.max(0, Math.min(page, totalPages - 1));
+  const pageHits = hits.slice(safe * SEARCH_PAGE_SIZE, (safe + 1) * SEARCH_PAGE_SIZE);
+  const lines = [`\u{1F50D} Search "${plain(truncate(query, 40))}" \u2014 ${hits.length} hit(s) \u00B7 page ${safe + 1}/${totalPages}`, ""];
+  for (const hit of pageHits) {
     lines.push(`\u2022 ${plain(truncate(hit.sessionId, 24))} [${hit.seq}] ${hit.type}${hit.live ? "" : " (cold)"}`);
     lines.push(`  ${plain(truncate(hit.snippet, 80))}`);
   }
-  await openCard(chatId, lines.join("\n"), buildSearchKeyboard(hits.slice(0, 8).map((hit) => hit.sessionId)));
+  if (hits.length === 0) lines.push("(no hits)");
+  await openCard(chatId, lines.join("\n"), buildSearchKeyboard(pageHits.map((hit) => hit.sessionId), {
+    ...(safe > 0 ? { previous: token({ action: "search-page", query, page: String(safe - 1) }) } : {}),
+    ...(safe + 1 < totalPages ? { next: token({ action: "search-page", query, page: String(safe + 1) }) } : {}),
+  }));
 }
 
 async function openQueueCard(chatId: number): Promise<void> {
@@ -888,14 +897,18 @@ async function openGoalsCard(chatId: number): Promise<void> {
 }
 
 async function openSkillsCard(chatId: number): Promise<void> {
-  const skills = await listSkills(requireCtx());
-  const lines = [`\u{1F9D1}\u200D\u{1F3EB} Skills (${skills.length})`, ""];
-  for (const skill of skills.slice(0, 30)) {
+  const agent = currentAgent(chatId);
+  const skills = await listSkills(requireCtx(), agent?.id);
+  const userSkills = skills.filter((skill) => skill.userInvocable);
+  const lines = [`\u{1F9D1}\u200D\u{1F3EB} Skills (${userSkills.length} user-invocable)`, ""];
+  for (const skill of userSkills.slice(0, 30)) {
     lines.push(`\u2022 ${plain(skill.name)} \u00B7 ${plain(skill.source)}`);
     lines.push(`  ${plain(truncate(skill.description, 80))}`);
-    lines.push(`  model:${skill.modelInvocable ? "yes" : "no"} user:${skill.userInvocable ? "yes" : "no"} provider: ${plain(skill.provider)}`);
+    lines.push(`  model:${skill.modelInvocable ? "yes" : "no"} provider: ${plain(skill.provider)}`);
   }
   if (skills.length === 0) lines.push("No skills registered in this profile.");
+  else if (userSkills.length === 0) lines.push("No user-invocable skills for this session's project.");
+  else if (userSkills.length < skills.length) lines.push("", `Model-only skills hidden: ${skills.length - userSkills.length}`);
   await openCard(chatId, lines.join("\n"), buildSkillsKeyboard());
 }
 
@@ -1357,6 +1370,12 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "jobs-page": {
       const page = Number(payload["page"] ?? "0");
       return openJobsCard(chatId, Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "search-page": {
+      const page = Number(payload["page"] ?? "0");
+      const query = payload["query"] ?? "";
+      if (query === "") return openSessionsCard(chatId);
+      return openSearchCard(chatId, query, Number.isFinite(page) && page > 0 ? page : 0);
     }
     case "history-older": {
       const beforeSeq = Number(payload["beforeSeq"] ?? "");

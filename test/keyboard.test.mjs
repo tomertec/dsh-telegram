@@ -203,8 +203,9 @@ test('buildPagingKeyboard shows nav only when a page edge exists', () => {
 });
 
 test('buildSearchKeyboard lists hit sessions with new-search and sessions actions', () => {
-  const kb = buildSearchKeyboard(['s-one', 's-two']);
+  const kb = buildSearchKeyboard(['s-one', 's-two'], { next: 't:next' });
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 's:s-one')));
+  assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:next')));
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:search')));
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'm:sessions')));
 });

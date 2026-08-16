@@ -89,7 +89,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | workspace.insertBefore | 详情 Move up/down | ✅ | |
 | workspace.insertSessionBefore | /workspacepin | ✅ | 命令对手机不友好，见计划 |
 | workspace.archiveSession | /archive、详情 Archive | ✅ | 归档后 UI 只显示 `Archived`，无 unarchive（web 同样没有） |
-| skill.list | Skills 卡 | 🟡 | **没有按 session cwd + scope 查询，也没有过滤 user-invocable**；web 是会话项目目录下的技能 |
+| skill.list | Skills 卡 | ✅ | 传入当前 sessionId（web 契约）；卡片只显示 user-invocable 技能并标注 model-only 隐藏数 |
 | agentPreset.list | Presets 卡 | 🟡 | 缺 web `hasDocument` 字段 |
 | agentPreset.select | 详情 Select；已开始会话自动 fork 切换 | ✅ | 比 web 更顺手（web 会拒绝） |
 | agentPreset.read | 详情 Read | ✅ | 只切前 3800 字符 |
@@ -318,6 +318,7 @@ Map<chatId, {
 - [x] Models provider 卡 12 个/页、Plugins 卡 20 个/页；`telegram_send/broadcast` 只允许白名单 roster。
 - [x] host/commands/jobs/dynamic 适配器补单测（`test/host.test.mjs`、`test/commands-jobs-dynamic.test.mjs`）。
 - [x] Host 卡 `Browse cwd`：可点目录逐级浏览（Up/~//、20/页），`h:ls` 旧卡片兼容映射；Jobs 卡 20/页；Search 卡专用键盘。
+- [x] Skills 卡按 session 查询（传 `sessionId` option）并只显示 user-invocable；Search 结果 10/页分页。
 - [x] 本审计文件。
 
 > 注：状态表以当前工作区代码为准。修复/接线后应回到第 2 节更新对应勾选。
