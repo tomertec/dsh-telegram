@@ -1109,3 +1109,13 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 - `deleteSession` 现在同时尝试 `encodeSegment(id)` 与原始 id 两种目录名，删到哪个删哪个；
 - Archive 后返回 Session 详情卡，让 archived 状态立即可见；
 - 新增删除目录双形态回归测试（raw + wrapped），`npm run check` **230/230 pass**。
+
+## 52. Round 2 追加：Session 标题读取 + Workspace 目录选择器（2026-08-19，230/230）
+
+### 修复
+
+1. **Session 自定义标题显示**：`titleFor` 现在优先扫描 `session/title` 事件（web 的
+   `foldSessionTitle` 同源），冷会话也保留名称；服务不可用时回退首条用户消息。
+2. **Workspace Create 目录选择器**：`w:create` 不再要求输入抽象路径，改为
+   Project 式浏览（Up/Home/Root/翻页），选中目录点 `✅ Create here` 即注册。
+   `/workspacecreate <path>` 命令保留为高级路径。

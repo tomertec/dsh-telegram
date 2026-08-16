@@ -958,6 +958,37 @@ async function applyProjectPath(chatId: number, raw: string): Promise<void> {
   return openMenuAt(chatId, 0);
 }
 
+/** Workspace-create directory picker: instead of typing an abstract path,
+ * browse to a folder and tap "Create here". Mirrors the Project browser. */
+const WORKSPACE_PICK_PAGE_SIZE = 12;
+
+async function openWorkspaceCreatePicker(chatId: number, path: string, offset = 0): Promise<void> {
+  const target = path || state.workspaceRoot;
+  if (!(await isDirectory(target))) {
+    await requireTransport().sendText(chatId, `\u274C Not a directory: ${plain(truncate(target, 60))}`, { parse_mode: "HTML" });
+    return openWorkspaceCreatePicker(chatId, parentOf(target));
+  }
+  const listing = await listDirectory(target);
+  const dirs = (listing.ok ? listing.entries ?? [] : []).filter((entry) => entry.kind === "directory");
+  const safe = Math.max(0, Math.min(offset, Math.max(0, Math.ceil(dirs.length / WORKSPACE_PICK_PAGE_SIZE) - 1)));
+  const pageDirs = dirs.slice(safe * WORKSPACE_PICK_PAGE_SIZE, (safe + 1) * WORKSPACE_PICK_PAGE_SIZE);
+  const paging: { text: string; cb: string }[] = [];
+  if (safe > 0) paging.push({ text: "\u2B05\uFE0F Prev", cb: token({ action: "ws-pick-page", path: target, page: String(safe - 1) }) });
+  if ((safe + 1) * WORKSPACE_PICK_PAGE_SIZE < dirs.length) paging.push({ text: "Next \u27A1\uFE0F", cb: token({ action: "ws-pick-page", path: target, page: String(safe + 1) }) });
+  const lines = [`\u{1F5C2} Create workspace at:\n${plain(truncate(target, 60))}`, "", `folders: ${dirs.length}`, "", "Browse to a folder, then tap \u2705 Create here."];
+  await openCard(chatId, lines.join("\n"), buildProjectKeyboard(
+    pageDirs.map((entry) => ({ label: entry.name, cb: token({ action: "ws-pick-open", path: joinPath(target, entry.name) }) })),
+    {
+      up: target === "/" ? undefined : token({ action: "ws-pick-open", path: parentOf(target) }),
+      home: target === homedir() ? undefined : token({ action: "ws-pick-open", path: homedir() }),
+      root: target === "/" ? undefined : token({ action: "ws-pick-open", path: "/" }),
+      paging,
+      use: token({ action: "ws-create-here", path: target }),
+      close: "m:workspaces",
+    },
+  ));
+}
+
 async function openGoalsCard(chatId: number): Promise<void> {
   const agent = currentAgent(chatId);
   const lines = ["\u{1F3AF} Goal", ""];
@@ -1330,6 +1361,20 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       return openProjectCard(chatId, parentOf(payload["path"] ?? state.workspaceRoot));
     case "project-select":
       return applyProjectPath(chatId, payload["path"] ?? state.workspaceRoot);
+    case "ws-pick-open": {
+      const offset = Number(payload["page"] ?? payload["offset"] ?? "0");
+      return openWorkspaceCreatePicker(chatId, payload["path"] ?? state.workspaceRoot, Number.isFinite(offset) && offset > 0 ? offset : 0);
+    }
+    case "ws-pick-page": {
+      const page = Number(payload["page"] ?? "0");
+      return openWorkspaceCreatePicker(chatId, payload["path"] ?? state.workspaceRoot, Number.isFinite(page) && page > 0 ? page : 0);
+    }
+    case "ws-create-here": {
+      const path = payload["path"] ?? state.workspaceRoot;
+      const res = await createWorkspace(requireCtx(), path, basename(path) || undefined);
+      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      return openWorkspacesCard(chatId);
+    }
     case "host-open":
       return openHostDirectoryCard(chatId, payload["path"] ?? state.workspaceRoot);
     case "host-mkdir-prompt": {
@@ -1751,16 +1796,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   if (data.startsWith("w:")) {
     const [, id, sub] = data.split(":");
     if (sub === "create") {
-      pendingWorkspaceCreate = { chatId };
-      await requireTransport().sendText(
-        chatId,
-        "\u{1F5C2} Reply with the workspace path, optionally followed by a title (or /cancel):",
-        {
-          parse_mode: "HTML",
-          reply_markup: inputPromptKeyboard("/path/to/project [Title]"),
-        },
-      );
-      return;
+      return openWorkspaceCreatePicker(chatId, state.workspaceRoot);
     }
     if (sub === "rename") {
       await requireTransport().sendText(chatId, `/workspacerename ${id} &lt;title&gt;`, { parse_mode: "HTML" });

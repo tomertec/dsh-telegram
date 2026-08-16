@@ -196,3 +196,8 @@
 
 - deleteSession 目录名错配（encodeSegment `--~id--` vs 实际原始 id），改为双候选删除。
 - archive 后回详情卡显示 archived；workspace create 后端验证通过。
+
+## Round 2 追加
+
+- Session 标题来自 session/title 事件，已补齐扫描；Cold session 也有名字。
+- Workspace Create 改为目录浏览选择器，去掉抽象路径输入。

@@ -166,6 +166,14 @@ function titleFor(ctx: Context, session: SessionLike): string | undefined {
   } catch {
     /* title service may not own this session */
   }
+  // Durable titles are `session/title` events (latest wins), same as the
+  // web's foldSessionTitle projection. This is how cold sessions keep names.
+  for (let index = session.events.length - 1; index >= 0; index -= 1) {
+    const event = session.events[index];
+    if (event?.type !== "session/title") continue;
+    const title = (event.data as { title?: unknown } | undefined)?.title;
+    if (typeof title === "string" && title.trim() !== "") return title.trim().slice(0, 60);
+  }
   for (const event of session.events) {
     if (event.type !== "user/message") continue;
     const content = (event.data as { content?: { type?: string; text?: string }[] } | undefined)?.content;
