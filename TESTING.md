@@ -754,3 +754,18 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 ### 结论
 
 自动化与真实长轮询冒烟均通过；剩余完整 §25 交互 checklist 仍需在 Telegram 客户端人工点按后回填。
+
+## 33. Round 19：实机上线清单已下发（2026-08-19 环境时间轴）
+
+### 运行实例
+
+- 临时 `DSH_HOME=/tmp/dsh-live-home-6Qqb`（web profile 副本 + 本仓库 symlink）；
+- `dsh web: http://127.0.0.1:49523`；`long polling started`；`openclaw streaming feed mounted`；
+- 白名单 chat `8753447694` 再次收到 bar 载体（`bar sync ... count=0 last=-1`）；
+- 已通过 Bot API 向该 chat 发送 §25 10 步 checklist（message_id 1271），等待用户在 Telegram 客户端逐项点验。
+
+### 状态
+
+- 自动化：211/211；npm audit 0；pack 119 files。
+- 实机进程保持运行，供用户点按验收。
+- 收到用户反馈后：按现象修复 → 回归 → 通过则推 `v0.3.0-rc.1` tag 与正式发布。

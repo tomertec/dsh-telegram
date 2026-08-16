@@ -94,6 +94,12 @@
 - 实机冒烟：@XosEvolvesbot 长轮询、openclaw 挂载、bar sync 投递成功。
 - 详见 TESTING.md §32。
 
-## 下一步（Round 19 候选）
+## Round 19（本轮）
 
-Telegram 客户端完整执行 §25 checklist；实机通过后推 tag 与正式发布。
+- 实机实例保持运行（web 49523 + long polling + openclaw）。
+- §25 checklist 已发到 Telegram chat 8753447694（message_id 1271）。
+- 详见 TESTING.md §33。
+
+## 下一步（Round 20 候选）
+
+收集用户在 Telegram 的 checklist 结果；有偏差修偏差，全过则推 tag 与正式发布。
