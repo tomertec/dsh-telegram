@@ -32,6 +32,21 @@ function retryAfterMs(err: unknown): number | undefined {
   return typeof seconds === "number" ? seconds * 1000 : undefined;
 }
 
+/** Only transient failures deserve a retry. A Telegram error code tells us
+ * authoritatively: 429 (rate limit) and 5xx are transient, every other 4xx is
+ * a permanent payload/permission problem that a retry can never fix. Without
+ * an error code we retry only recognizable transport failures (network
+ * TypeError or our own API timeout), never arbitrary Errors. */
+function isRetryable(err: unknown): boolean {
+  if (err !== null && typeof err === "object") {
+    const code = (err as { error_code?: unknown }).error_code;
+    if (typeof code === "number") return code === 429 || code >= 500;
+    if ((err as { name?: unknown }).name === "AbortError") return false;
+  }
+  if (err instanceof TypeError) return true;
+  return err instanceof Error && err.message.startsWith("telegram api timeout after ");
+}
+
 export class SendQueue {
   private maxPerWindow: number;
   private windowMs: number;
@@ -98,7 +113,7 @@ export class SendQueue {
           return await fn();
         } catch (err) {
           attempt += 1;
-          if (attempt > this.retryAttempts) throw err;
+          if (attempt > this.retryAttempts || !isRetryable(err)) throw err;
           const delay = retryAfterMs(err) ?? this.retryBaseDelayMs * 2 ** (attempt - 1);
           await this.sleep(Math.min(delay, 30_000));
         }

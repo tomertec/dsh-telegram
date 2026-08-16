@@ -138,3 +138,9 @@
 ### Round 20 追加
 
 - 主 profile 已配置的 `DEEPSEEK_API_KEY` 对 deepseek-official 返回 401（`****2dbe` invalid）；live profile 仅路由 deepseek-official。需用户更新有效 key。
+
+## Round 21 独立审计 + 修复
+
+- 独立审计确认 3 个发布阻断：版本导出漂移 0.2.0；HTML 长文本拆坏标签；SendQueue 对永久 4xx 全部重试。
+- 另修复 3 个非阻塞：mo/set 回调 URI 编码、telegram_* 工具 HTML 契约、typing 循环 10 分钟自毁。
+- `npm run check` 222/222；实机 opencode-go 全链路 LLM turn 完成（turn/end completed）。

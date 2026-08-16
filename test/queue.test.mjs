@@ -81,6 +81,46 @@ test('non-429 failures reject without retry', async () => {
   );
 });
 
+test('permanent Telegram 4xx errors are attempted exactly once', async () => {
+  let calls = 0;
+  const queue = new SendQueue({ retry: { attempts: 3, baseDelayMs: 5 }, sleep: async () => {} });
+  await assert.rejects(
+    queue.push('c', async () => {
+      calls += 1;
+      const err = new Error('bad request');
+      err.error_code = 400;
+      throw err;
+    }),
+    /bad request/,
+  );
+  assert.equal(calls, 1, 'a 400 cannot be fixed by retrying');
+});
+
+test('Telegram 5xx and network failures are retried', async () => {
+  const queue = new SendQueue({ retry: { attempts: 2, baseDelayMs: 5 }, sleep: async () => {} });
+  let serverCalls = 0;
+  const server = queue.push('c', async () => {
+    serverCalls += 1;
+    if (serverCalls < 3) {
+      const err = new Error('server error');
+      err.error_code = 500;
+      throw err;
+    }
+    return 'recovered';
+  });
+  assert.equal(await server, 'recovered');
+  assert.equal(serverCalls, 3);
+
+  let networkCalls = 0;
+  const network = queue.push('d', async () => {
+    networkCalls += 1;
+    if (networkCalls < 3) throw new TypeError('fetch failed');
+    return 'online';
+  });
+  assert.equal(await network, 'online');
+  assert.equal(networkCalls, 3);
+});
+
 test('pendingCount reflects queued plus in-flight work', async () => {
   const queue = new SendQueue({ maxPerWindow: 1, windowMs: 1000 });
   const first = queue.push('c', async () => {

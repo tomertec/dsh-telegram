@@ -49,6 +49,30 @@ export function queueBarLabel(queueCount: number): string {
   return `${QUEUE_BTN_PREFIX}${queueCount}`;
 }
 
+const callbackBytes = (value: string): number => new TextEncoder().encode(value).length;
+
+/** Build `<prefix><url-encoded value>` bounded to Telegram's 64-byte
+ * callback_data limit by trimming the raw value before encoding, so the
+ * result is always valid percent-encoding (never truncated mid-sequence). */
+export function encodedCallback(prefix: string, value: string): string {
+  let trimmed = value;
+  while (trimmed.length > 0 && callbackBytes(prefix + encodeURIComponent(trimmed)) > 64) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return prefix + encodeURIComponent(trimmed);
+}
+
+/** Decode a callback payload that should be percent-encoded. Legacy cards or
+ * providers whose ids contain a literal `%` are decoded best-effort; a
+ * malformed sequence must return the raw value instead of killing the tap. */
+export function decodeCallbackValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /** Always-visible bar grouped by frequency:
  * `Menu · New · Models` / `Sessions · Plugins · Status` /
  * `Presets · Queue · Compact` / `Stop`. `🧠 Reasoning` stays reachable from
@@ -328,7 +352,7 @@ export function buildQueueKeyboard(items: readonly { itemId: string; kind: "next
 export function buildModelsKeyboard(groups: readonly { id: string; name: string }[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const group of groups.slice(0, 20)) {
-    kb.text(`\u{1F4E1} ${group.name.slice(0, 30)}`, `mo:${group.id}`.slice(0, 64)).row();
+    kb.text(`\u{1F4E1} ${group.name.slice(0, 30)}`, encodedCallback("mo:", group.id)).row();
   }
   return kb.row().text("\u{1F50D} Discover models", "m:discover").text("\u2190 Back", "m:back");
 }
@@ -432,7 +456,7 @@ export function buildPresetDetailKeyboard(callbacks: { select: string; read: str
 export function buildSettingsKeyboard(namespaces: readonly string[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const ns of namespaces.slice(0, 20)) {
-    kb.text(ns.slice(0, 40), `set:${ns}`.slice(0, 64)).row();
+    kb.text(ns.slice(0, 40), encodedCallback("set:", ns)).row();
   }
   return kb.row().text("\u2190 Back", "m:back");
 }

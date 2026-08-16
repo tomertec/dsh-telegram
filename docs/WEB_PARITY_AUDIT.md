@@ -77,7 +77,7 @@ Web 端组装文件 `packages/api/remotes/src/client/index.ts` 只 mount 这 24 
 | subagent.history | 详情 History | 🟡 | 复用通用 history，缺分页/projections/tool view |
 | subagent.prompt | 详情 Prompt → 回复文本 | ✅ | continuable 校验 + clientTimeZone + AbortSignal 已随 source/options 传递 |
 | subagent.interrupt | 详情 Interrupt | ✅ | 仅 continuable 显示；二次确认；错误纯文本 |
-| host.describe | Host 卡 | 🟡 | `version` 显示 dsh-telegram 0.2.0；provider/model 已改读 `agentDefaultModel`（与 web 同 seam），fallback live agent；canOpenPath 平台限制为 false |
+| host.describe | Host 卡 | 🟡 | `version` 显示 dsh-telegram 0.3.0（与 package.json 一致，测试锁定）；provider/model 已改读 `agentDefaultModel`（与 web 同 seam），fallback live agent；canOpenPath 平台限制为 false |
 | host.pickDirectory | /pickdir、Project 选择器 | ✅ | 平台限制下用路径式选择代替原生对话框；无参数时给提示并打开 Project 卡 |
 | host.listDirectory | /ls（文本）、Host 卡 `Browse cwd` 逐级浏览 | ✅ | 点击文件夹进入、Up/~// 导航、目录 20/页、文件只计数；`/ls` 保留文本形式 |
 | host.createDirectory | /mkdir + Host 浏览卡 `New folder` | 🟡 | 浏览卡按钮走 parent+name（web 语义）；/mkdir 保留完整路径快速通道 |

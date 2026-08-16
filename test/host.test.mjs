@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describeHost, listDirectory, createDirectory, isDirectory, openPath, pickDirectoryHint, parentOf } from '../dist/harness/adapters/host.js';
@@ -53,10 +53,16 @@ test('host path helpers resolve, degrade, and walk up', async () => {
 
 
 test('describeHost reports the bridge version instead of a fake host version', () => {
-  const view = describeHost({ agents: { list: () => [] }, get: () => undefined }, '/tmp', '0.2.0');
-  assert.equal(view.version, '0.2.0');
+  const view = describeHost({ agents: { list: () => [] }, get: () => undefined }, '/tmp', '0.3.0');
+  assert.equal(view.version, '0.3.0');
   assert.equal(view.cwd, '/tmp');
   assert.equal(view.attachedSessions, 0);
+});
+
+test('the exported plugin version matches package.json', async () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const { version } = await import('../dist/index.js');
+  assert.equal(version, pkg.version);
 });
 
 test('describeHost prefers agentDefaultModel like web host.describe', () => {
@@ -64,7 +70,7 @@ test('describeHost prefers agentDefaultModel like web host.describe', () => {
     agents: { list: () => [{ options: { provider: 'live-provider', model: 'live-model' } }] },
     get: (name) => (name === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) } : undefined),
   };
-  const view = describeHost(ctx, '/tmp', '0.2.0');
+  const view = describeHost(ctx, '/tmp', '0.3.0');
   assert.equal(view.provider, 'default-provider');
   assert.equal(view.model, 'default-model');
   const fallback = describeHost({ agents: ctx.agents, get: () => undefined }, '/tmp');

@@ -39,3 +39,64 @@ test('splitText falls back to spaces and finally hard-splits', () => {
   assert.deepEqual(checkSplit('abcdefghij', 4), ['abcd', 'efgh', 'ij']);
   checkSplit('x'.repeat(5000), 4096);
 });
+
+function assertBalanced(part) {
+  const voidTags = new Set(['br', 'hr', 'img']);
+  const stack = [];
+  const tag = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*?)?(\/?)>/g;
+  for (const match of part.matchAll(tag)) {
+    const name = match[2].toLowerCase();
+    if (match[3] === '/' || voidTags.has(name)) continue;
+    if (match[1] === '/') {
+      assert.equal(stack.at(-1), name, `stray closer </${name}> in ${JSON.stringify(part)}`);
+      stack.pop();
+    } else {
+      stack.push(name);
+    }
+  }
+  assert.deepEqual(stack, [], `unclosed tags <${stack.join('>, <')}> in ${JSON.stringify(part)}`);
+}
+
+function checkHtmlSplit(text, max) {
+  const parts = splitText(text, max);
+  for (const part of parts) {
+    assert.ok(part.length <= max, `part ${JSON.stringify(part)} exceeds ${max}`);
+    assertBalanced(part);
+  }
+  return parts;
+}
+
+test('splitText never cuts inside an HTML tag', () => {
+  const parts = checkHtmlSplit(`<b>${'x'.repeat(4090)}</b>x`, 4096);
+  assert.ok(parts.length > 1);
+  for (const part of parts) {
+    assert.equal((part.match(/<b/g) ?? []).length, (part.match(/<\/b>/g) ?? []).length);
+    assert.ok(!/<b[^>]*$/.test(part), 'part must not end inside a tag');
+  }
+});
+
+test('splitText rebalances a tag that spans the cut', () => {
+  const parts = checkHtmlSplit(`<b>${'x'.repeat(5000)}</b>`, 4096);
+  assert.equal(parts.length, 2);
+  assert.ok(parts[0].startsWith('<b>'), 'styling must open at the start');
+  assert.ok(parts[0].endsWith('</b>'), 'first part must close the tag it opened');
+  assert.ok(parts[1].startsWith('<b>'), 'second part must reopen the tag');
+  assert.ok(parts[1].endsWith('</b>'), 'second part must keep the original closer');
+});
+
+test('splitText keeps HTML entities intact', () => {
+  assert.deepEqual(splitText('a&amp;bX', 6), ['a&amp;', 'bX']);
+});
+
+test('splitText rebalances nested tags without leaking stray closers', () => {
+  const text = `<i><b>${'y'.repeat(9000)}</b></i>`;
+  const parts = checkHtmlSplit(text, 4096);
+  assert.ok(parts.length >= 3);
+  assert.ok(parts[0].startsWith('<i><b>'));
+  assert.ok(parts[0].endsWith('</b></i>'));
+  for (const part of parts.slice(1, -1)) {
+    assert.ok(part.startsWith('<i><b>') || part.startsWith('<b>') || part.startsWith('<i>'));
+    assert.ok(part.endsWith('</b></i>') || part.endsWith('</b>') || part.endsWith('</i>'));
+  }
+  assert.ok(parts.at(-1).endsWith('</b></i>'));
+});

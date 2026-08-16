@@ -809,3 +809,42 @@ Preset 不再只在空白会话可用：已开始的会话切换 preset 时，�
 
 - 修复已提交 `ed94dee`，tag `v0.3.0-rc.1` 已重建；实机进程 `bash-32` 保持运行。
 - 发布门：等待用户更新有效凭据 + 在 Telegram 客户端完成 §25 清单与一条完整 agent 轮次。
+
+## 35. Round 21：独立发布审计 + 修复（2026-08-19，222/222）
+
+### 独立审计结论
+
+- `npm run check` 213/213（审计时）→ 本轮修复后 **222/222**；
+- `npm audit --omit=dev --registry=https://registry.npmjs.org`：0 漏洞；
+- `npm pack --dry-run`：119 files / dsh-telegram-0.3.0.tgz；
+- 审计提出 3 个 release blocker 与 10 个非阻塞风险。
+
+### 本轮修复（均加回归测试）
+
+1. **版本导出漂移**：`src/index.ts` 仍导出 `0.2.0`（package.json 已是 0.3.0）。
+   改为 `0.3.0`，新增「导出版本 === package.json」锁测试；Host 卡/`/start`/`/about` 恢复正确版本。
+2. **HTML 长消息拆分损坏标签**：`splitText` 原来按字符硬切，`<b>` 被切一半 → Telegram 400。
+   重写为 HTML-aware：不在 `<tag>`/`&entity;` 内切分；跨切分的开标签在第一段补闭合、第二段重开，每段独立可解析。
+3. **SendQueue 对一切错误重试**：原实现对 400 等永久错误也重试 `attempts` 次后静默吞掉。
+   现在只重试 429、5xx、网络 TypeError、API 超时；400/403/Abort 等只尝试 1 次。
+4. **`mo:`/`set:` 回调未编码**：provider/namespace 含 `%` 时 `decodeURIComponent` 抛 URIError、按钮假死。
+   构建侧 `encodedCallback`（64 字节内按原始值截断再编码），分发侧 `decodeCallbackValue` 安全降级。
+5. **`telegram_send/reply/broadcast` 的 HTML 契约漏洞**：schema 声明支持 MarkdownV2，实现却既不转义也不传 parse_mode，未传参时 HTML 会以纯文本显示。
+   移除误导参数并固定 `parse_mode: "HTML"`，与 body 描述一致。
+6. **typing 循环泄漏**：`turn/end` 丢失时 `setInterval` 会永远发 typing。
+   增加 10 分钟自毁上限；新一轮会替换旧循环。
+
+### 实机复验（真实 bot，opencode-go 全链路）
+
+- 用主 profile 的 `OPENCODE_GO_API_KEY` + live `settings.update` 激活 `llm-pi-ai/providers.opencode-go` 路由
+  （live 实例的 settings/credentials 均只落在隔离 `DSH_HOME`）。
+- `session.selectModel → opencode-go/deepseek-v4-flash` 后，`/telegram status` 完成真实 LLM 轮次：
+  reasoning → tool 调用 → 文本块 → usage → `turn/end reason=completed`（seq 313）。
+- 修复版重启后的 live 实例：`dsh web: http://127.0.0.1:50755`，long polling + openclaw + bar sync 正常，日志无异常。
+- 你贴的 `DEEPSEEK_API_KEY` 已写入 live 凭据服务验证：该 key 有效但余额不足（402 QUOTA）；
+  opencode-go 路由不受影响，当前完整轮次跑在 `OPENCODE_GO_API_KEY` 上。
+
+### 仍待人工
+
+- 在 Telegram chat 发一条消息触发真实入站 → openclaw 流 → `telegram_reply` 最终交付（HTTP 会话不绑定 chat，只能证明 LLM/工具链路）。
+- 完成后执行 §25 checklist 剩余项与发布动作。

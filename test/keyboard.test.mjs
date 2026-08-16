@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, buildBackKeyboard, buildBarKeyboard, buildConfirmKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, CALLBACK_RE, decodeCallbackValue, encodedCallback, normalizeBarLabel, queueBarLabel } from '../dist/telegram/keyboard.js';
 
 test('reply bar is the v0.6 layout (Menu/New/Models, Sessions/Plugins/Status, Presets/Queue/Compact, Stop)', () => {
   const bar = buildBarKeyboard();
@@ -224,4 +224,26 @@ test('buildProjectKeyboard renders a New folder action when provided', () => {
   assert.ok(kb.inline_keyboard.some((row) => row.some((b) => b.callback_data === 't:mkdir')));
   const without = buildProjectKeyboard([], { close: 'm:host' });
   assert.equal(without.inline_keyboard.some((row) => row.some((b) => b.text === '📁 New folder')), false);
+});
+
+test('model/settings callback payloads are percent-encoded and decode safely', () => {
+  const models = buildModelsKeyboard([{ id: 'my%provider', name: 'My Provider' }]);
+  const mo = models.inline_keyboard.flat().find((b) => b.callback_data.startsWith('mo:'))?.callback_data;
+  assert.equal(mo, 'mo:my%25provider');
+  assert.equal(decodeCallbackValue(mo.slice(3)), 'my%provider');
+
+  const settings = buildSettingsKeyboard(['ns%2f']);
+  const set = settings.inline_keyboard.flat().find((b) => b.callback_data.startsWith('set:'))?.callback_data;
+  assert.equal(set, 'set:ns%252f');
+  assert.equal(decodeCallbackValue(set.slice(4)), 'ns%2f');
+
+  assert.equal(decodeCallbackValue('bad%'), 'bad%');
+});
+
+test('encodedCallback keeps payloads within 64 bytes as valid percent-encoding', () => {
+  const cb = encodedCallback('mo:', 'x'.repeat(200));
+  assert.ok(new TextEncoder().encode(cb).length <= 64);
+  assert.ok(cb.startsWith('mo:'));
+  assert.doesNotThrow(() => decodeCallbackValue(cb.slice(3)));
+  assert.ok(decodeCallbackValue(cb.slice(3)).length > 0);
 });

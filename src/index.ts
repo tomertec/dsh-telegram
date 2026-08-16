@@ -97,6 +97,7 @@ import {
   buildFeedbackKeyboard,
   CALLBACK_RE,
   COMPACT_BTN,
+  decodeCallbackValue,
   MENU_BTN,
   MODELS_BTN,
   MODE_BTN,
@@ -117,7 +118,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.2.0";
+export const version = "0.3.0";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -380,10 +381,6 @@ function textOutput() {
   };
 }
 
-function validateParseMode(value: unknown): "HTML" | undefined {
-  return value === "HTML" ? "HTML" : undefined;
-}
-
 const okCmd = (text: string): CommandResult => ({ kind: "success", text });
 const failCmd = (text: string): CommandResult => ({ kind: "error", text });
 
@@ -393,20 +390,25 @@ function requireTransport(): TelegramTransport {
 }
 
 /** Per-chat typing refreshers: Telegram's "typing" action expires after ~5s,
- * so long agent turns re-assert it every 4s until turn/end stops it. */
+ * so long agent turns re-assert it every 4s until turn/end stops it. A hard
+ * cap clears a leaked loop when an agent is disposed without turn/end. */
 const typingLoops = new Map<number, ReturnType<typeof setInterval>>();
+const TYPING_KEEPALIVE_MAX_MS = 10 * 60_000;
 
 function startTyping(chatId: number): void {
   stopTyping(chatId);
   const transport = state.transport;
   if (!transport) return;
   void transport.sendChatAction(chatId, "typing").catch(() => {});
-  typingLoops.set(
-    chatId,
-    setInterval(() => {
-      void transport.sendChatAction(chatId, "typing").catch(() => {});
-    }, 4000),
-  );
+  const timer = setInterval(() => {
+    void transport.sendChatAction(chatId, "typing").catch(() => {});
+  }, 4000);
+  typingLoops.set(chatId, timer);
+  // Self-arming one-shot guard: even if the turn/end event is lost, the loop
+  // cannot type forever. A later turn simply replaces the old interval.
+  setTimeout(() => {
+    if (typingLoops.get(chatId) === timer) stopTyping(chatId);
+  }, TYPING_KEEPALIVE_MAX_MS);
 }
 
 function stopTyping(chatId: number): void {
@@ -1727,10 +1729,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     return openQueueCard(chatId);
   }
   if (data.startsWith("mo:")) {
-    return openProviderModelsCard(chatId, decodeURIComponent(data.slice(3)));
+    return openProviderModelsCard(chatId, decodeCallbackValue(data.slice(3)));
   }
   if (data.startsWith("set:")) {
-    return openSettingsNamespaceCard(chatId, decodeURIComponent(data.slice(4)));
+    return openSettingsNamespaceCard(chatId, decodeCallbackValue(data.slice(4)));
   }
   if (data.startsWith("h:")) {
     const sub = data.slice(2);
@@ -1747,7 +1749,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   const match = CALLBACK_RE.exec(data);
   if (!match) return;
   const action = match[1]!;
-  const payload = match[2] !== undefined ? decodeURIComponent(match[2]) : undefined;
+  const payload = match[2] !== undefined ? decodeCallbackValue(match[2]) : undefined;
   switch (action) {
     case "close":
       await ephemeral.clear(chatId, requireTransport());
@@ -2990,7 +2992,6 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
     parameters: {
       chatId: { type: "string", required: true, description: "Target chat id." },
       text: { type: "string", required: true, description: "Message body (HTML)." },
-      parseMode: { type: "string", description: "HTML or MarkdownV2." },
       disableNotification: { type: "boolean", description: "Send silently." },
     },
     output: textOutput(),
@@ -3001,7 +3002,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       }
       const t = requireTransport();
       const id = await t.sendText(chatId, args.text, {
-        parse_mode: validateParseMode(args.parseMode),
+        parse_mode: "HTML",
         disable_notification: args.disableNotification === true,
       });
       return JSON.stringify({ ok: true, messageId: id ?? null });
@@ -3013,7 +3014,6 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
     description: "Reply to the current inbound Telegram message. Fails when there is no pending inbound message.",
     parameters: {
       text: { type: "string", required: true, description: "Reply body (HTML)." },
-      parseMode: { type: "string", description: "HTML or MarkdownV2." },
       disableNotification: { type: "boolean", description: "Send silently." },
     },
     output: textOutput(),
@@ -3026,7 +3026,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       if (!bridge || !inbound) throw new Error(agentId === undefined ? "no agent context for telegram_reply" : "no active inbound message");
       await bridge.sendOutbound(inbound.chatId, args.text, {
         replyToInbound: true,
-        parseMode: validateParseMode(args.parseMode),
+        parseMode: "HTML",
         disableNotification: args.disableNotification === true,
       });
       return JSON.stringify({ ok: true, chatId: inbound.chatId });
@@ -3047,7 +3047,6 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         },
       },
       text: { type: "string", required: true, description: "Message body (HTML)." },
-      parseMode: { type: "string", description: "HTML or MarkdownV2." },
     },
     output: textOutput(),
     async execute(args) {
@@ -3060,7 +3059,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
             return { chatId, ok: false, error: "chat is not in the allowed roster" };
           }
           try {
-            const id = await t.sendText(numeric, args.text, { parse_mode: validateParseMode(args.parseMode) });
+            const id = await t.sendText(numeric, args.text, { parse_mode: "HTML" });
             return { chatId, ok: true, messageId: id ?? null };
           } catch (err) {
             return { chatId, ok: false, error: err instanceof Error ? err.message : String(err) };

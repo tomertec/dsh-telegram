@@ -35,12 +35,17 @@ Telegram-first production hardening on top of the v0.2.0 web-parity baseline.
 - Callback chat id reads the Bot API shape (`callback_query.message.chat`).
 - Malformed assistant events cannot throw the bridge listener; openclaw timers cancel on new turns.
 - State-change panel refresh is forwarded exactly once and failures log the real `message + stack`.
+- Long messages are split HTML-aware: never inside a tag or entity, with tags rebalanced per part.
+- Send queue retries only transient failures (429/5xx/network/timeout); permanent Telegram 4xx fail once.
+- Model/settings callback payloads are percent-encoded and decode safely; malformed legacy payloads never kill a tap.
+- `telegram_send`/`telegram_reply`/`telegram_broadcast` always deliver their HTML body as HTML.
+- Typing keep-alive self-destructs after 10 minutes if a `turn/end` is lost.
 - Long-poll restart aborts the previous generation; offset survives stop/start; token registry bounded.
 - Unauthorized photos/media receive the allow prompt like text.
 
 ### Tests
 
-- `npm run check`: 213/213 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools).
+- `npm run check`: 222/222 (unit + integration across adapters, bridge, router, transport, keyboard, config, tools); exported version is locked to package.json.
 - ESM smoke imports for `dist/index.js`, `dist/extensions/openclaw.js`, `dist/extensions/reasoning.js`.
 
 ## 0.2.0
