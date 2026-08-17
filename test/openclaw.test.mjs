@@ -106,7 +106,11 @@ test('openclaw streams reasoning and tool lines then collapses to a summary', as
   assert.ok(lastStream.text.includes('<b>\u2713 bash</b> <code>ls -la</code>'), 'result landed: ✓ icon, no trailing status');
 
   const summary = edits[edits.length - 1];
-  assert.equal(summary.text, '\u{1F9E0} 1 thought \u00B7 \u{1F6E0}\uFE0F 1 tool call \u00B7 \u23F1\uFE0F 1s');
+  assert.equal(summary.text, [
+    '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s',
+    '\u2500'.repeat(9),
+    '\u{1F9E0} 1 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177',
+  ].join('\n'));
   assert.equal(host.deletes.length, 0);
 });
 
@@ -121,8 +125,8 @@ test('turn summary adds input/output tokens and cache hit rate', async () => {
   await sleep(20);
 
   const summary = host.edits.at(-1);
-  assert.match(summary.text, /🧠 1 thought · 🛠️ 1 tool call · ⏱️ 1s/);
-  assert.match(summary.text, /📥 输入 900 tok · 📤 输出 120 tok · 💾 缓存命中 44%/);
+  assert.match(summary.text, /🧠 1 次思考 · 🛠️ 1 次工具/);
+  assert.match(summary.text, /📥 输入 900 tok · 📤 输出 120 tok · 💾 命中 44%/);
 });
 
 test('turn summary appends the session stats line', async () => {
@@ -188,7 +192,11 @@ test('tool line commits the reasoning burst and the next burst starts a new line
   assert.ok(first >= 0 && tool >= 0 && second >= 0);
   assert.ok(first < tool && tool < second, 'bursts interleave with the tool line');
   const summary = host.edits.at(-1);
-  assert.equal(summary.text, '\u{1F9E0} 2 thoughts \u00B7 \u{1F6E0}\uFE0F 1 tool call \u00B7 \u23F1\uFE0F 1s');
+  assert.equal(summary.text, [
+    '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s',
+    '\u2500'.repeat(9),
+    '\u{1F9E0} 2 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177',
+  ].join('\n'));
 });
 
 test('reasoning text is HTML-escaped and whitespace folds to one line', async () => {

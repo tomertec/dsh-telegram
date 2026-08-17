@@ -220,6 +220,34 @@ test('approval settle edits the card in place and removes its keyboard', async (
   interactive.detach();
 });
 
+test('goal-scoped approval grants cover every later approval in the same goal', async () => {
+  const delivery = fakeDelivery();
+  const events = fakeEvents();
+  const ctx = { get: (name) => (name === 'approval' ? {} : undefined), on: events.on.bind(events) };
+  const interactive = attachInteractive(ctx, delivery, { goalIdForSession: () => 'goal-42' });
+  const listener = events.listeners.get('approval/request');
+  const request = (callId) => ({
+    agent: { id: 's1', session: { events: [{ seq: 0, type: 'approval/asked', data: { id: `app-${callId}`, callId } }] } },
+    toolName: 'bash',
+    callId,
+    signal: undefined,
+  });
+
+  const first = listener(request('c1'), async () => 'fallback');
+  await new Promise((resolve) => setImmediate(resolve));
+  const prompt = delivery.sent[0];
+  const goalRow = prompt.keyboard.inline_keyboard.find((row) => row[0].callback_data?.startsWith('ap:') && row[0].callback_data.endsWith(':g'));
+  assert.ok(goalRow, 'a goal-scoped allow button is offered when a goal exists');
+  const id = Number(goalRow[0].callback_data.split(':')[1]);
+  assert.equal(interactive.answerApproval(id, 'allowed-goal'), true);
+  await first;
+
+  const secondOutcome = await listener(request('c2'), async () => 'fallback');
+  assert.equal(secondOutcome, 'allowed-once', 'the same goal is auto-allowed without another card');
+  assert.equal(delivery.sent.filter((entry) => !entry.edit).length, 1, 'no second approval card was broadcast');
+  interactive.detach();
+});
+
 test('approval request and settle route to the session-owned chat only', async () => {
   const delivery = fakeDelivery();
   delivery.chatForSession = (sessionId) => (sessionId === 's-owner' ? 777 : undefined);

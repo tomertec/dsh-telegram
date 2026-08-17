@@ -42,6 +42,8 @@ interface PendingApproval {
   sessionId: string;
   toolName: string;
   reason?: string;
+  /** Current goal id, when the chat has one — enables goal-scoped grants. */
+  goalId?: string;
   resolve: (outcome: ApprovalOutcome) => void;
   messageIds: Map<number, number>;
   cardText: string;
@@ -168,7 +170,7 @@ interface CordisEventsLike {
 }
 
 export interface Interactive {
-  answerApproval(id: number, outcome: ApprovalOutcome): boolean;
+  answerApproval(id: number, outcome: ApprovalOutcome | "allowed-goal"): boolean;
   toggleQuestionOption(chatId: number, id: number, questionId: string, optionId: string): Promise<boolean>;
   setQuestionCustom(chatId: number, id: number, questionId: string, text: string): Promise<boolean>;
   submitQuestions(chatId: number, id: number): Promise<boolean>;
@@ -178,6 +180,8 @@ export interface Interactive {
 
 const approvals = new Map<number, PendingApproval>();
 const questions = new Map<number, PendingQuestion>();
+/** Goal ids the user granted: later approvals under the same goal auto-allow. */
+const grantedGoals = new Set<string>();
 let counter = 0;
 
 function mint(): number {
@@ -259,15 +263,18 @@ export function questionKeyboard(pendingId: number, chatId: number): unknown {
   return { inline_keyboard: rows };
 }
 
-function approvalKeyboard(id: number): unknown {
-  return {
-    inline_keyboard: [
-      [
-        { text: "\u2705 Allow once", callback_data: `ap:${id}:y` },
-        { text: "\u274C Reject", callback_data: `ap:${id}:n` },
-      ],
-    ],
-  };
+function approvalKeyboard(id: number, goalId: string | undefined): unknown {
+  const rows: { text: string; callback_data: string }[][] = [];
+  if (goalId !== undefined) {
+    rows.push([
+      { text: "\u{1F7E2} Allow for this goal", callback_data: `ap:${id}:g` },
+    ]);
+  }
+  rows.push([
+    { text: "\u2705 Allow once", callback_data: `ap:${id}:y` },
+    { text: "\u274C Reject", callback_data: `ap:${id}:n` },
+  ]);
+  return { inline_keyboard: rows };
 }
 
 export interface InteractiveOptions {
@@ -275,6 +282,9 @@ export interface InteractiveOptions {
   userQuestions?: QuestionOwnership;
   /** Diagnostic sink; defaults to console.error. */
   log?: (message: string, error?: unknown) => void;
+  /** Resolve the current goal id for one agent/session. Absent = no
+   * goal-scoped approval button. */
+  goalIdForSession?: (sessionId: string) => string | undefined;
 }
 
 interface ToolExecutionLike {
@@ -368,6 +378,7 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery, o
   const disposers: (() => void)[] = [];
   const ownership = options.userQuestions ?? "telegram";
   const log = options.log ?? ((message: string, error?: unknown) => console.error(`[dsh-telegram] ${message}`, error ?? ""));
+  const goalIdForSession = options.goalIdForSession;
 
   if (ctx.get("approval") !== undefined) {
     const events = ctx as unknown as CordisEventsLike;
@@ -375,6 +386,10 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery, o
       events.on("approval/request", (request, next) => {
         const req = request as ApprovalRequestLike;
         if (req.signal?.aborted === true) return Promise.resolve("cancelled");
+        const goalId = goalIdForSession?.(String(req.agent.id));
+        // A previous "Allow for this goal" covers the rest of the goal:
+        // settle without showing another card.
+        if (goalId !== undefined && grantedGoals.has(goalId)) return Promise.resolve("allowed-once");
         const claimed = new Set([...approvals.values()].map((entry) => entry.approvalId));
         const decided = new Set<string>();
         let approvalId: string | undefined;
@@ -408,10 +423,10 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery, o
           };
           const onAbort = () => settle("cancelled");
           const cardText = `\u{1F6E1} Approval requested \u00B7 ${req.toolName}${req.reason ? `\nReason: ${req.reason}` : ""}\nSession: ${req.agent.id}`;
-          const pending: PendingApproval = { id, approvalId, sessionId: req.agent.id, toolName: req.toolName, ...(req.reason === undefined ? {} : { reason: req.reason }), resolve: settle, messageIds: new Map(), cardText };
+          const pending: PendingApproval = { id, approvalId, sessionId: req.agent.id, toolName: req.toolName, ...(req.reason === undefined ? {} : { reason: req.reason }), ...(goalId === undefined ? {} : { goalId }), resolve: settle, messageIds: new Map(), cardText };
           approvals.set(id, pending);
           req.signal?.addEventListener("abort", onAbort, { once: true });
-          void broadcastForSession(delivery, req.agent.id, cardText, approvalKeyboard(id))
+          void broadcastForSession(delivery, req.agent.id, cardText, approvalKeyboard(id, goalId))
             .then((delivered) => {
               for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
             })
@@ -478,6 +493,12 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery, o
     answerApproval(id, outcome) {
       const pending = approvals.get(id);
       if (!pending) return false;
+      if (outcome === "allowed-goal") {
+        if (pending.goalId === undefined) return false;
+        grantedGoals.add(pending.goalId);
+        pending.resolve("allowed-once");
+        return true;
+      }
       pending.resolve(outcome);
       return true;
     },
@@ -542,6 +563,7 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery, o
       for (const pending of questions.values()) pending.reject(new Error("telegram interactive provider was disposed"));
       approvals.clear();
       questions.clear();
+      grantedGoals.clear();
     },
   };
 }

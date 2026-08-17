@@ -120,6 +120,7 @@ import {
   QUEUE_BTN,
   SESSIONS_BTN,
   STATUS_BTN,
+  ABORT_BTN,
   STOP_BTN,
 } from "./telegram/keyboard.js";
 import { SendQueue } from "./telegram/queue.js";
@@ -130,7 +131,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.8";
+export const version = "0.3.9";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -662,7 +663,7 @@ async function openMenuAt(chatId: number, page: number): Promise<void> {
       { label: "\u{1F4CA} Status", cb: "m:status" },
       { label: "\u{1F50C} Plugins", cb: "m:plugins" },
       { label: "\u{1F9F9} Compact", cb: "m:compact" },
-      { label: "\u23F9 Stop", cb: "m:stop" },
+      { label: "\u23F9 Abort", cb: "m:abort" },
       { label: "\u{1F6E0}\uFE0F Host settings", cb: "m:hostsettings" },
       { label: "\u{1F511} Credentials", cb: "m:credentials" },
       { label: "\u{1F510} Allowed", cb: "m:allowed" },
@@ -1881,9 +1882,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     return;
   }
   if (data.startsWith("ap:")) {
-    const [, idText, answer] = data.split(":");
-    const outcome = answer === "y" ? "allowed-once" : "rejected";
-    const accepted = state.interactive?.answerApproval(Number(idText), outcome);
+    const parts = data.split(":");
+    const answer = parts[2];
+    const outcome = answer === "y" ? "allowed-once" : answer === "g" ? "allowed-goal" : "rejected";
+    const accepted = state.interactive?.answerApproval(Number(parts[1]), outcome);
     if (!accepted) await requireTransport().sendText(chatId, "\u274C That approval is already settled.", { parse_mode: "HTML" });
     return;
   }
@@ -2106,10 +2108,11 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openMenuAt(chatId, (menuPageIndex.get(chatId) ?? 0) - 1);
     case "page":
       return;
+    case "abort":
     case "stop": {
       const agentId = boundAgentId(chatId);
       if (agentId === undefined) {
-        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 Stop only aborts this chat's current turn.", { parse_mode: "HTML" });
+        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 Abort only stops this chat's current turn.", { parse_mode: "HTML" });
         return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
       }
       const res = sessionLifecycle.stop(requireCtx(), agentId);
@@ -2252,7 +2255,8 @@ const TELEGRAM_COMMANDS = [
   { command: "menu", description: "Core menu card" },
   { command: "new", description: "Fresh session in the workspace" },
   { command: "compact", description: "Compact the current session" },
-  { command: "stop", description: "Cancel the current turn" },
+  { command: "abort", description: "Abort the current turn" },
+  { command: "stop", description: "Close this chat's session" },
   { command: "models", description: "Browse providers and models" },
   { command: "status", description: "Live status card" },
   { command: "queue", description: "Inspect or edit the agent inbox" },
@@ -2339,10 +2343,11 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
       return setBarCollapsed(chatId, true);
     case RETURN_BTN:
       return setBarCollapsed(chatId, false);
+    case ABORT_BTN:
     case STOP_BTN: {
       const agentId = boundAgentId(chatId);
       if (agentId === undefined) {
-        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 the button only stops this chat's current turn.", { parse_mode: "HTML" });
+        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 Abort only stops this chat's current turn.", { parse_mode: "HTML" });
         return;
       }
       const res = sessionLifecycle.stop(requireCtx(), agentId);
@@ -2383,7 +2388,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       await send(
         [
           "Commands:",
-          "/new /compact /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /menu",
+          "/new /compact /abort /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /menu",
           "/history [sessionId] [limit] \u00B7 /rename <title> \u00B7 /fork [atSeq] \u00B7 /use <sessionId> \u00B7 /archive <sessionId>",
           "/queue \u00B7 /steer <text> \u00B7 /cancel",
           "/goalcreate <objective> [maxRounds] \u00B7 /goaledit <text>",
@@ -2448,14 +2453,25 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       await ephemeral.open(chatId, t);
       await statusPanel.refresh(chatId, t, renderStatus(chatId), true);
       return;
-    case "stop": {
+    case "abort": {
       const agentId = boundAgentId(chatId);
       if (agentId === undefined) {
-        await send("No live agent in this session \u2014 Stop only aborts this chat's current turn.", false);
+        await send("No live agent in this session \u2014 Abort only stops this chat's current turn.", false);
         return;
       }
       const res = sessionLifecycle.stop(ctx, agentId);
       await send(res.text, res.ok);
+      return;
+    }
+    case "stop": {
+      const agentId = boundAgentId(chatId);
+      if (agentId === undefined) {
+        await send("No live agent in this session.", false);
+        return;
+      }
+      const res = await sessionLifecycle.close(agentId, ctx);
+      state.bridge?.bindAgent(chatId, undefined);
+      await send(res.ok ? `${res.text} \u2014 send any message to start a new session.` : res.text, res.ok);
       return;
     }
     case "sessions":
@@ -3249,6 +3265,11 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       {
         userQuestions: state.config.interactive?.userQuestions ?? "telegram",
         log,
+        goalIdForSession: (sessionId) => {
+          const agent = requireCtx().agents?.get(sessionId as never);
+          if (!agent) return undefined;
+          return getGoal(requireCtx(), String(agent.id))?.id;
+        },
       },
     );
 

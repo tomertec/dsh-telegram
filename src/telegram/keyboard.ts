@@ -28,6 +28,9 @@ export const THINKING_BTN = "\u{1F9E0} Thinking";
 /** Bar label for the reasoning picker (unified name; THINKING_BTN kept for
  * stale client bars). */
 export const REASONING_BTN = "\u{1F9E0} Reasoning";
+/** Abort the current turn only; `/stop` is the command that closes the session. */
+export const ABORT_BTN = "\u23F9 Abort";
+/** Legacy bar label from older clients; still dispatches to abort. */
 export const STOP_BTN = "\u23F9 Stop";
 /** Collapses the whole bar to a single return button (more chat history visible). */
 export const COLLAPSE_BTN = "\u{1F5DC}\uFE0F \u6536\u8D77";
@@ -51,6 +54,7 @@ export const BAR_LABELS: readonly string[] = [
   REASONING_BTN,
   THINKING_BTN,
   PRESETS_BTN,
+  ABORT_BTN,
   STOP_BTN,
   COLLAPSE_BTN,
   RETURN_BTN,
@@ -105,7 +109,7 @@ export function buildBarKeyboard(queueCount?: number): Keyboard {
     .text(queueCount === undefined ? QUEUE_BTN : queueBarLabel(queueCount))
     .text(COMPACT_BTN)
     .row()
-    .text(STOP_BTN)
+    .text(ABORT_BTN)
     .text(COLLAPSE_BTN)
     .resized()
     .persistent();
@@ -122,6 +126,7 @@ export function buildCollapsedBarKeyboard(): Keyboard {
 export function normalizeBarLabel(text: string): string | undefined {
   if (text === LEGACY_COLLAPSE_BTN) return COLLAPSE_BTN;
   if (text === LEGACY_RETURN_BTN) return RETURN_BTN;
+  if (text === STOP_BTN) return ABORT_BTN;
   if ((BAR_LABELS as readonly string[]).includes(text)) return text;
   if (text.startsWith(QUEUE_BTN_PREFIX)) return QUEUE_BTN;
   return undefined;

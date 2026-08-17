@@ -3,6 +3,13 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.9
+
+- Approval cards gain `🟢 Allow for this goal`: one tap auto-allows every later approval under the same goal.
+- Abort and stop are split: bar/menu `⏹ Abort` cancels only the current turn (legacy `⏹ Stop` still maps to abort); `/stop` closes the chat's session and unbinds it, `/abort` aborts the current turn.
+- Openclaw turn summary redesigned into a compact aligned card: completion/time header, activity row (thoughts/tools/turns/steps), token row, and LLM/tool/speed row.
+- Redacted the leaked Telegram bot token from issue #6 and resolved the GitHub secret-scanning alert (the token must still be revoked in BotFather).
+
 ## 0.3.8
 
 - Model selection now waits for `opencode-go-responses` to actually appear in the llm registry before switching; a not-yet-registered route returns a clear retryable error instead of `no adapter registered`.

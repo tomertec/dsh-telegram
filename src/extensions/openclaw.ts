@@ -269,12 +269,21 @@ function formatTokensCompact(tokens: number): string {
 }
 
 function buildSummary(draft: Draft, sessionStats?: StatusStats): string {
-  const parts: string[] = [];
-  if (draft.reasoningSteps > 0) parts.push(`\u{1F9E0} ${draft.reasoningSteps} thought${draft.reasoningSteps === 1 ? "" : "s"}`);
-  if (draft.toolCalls > 0) parts.push(`\u{1F6E0}\uFE0F ${draft.toolCalls} tool call${draft.toolCalls === 1 ? "" : "s"}`);
   const seconds = Math.max(1, Math.round((Date.now() - draft.startedAt) / 1000));
-  parts.push(`\u23F1\uFE0F ${seconds}s`);
-  const lines = [parts.join(" \u00B7 ")];
+  const lines = [
+    `\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F ${seconds}s`,
+    "\u2500".repeat(9),
+  ];
+
+  const activity: string[] = [];
+  if (draft.reasoningSteps > 0) activity.push(`\u{1F9E0} ${draft.reasoningSteps} \u6B21\u601D\u8003`);
+  if (draft.toolCalls > 0) activity.push(`\u{1F6E0}\uFE0F ${draft.toolCalls} \u6B21\u5DE5\u5177`);
+
+  const statsLine = sessionStats === undefined ? undefined : renderStatsLine(sessionStats);
+  const statsSegments = statsLine?.split(" | ") ?? [];
+  if (statsSegments[0] !== undefined) activity.push(statsSegments[0]);
+  if (activity.length > 0) lines.push(activity.join(" \u00B7 "));
+
   const billed = draft.uncachedInputTokens + draft.cacheReadTokens + draft.cacheWriteTokens;
   if (billed > 0 || draft.outputTokens > 0) {
     const tokens = [
@@ -283,12 +292,13 @@ function buildSummary(draft: Draft, sessionStats?: StatusStats): string {
     ];
     if (billed > 0) {
       const hit = Math.round((draft.cacheReadTokens / billed) * 100);
-      tokens.push(`\u{1F4BE} \u7F13\u5B58\u547D\u4E2D ${hit}%`);
+      tokens.push(`\u{1F4BE} \u547D\u4E2D ${hit}%`);
     }
     lines.push(tokens.join(" \u00B7 "));
   }
-  const statsLine = sessionStats === undefined ? undefined : renderStatsLine(sessionStats);
-  if (statsLine !== undefined) lines.push(statsLine);
+
+  const performance = statsSegments.slice(1).filter((segment) => segment !== undefined).join(" \u00B7 ");
+  if (performance !== "") lines.push(performance);
   return lines.join("\n");
 }
 
