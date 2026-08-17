@@ -3,6 +3,14 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.7
+
+Fixes `❌ Stream ended without finish_reason` for `opencode-go/gpt-5.6-luna` and `opencode-go/grok-4.5`.
+
+- Root cause: the Go-tier gateway only serves these two models through the OpenAI **Responses** API; its chat-completions stream ends without a `finish_reason`, which pi-ai correctly reports as `TRANSPORT`.
+- dsh-telegram now provisions an additive `opencode-go-responses` route in `llm-pi-ai` settings (same `OPENCODE_GO_API_KEY`, `/zen/go/v1`, `cacheRetention: none` so no stateful session headers), then transparently repoints model selections of `gpt-5.6-luna` / `grok-4.5` to that route.
+- The route is idempotent and never rewrites existing provider settings; all other `opencode-go` models keep using chat completions.
+
 ## 0.3.6
 
 Issue #5.

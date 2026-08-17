@@ -66,6 +66,7 @@ import { exportSessionLog } from "./harness/adapters/downloads.js";
 import { listDynamicCordis } from "./harness/adapters/dynamicCordis.js";
 import { probeCapabilities, missingServices } from "./harness/adapters/capabilities.js";
 import { attachInteractive, type Interactive, questionIdAt } from "./harness/adapters/interactive.js";
+import { ensureOpencodeGoResponsesRoute, normalizeOpencodeGoModel } from "./harness/adapters/opencodeGo.js";
 import { resetStatusStats, statusSnapshot } from "./harness/adapters/status.js";
 import { Ephemeral } from "./telegram/ephemeral.js";
 import { plain, truncate } from "./telegram/html.js";
@@ -129,7 +130,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.6";
+export const version = "0.3.7";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -552,7 +553,11 @@ async function createSessionForChat(
           if (live) return { result: { ok: true, text: "Session is already live." }, agentId: boundId };
         }
       }
-      return sessionLifecycle.create(requireCtx(), state.workspaceRoot, model ?? state.config.model, {
+      const requested = model ?? state.config.model ?? {};
+      const selectedModel = requested.provider !== undefined && requested.model !== undefined
+        ? normalizeOpencodeGoModel(requested.provider, requested.model)
+        : requested;
+      return sessionLifecycle.create(requireCtx(), state.workspaceRoot, selectedModel, {
         ...(agentPreset === undefined ? {} : { agentPreset }),
         replaceSessionId: state.bridge?.agentIdForChat(chatId),
       });
@@ -1535,12 +1540,13 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
         // bridge's default so future sessions inherit it.
         const { result: res, agentId } = await createSessionForChat(chatId, { provider, model }, undefined, true);
         bindCreatedSession(chatId, agentId);
+        const selected = normalizeOpencodeGoModel(provider, model);
         if (res.ok) {
-          state.config.model = { provider, model };
+          state.config.model = { provider: selected.provider, model: selected.model };
           writeConfig(state.configRoot, state.config);
         }
-        log(`model-select (no agent) provider=${provider} model=${model} -> ${res.ok ? "ok" : res.text}`);
-        await requireTransport().sendText(chatId, res.ok ? `\u2728 ${plain(res.text)} \u00B7 model ${plain(provider)}/${plain(model)}` : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        log(`model-select (no agent) provider=${provider} model=${model} -> ${res.ok ? "ok" : res.text}${selected.provider === provider ? "" : ` (routed via ${selected.provider})`}`);
+        await requireTransport().sendText(chatId, res.ok ? `\u2728 ${plain(res.text)} \u00B7 model ${plain(selected.provider)}/${plain(selected.model)}` : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
         refreshAllPanels();
         scheduleBarSync(chatId, 0);
         return openModelsCard(chatId);
@@ -3118,6 +3124,17 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
   // freshly provided service — cordis provide registers through fiber.effect).
   // registerExtension is name-keyed, so loader-driven duplicates are safe.
   registerExtension(reasoningExtension);
+
+  // opencode-go's chat/completions stream for Responses-native Go models
+  // (gpt-5.6-luna / grok-4.5) never sends finish_reason. Provision the
+  // additive Responses route once so model selection can route around it.
+  try {
+    if (ctx.get("llm") !== undefined) {
+      void ensureOpencodeGoResponsesRoute(ctx, log).catch((err) => log("opencode-go responses route check failed", err));
+    }
+  } catch {
+    /* no llm service in this profile */
+  }
 
   ctx.on("internal/update", (incoming, _noSave, next) => {
     try {

@@ -315,6 +315,27 @@ test('selectSessionModel uses ctx.get("llm") so a strict context without llm inj
   assert.match(res.text, /opencode-go\/gpt-x/);
 });
 
+test('selectSessionModel repoints opencode-go Responses-native models automatically', async () => {
+  const agent = queueAgent('s1', [], []);
+  agent.ctx = { on: () => () => {} };
+  const seen = [];
+  const ctx = {
+    agents: {
+      get: (id) => (id === 's1' ? agent : undefined),
+      list: () => [agent],
+    },
+    get: (name) => (name === 'llm' ? {
+      resolveCallConfig: async (config) => {
+        seen.push(config);
+        return config;
+      },
+    } : undefined),
+  };
+  const res = await selectSessionModel(ctx, 's1', 'opencode-go', 'gpt-5.6-luna');
+  assert.equal(res.ok, true);
+  assert.deepEqual(seen[0], { provider: 'opencode-go-responses', model: 'gpt-5.6-luna' });
+});
+
 test('deleteSession removes both raw and wrapped session directories', async () => {
   const { deleteSession } = await import('../dist/harness/adapters/sessions.js');
   const home = mkdtempSync(join(tmpdir(), 'dsh-delete-session-'));

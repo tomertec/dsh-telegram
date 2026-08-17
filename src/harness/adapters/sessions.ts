@@ -13,6 +13,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { installModelSelection, type ModelSelectionRef, type AgentHandle } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, MessageId } from "@deepseek-ai/dsh-llm";
 import { SessionId, type Session as DshSession } from "@deepseek-ai/dsh-session";
+import { normalizeOpencodeGoModel } from "./opencodeGo.js";
 import { fail, ok, type AdapterResult } from "./types.js";
 
 export interface SessionEntry {
@@ -647,7 +648,8 @@ export async function selectSessionModel(
     | undefined;
   if (!llm) return fail("llm service is unavailable in this profile");
   try {
-    const resolved = await llm.resolveCallConfig({ provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) });
+    const selected = normalizeOpencodeGoModel(provider, model);
+    const resolved = await llm.resolveCallConfig({ provider: selected.provider, model: selected.model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) });
     let entry = selections.get(sessionId);
     if (!entry) {
       const ref: ModelSelectionRef = { current: undefined, assembled: undefined };
