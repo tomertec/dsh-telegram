@@ -110,6 +110,21 @@ test('openclaw streams reasoning and tool lines then collapses to a summary', as
   assert.equal(host.deletes.length, 0);
 });
 
+test('turn summary adds input/output tokens and cache hit rate', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'think' } }));
+  ctx.emit('agent-1', ev('tool/call', { callId: 'call_tok', name: 'bash', arguments: 'ls' }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'usage', usage: { inputTokens: 500, outputTokens: 120, cacheReadTokens: 400, cacheWriteTokens: 0 } } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const summary = host.edits.at(-1);
+  assert.match(summary.text, /🧠 1 thought · 🛠️ 1 tool call · ⏱️ 1s/);
+  assert.match(summary.text, /📥 输入 900 tok · 📤 输出 120 tok · 💾 缓存命中 44%/);
+});
+
 test('tool result swaps the icon to ✓ and drops the running status', async () => {
   const { host, ctx } = await setup();
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));

@@ -3,6 +3,12 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.3
+
+- Inbound routing now has two per-chat lanes: real chat content stays FIFO (rapid first messages still produce one session), while bar buttons and inline callbacks run in a responsive UI lane — tapping `🗜️ 收起` collapses the bar immediately and tapping `Goal` opens the card immediately, even while a turn is working.
+- Session creation is serialized per chat across both lanes, and auto-create paths reuse a session that finished first instead of replacing it.
+- Openclaw turn summary adds a second line: `📥 输入 N tok · 📤 输出 M tok · 💾 缓存命中 X%`, counted per turn from usage chunks.
+
 ## 0.3.2
 
 Issues #2 and #3: a real web-profile integration regression test proves the `tools/execute` seam settles Telegram questions end-to-end, and assistant replies now render Markdown as valid Telegram HTML.

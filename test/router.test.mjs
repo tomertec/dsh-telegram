@@ -109,6 +109,75 @@ test('router serializes updates per chat in arrival order and isolates chats', a
   assert.equal(calls.at(-1), 'end:7:fast-7');
 });
 
+test('bar buttons and callbacks run immediately instead of waiting behind a slow inbound turn', async () => {
+  const calls = [];
+  let releaseSlow;
+  const slow = new Promise((resolve) => {
+    releaseSlow = resolve;
+  });
+  const t = fakeTransport();
+  attachRouter({
+    transport: t,
+    isAllowed: () => true,
+    onCommand: () => calls.push('command'),
+    onBarButton: (_chatId, label) => calls.push(`bar:${label}`),
+    onCallback: (_chatId, data) => calls.push(`callback:${data}`),
+    onUserText: (_chatId, text) => {
+      calls.push(`text:${text}`);
+      if (text === 'slow-turn') return slow;
+      return undefined;
+    },
+    onPhoto: () => calls.push('photo'),
+    onUnauthorized: () => calls.push('unauthorized'),
+  });
+  const h = t.handlers();
+  const chatId = 71;
+  const pendingTurn = h.onText(chatId, 'slow-turn');
+  const collapse = h.onText(chatId, '\u{1F5DC}\uFE0F \u6536\u8D77');
+  const goal = h.onCallback(chatId, 'm:goals');
+  await new Promise((resolve) => setImmediate(resolve));
+  const snapshot = [...calls];
+  releaseSlow();
+  await pendingTurn;
+  await collapse;
+  await goal;
+  assert.deepEqual(snapshot, ['text:slow-turn', 'bar:\u{1F5DC}\uFE0F \u6536\u8D77', 'callback:m:goals']);
+});
+
+test('normal inbound text still stays FIFO behind a slow turn in the same chat', async () => {
+  const calls = [];
+  let releaseSlow;
+  const slow = new Promise((resolve) => {
+    releaseSlow = resolve;
+  });
+  const t = fakeTransport();
+  attachRouter({
+    transport: t,
+    isAllowed: () => true,
+    onCommand: () => calls.push('command'),
+    onBarButton: () => calls.push('bar'),
+    onCallback: () => calls.push('callback'),
+    onUserText: (_chatId, text) => {
+      calls.push(`start:${text}`);
+      if (text === 'slow-turn') return slow;
+      return undefined;
+    },
+    onPhoto: () => calls.push('photo'),
+    onUnauthorized: () => calls.push('unauthorized'),
+  });
+  const h = t.handlers();
+  const chatId = 72;
+  const pendingTurn = h.onText(chatId, 'slow-turn');
+  const followup = h.onText(chatId, 'next message');
+  await new Promise((resolve) => setImmediate(resolve));
+  const snapshot = [...calls];
+  releaseSlow();
+  await pendingTurn;
+  await followup;
+  assert.deepEqual(snapshot, ['start:slow-turn'], 'the second inbound waits');
+  assert.deepEqual(calls, ['start:slow-turn', 'start:next message']);
+});
+
 test('a rejected handler does not wedge the per-chat chain', async () => {
   const calls = [];
   const t = fakeTransport();

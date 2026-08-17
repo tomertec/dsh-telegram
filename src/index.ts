@@ -129,7 +129,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.2";
+export const version = "0.3.3";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -522,6 +522,11 @@ function currentAgent(chatId?: number): Agent | undefined {
   return agents[0];
 }
 
+/** Per-chat serialization for session creation. With router UI lanes, a
+ * first inbound message and a fast `✨ New` / model-select tap can run
+ * concurrently; this gate guarantees they still produce one session. */
+const sessionCreateChains = new Map<number, Promise<unknown>>();
+
 /**
  * Create this chat's next session. The old chat-owned agent (and only that
  * agent) is closed after the new one publishes; `agentPreset` follows web
@@ -531,11 +536,36 @@ async function createSessionForChat(
   chatId: number,
   model?: { provider?: string; model?: string },
   agentPreset?: string,
+  onlyIfUnbound = false,
 ): Promise<ReturnType<SessionLifecycle["create"]>> {
-  return sessionLifecycle.create(requireCtx(), state.workspaceRoot, model ?? state.config.model, {
-    ...(agentPreset === undefined ? {} : { agentPreset }),
-    replaceSessionId: state.bridge?.agentIdForChat(chatId),
+  const previous = sessionCreateChains.get(chatId) ?? Promise.resolve();
+  const run = previous
+    .catch(() => {})
+    .then(async () => {
+      // A fast UI tap (Models auto-create) may reach the gate after the first
+      // inbound message already created and bound this chat's session. Reuse
+      // that session instead of replacing it out from under the chat.
+      if (onlyIfUnbound) {
+        const boundId = state.bridge?.agentIdForChat(chatId);
+        if (boundId !== undefined) {
+          const live = requireCtx().agents?.get(boundId as never);
+          if (live) return { result: { ok: true, text: "Session is already live." }, agentId: boundId };
+        }
+      }
+      return sessionLifecycle.create(requireCtx(), state.workspaceRoot, model ?? state.config.model, {
+        ...(agentPreset === undefined ? {} : { agentPreset }),
+        replaceSessionId: state.bridge?.agentIdForChat(chatId),
+      });
+    });
+  const settled = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  sessionCreateChains.set(chatId, settled);
+  void settled.then(() => {
+    if (sessionCreateChains.get(chatId) === settled) sessionCreateChains.delete(chatId);
   });
+  return run;
 }
 
 /** Cards that should re-read their data source when web-side settings/plugin
@@ -1493,7 +1523,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
         // Auto-create one with the chosen model (same path as `✨ New`)
         // instead of failing the tap, and persist the choice as the
         // bridge's default so future sessions inherit it.
-        const { result: res, agentId } = await createSessionForChat(chatId, { provider, model });
+        const { result: res, agentId } = await createSessionForChat(chatId, { provider, model }, undefined, true);
         if (agentId !== undefined) state.bridge?.bindAgent(chatId, agentId);
         if (res.ok) {
           state.config.model = { provider, model };
@@ -2851,7 +2881,7 @@ async function dispatchPhoto(chatId: number, fileId: string, caption: string, me
   let agent = currentAgent(chatId);
   if (!agent) {
     // First image starts this chat's own session, same as first text.
-    const created = await sessionLifecycle.create(ctx, state.workspaceRoot, state.config.model);
+    const created = await createSessionForChat(chatId, state.config.model, undefined, true);
     if (!created.result.ok || created.agentId === undefined) {
       await t.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
       return;
@@ -3271,10 +3301,12 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         const boundId = state.bridge?.agentIdForChat(chatId);
         const chatAgent = boundId === undefined ? undefined : requireCtx().agents?.get(boundId as never);
         if (chatAgent === undefined) {
-          // AWAITED, not fire-and-forget: the router's per-chat FIFO can only
-          // protect "two rapid first messages → two sessions" if the handler
-          // promise spans the whole create+bind+deliver path.
-          const created = await sessionLifecycle.create(requireCtx(), state.workspaceRoot, state.config.model);
+          // AWAITED, not fire-and-forget: the router's per-chat user FIFO can
+          // only protect "two rapid first messages → two sessions" if the handler
+          // promise spans the whole create+bind+deliver path. The shared
+          // per-chat session gate additionally serializes a fast UI tap
+          // (✨ New / model select) that races the first message.
+          const created = await createSessionForChat(chatId, state.config.model, undefined, true);
           if (created.agentId !== undefined) state.bridge?.bindAgent(chatId, created.agentId);
           if (!created.result.ok) {
             await state.transport?.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });

@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.2-2ea44f" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.3-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-244%2F244%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
@@ -51,13 +51,14 @@ DeepSeek Harness's web UI is the gold standard for controlling an agent: session
 ## Features
 
 - **🔀 Multi-chat isolation** — per-chat agent bindings, per-chat FIFO inbound router that spans the whole create→bind→deliver path (two rapid first messages can never create two sessions), unbound chats fail closed for display too
+- **⚡ Responsive UI lane** — bar buttons and inline callbacks (collapse bar, Goal, menu navigation, question cards) run immediately instead of waiting behind a slow inbound turn; session creation stays serialized per chat across lanes
 - **🎛️ Button-first UX** — persistent reply bar (`☰ Menu · ✨ New · 🧩 Models` …) plus ephemeral inline cards for sessions, workspaces, goals, skills, subagents, presets, settings, credentials, llm/models, host, jobs, plugins and dynamic inventory
 - **🗂️ Project-grouped sessions** — the Sessions card mirrors the web display-title chain (`session/title` → cwd basename → id), groups sessions by workspace project, opens the running project first, offers a `🔀 项目` switcher, per-row Chinese `归档`/`删除` actions, and hides archived sessions with a live `🗄N` count
 - **💡 Bar control** — Menu page 1 has a `💡 收起 Bar / 显示 Bar` switch and `/bar [on|off]` toggles the keyboard; the bar's `🗜️ 收起` hides it without leaving any carrier message behind
 - **🎯 Goal in menu** — Goal lives in the first menu page (shares a row with Capabilities); the card is display/edit/pause only, and `/goal <objective> [maxRounds]` starts a goal
 - **🗂️ Workspaces are usable** — a Workspace detail card has `✅ 使用此项目` (set active project for new sessions) and `🧭 会话` (open its sessions)
 - **🌐 Web-parity surface** — adapters mirror the web ApiProxy RPC contract: `session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`, subagents, host, workspace, agent presets, skills, goals, settings, credentials, llm providers/discovery
-- **⚡ Openclaw-style live feed** — separate thinking lane, live tool progress, typewriter answer draft, collapse summary on delivery (`outbound.liveFeed`, hot-toggleable)
+- **⚡ Openclaw-style live feed** — separate thinking lane, live tool progress, typewriter answer draft, and a turn summary with thoughts, tool calls, duration, input/output tokens, and cache hit rate (`outbound.liveFeed`, hot-toggleable)
 - **📝 HTML-aware long sends** — messages over 4096 chars are split on newline/space boundaries, never inside tags or entities, with tags rebalanced per part
 - **♻️ Reliability-first queue** — per-chat FIFO + global sliding-window rate limit; retries only 429/5xx/network/timeout, permanent 4xx fails once; restart-safe long polling with offset preservation
 - **🔁 Hot update & hot plug** — `internal/update` live-applies whitelist/rules/rate/length/watch without restart; teardown reverses every mount effect and re-apply is idempotent

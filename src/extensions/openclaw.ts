@@ -137,6 +137,11 @@ interface Draft {
   dirty: boolean;
   timer?: ReturnType<typeof setTimeout>;
   sending?: Promise<number | undefined>;
+  /** Per-turn token meter folds (same vocabulary as the web status strip). */
+  uncachedInputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
 }
 
 function toolEmoji(name: string): string {
@@ -255,24 +260,46 @@ function render(draft: Draft, title: string): string {
   return lines.join("\n");
 }
 
+function formatTokensCompact(tokens: number): string {
+  const scaled = (value: number): string => (value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10));
+  if (tokens < 1e3) return String(tokens);
+  if (tokens < 1e6) return `${scaled(tokens / 1e3)}K`;
+  return `${scaled(tokens / 1e6)}M`;
+}
+
 function buildSummary(draft: Draft): string {
   const parts: string[] = [];
   if (draft.reasoningSteps > 0) parts.push(`\u{1F9E0} ${draft.reasoningSteps} thought${draft.reasoningSteps === 1 ? "" : "s"}`);
   if (draft.toolCalls > 0) parts.push(`\u{1F6E0}\uFE0F ${draft.toolCalls} tool call${draft.toolCalls === 1 ? "" : "s"}`);
   const seconds = Math.max(1, Math.round((Date.now() - draft.startedAt) / 1000));
   parts.push(`\u23F1\uFE0F ${seconds}s`);
-  return parts.join(" \u00B7 ");
+  const head = parts.join(" \u00B7 ");
+  const billed = draft.uncachedInputTokens + draft.cacheReadTokens + draft.cacheWriteTokens;
+  if (billed > 0 || draft.outputTokens > 0) {
+    const tokens = [
+      `\u{1F4E5} \u8F93\u5165 ${formatTokensCompact(billed)} tok`,
+      `\u{1F4E4} \u8F93\u51FA ${formatTokensCompact(draft.outputTokens)} tok`,
+    ];
+    if (billed > 0) {
+      const hit = Math.round((draft.cacheReadTokens / billed) * 100);
+      tokens.push(`\u{1F4BE} \u7F13\u5B58\u547D\u4E2D ${hit}%`);
+    }
+    return `${head}\n${tokens.join(" \u00B7 ")}`;
+  }
+  return head;
 }
 
 interface SessionEventLike {
   type?: string;
   data?: {
     turn?: number;
+    usage?: TokenUsageLike;
     chunk?: {
       type?: string;
       blockType?: string;
       index?: number;
       text?: string;
+      usage?: TokenUsageLike;
       block?: { type?: string; text?: string };
     };
     name?: string;
@@ -285,6 +312,13 @@ interface SessionEventLike {
       content?: readonly { type?: string; isError?: boolean }[];
     };
   };
+}
+
+interface TokenUsageLike {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 /** Cordis dependency: the main dsh-telegram plugin's provided bridge host.
@@ -378,6 +412,10 @@ export function apply(ctx: Context, _config?: unknown): void {
         toolCalls: 0,
         startedAt: Date.now(),
         dirty: false,
+        uncachedInputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
       });
       return;
     }
@@ -451,6 +489,13 @@ export function apply(ctx: Context, _config?: unknown): void {
     // partial stream of the same block instead of duplicating it.
     if (type === "assistant/chunk") {
       const chunk = event.data?.chunk;
+      const usage = chunk?.type === "usage" ? chunk.usage : event.data?.usage;
+      if (usage !== undefined) {
+        draft.uncachedInputTokens += usage.inputTokens ?? 0;
+        draft.outputTokens += usage.outputTokens ?? 0;
+        draft.cacheReadTokens += usage.cacheReadTokens ?? 0;
+        draft.cacheWriteTokens += usage.cacheWriteTokens ?? 0;
+      }
       const deltaText =
         chunk !== undefined && (chunk.type === "text-delta" || chunk.type === "reasoning-delta") && typeof chunk.text === "string" && chunk.text !== ""
           ? chunk.text
