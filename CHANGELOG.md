@@ -3,6 +3,12 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.8
+
+- Model selection now waits for `opencode-go-responses` to actually appear in the llm registry before switching; a not-yet-registered route returns a clear retryable error instead of `no adapter registered`.
+- The provisioned route model entries are minimal (no reasoning-effort map), maximizing compatibility with older pi-ai settings validators.
+- Stop semantics fixed: `⏹ Stop` now aborts only the current turn and keeps queued messages; it never falls back to another chat's/session's agent, and the reply says “Stopping the current turn” instead of “Cancelling <session-id>”.
+
 ## 0.3.7
 
 Fixes `❌ Stream ended without finish_reason` for `opencode-go/gpt-5.6-luna` and `opencode-go/grok-4.5`.

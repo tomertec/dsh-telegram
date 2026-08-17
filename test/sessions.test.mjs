@@ -324,12 +324,21 @@ test('selectSessionModel repoints opencode-go Responses-native models automatica
       get: (id) => (id === 's1' ? agent : undefined),
       list: () => [agent],
     },
-    get: (name) => (name === 'llm' ? {
-      resolveCallConfig: async (config) => {
-        seen.push(config);
-        return config;
-      },
-    } : undefined),
+    get: (name) => {
+      if (name === 'llm') return {
+        listProviders: () => [{ id: 'opencode-go-responses' }],
+        resolveCallConfig: async (config) => {
+          seen.push(config);
+          return config;
+        },
+      };
+      if (name === 'settings') return {
+        writable: true,
+        describe: () => [{ ns: 'llm-pi-ai', value: { providers: { 'opencode-go-responses': {} } }, revision: 1 }],
+        update: async () => {},
+      };
+      return undefined;
+    },
   };
   const res = await selectSessionModel(ctx, 's1', 'opencode-go', 'gpt-5.6-luna');
   assert.equal(res.ok, true);

@@ -18,9 +18,10 @@ test('normalizeOpencodeGoModel repoints only Go Responses-native models', () => 
 
 test('ensureOpencodeGoResponsesRoute adds one additive settings route and is idempotent', async () => {
   const writes = [];
+  const llmProviders = ['opencode-go'];
   const ctx = {
     get: (name) => {
-      if (name === 'llm') return {};
+      if (name === 'llm') return { listProviders: () => llmProviders.map((id) => ({ id })) };
       if (name === 'settings') return settings;
       return undefined;
     },
@@ -34,6 +35,7 @@ test('ensureOpencodeGoResponsesRoute adds one additive settings route and is ide
     }],
     update: async (ns, patch, revision) => {
       writes.push({ ns, patch, revision });
+      llmProviders.push(OPENCODE_GO_RESPONSES_ROUTE);
       // The real settings service deep-merges the patch.
       ctx.get('settings').describe = () => [{
         ns: 'llm-pi-ai',

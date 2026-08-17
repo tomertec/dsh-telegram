@@ -13,7 +13,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { installModelSelection, type ModelSelectionRef, type AgentHandle } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, MessageId } from "@deepseek-ai/dsh-llm";
 import { SessionId, type Session as DshSession } from "@deepseek-ai/dsh-session";
-import { normalizeOpencodeGoModel } from "./opencodeGo.js";
+import { ensureOpencodeGoResponsesRoute, normalizeOpencodeGoModel, opencodeGoModelUsesResponses } from "./opencodeGo.js";
 import { fail, ok, type AdapterResult } from "./types.js";
 
 export interface SessionEntry {
@@ -649,6 +649,12 @@ export async function selectSessionModel(
   if (!llm) return fail("llm service is unavailable in this profile");
   try {
     const selected = normalizeOpencodeGoModel(provider, model);
+    if (opencodeGoModelUsesResponses(provider, model)) {
+      const ready = await ensureOpencodeGoResponsesRoute(ctx, (message, error) => console.error(`[dsh-telegram] ${message}`, error ?? ""));
+      if (!ready) {
+        return fail(`${selected.provider} route is not registered in the llm registry \u2014 restart dsh so the newly persisted route loads, then tap again`);
+      }
+    }
     const resolved = await llm.resolveCallConfig({ provider: selected.provider, model: selected.model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) });
     let entry = selections.get(sessionId);
     if (!entry) {
@@ -1003,13 +1009,15 @@ export class SessionLifecycle {
     return ok(`\u23F9 Closed ${agentId}`);
   }
 
-  /** Cancel the current turn of one agent (defaults to the first live agent). */
+  /** Cancel the current turn of one agent (defaults to the first live agent).
+   * `keepInbox: true` preserves queued messages: only the in-flight turn is
+   * aborted, the session and its pending work stay alive. */
   stop(ctx: Context, agentId?: string): AdapterResult {
     const agents = ctx.agents?.list() ?? [];
-    const agent = agentId !== undefined ? agents.find((a) => a.id === agentId) : agents[0];
-    if (!agent) return ok("Nothing is running.");
+    const agent = agentId !== undefined ? agents.find((a) => String(a.id) === String(agentId)) : agents[0];
+    if (!agent) return agentId === undefined ? ok("Nothing is running.") : fail("no live agent in this session");
     agent.cancel({ kind: "user" }, { keepInbox: true });
-    return ok(`\u23F9 Cancelling ${agent.id}\u2026`);
+    return ok("\u23F9 Stopping the current turn \u2014 queued messages are kept.");
   }
 
   /** Plugin teardown: dispose every agent this plugin created or adopted. */

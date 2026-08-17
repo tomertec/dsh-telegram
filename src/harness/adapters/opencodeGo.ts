@@ -24,21 +24,18 @@ const GO_RESPONSES_MODEL_FACTS: Record<string, {
   contextWindow: number;
   maxTokens: number;
   input: string[];
-  reasoningEfforts: Record<string, string>;
 }> = {
   "gpt-5.6-luna": {
     name: "GPT 5.6 Luna",
     contextWindow: 1_050_000,
     maxTokens: 128_000,
     input: ["text", "image"],
-    reasoningEfforts: { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
   },
   "grok-4.5": {
     name: "Grok 4.5",
     contextWindow: 500_000,
     maxTokens: 500_000,
     input: ["text", "image"],
-    reasoningEfforts: { low: "low", medium: "medium", high: "high" },
   },
 };
 
@@ -63,22 +60,40 @@ export function opencodeGoModelUsesResponses(provider: string | undefined, model
   return provider === "opencode-go" && model !== undefined && GO_RESPONSES_MODEL_IDS.has(model);
 }
 
-/** Idempotently add the additive Responses route to `llm-pi-ai` settings. */
-export function ensureOpencodeGoResponsesRoute(ctx: Context, log: (message: string, error?: unknown) => void): Promise<boolean> {
-  if (provisioning !== undefined) return provisioning;
-  provisioning = (async () => {
-    const llm = ctx.get("llm");
-    if (llm === undefined) return false;
-    const settings = ctx.get("settings") as SettingsLike | undefined;
-    if (settings === undefined || settings.writable === false) return false;
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function adapterProviders(ctx: Context): string[] {
+  const llm = ctx.get("llm") as { listProviders?(): { id: string }[] } | undefined;
+  try {
+    return (llm?.listProviders?.() ?? []).map((entry) => entry.id);
+  } catch {
+    return [];
+  }
+}
+
+/** Provision the route and wait until the llm registry actually advertises it. */
+async function provisionOnce(ctx: Context, log: (message: string, error?: unknown) => void): Promise<boolean> {
+  const settings = ctx.get("settings") as SettingsLike | undefined;
+  if (settings === undefined || settings.writable === false) {
+    log(`skipped ${OPENCODE_GO_RESPONSES_ROUTE} provisioning: settings service is unavailable or read-only`);
+    return false;
+  }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const descriptor = settings.describe({ redactSecrets: true }).find((entry) => entry.ns === "llm-pi-ai");
     if (descriptor === undefined) return false;
     const value = (descriptor.value ?? {}) as { providers?: Record<string, { apiKeyEnv?: string }> };
     const providers = value.providers ?? {};
-    if (providers[OPENCODE_GO_RESPONSES_ROUTE] !== undefined) return true;
+    if (providers[OPENCODE_GO_RESPONSES_ROUTE] !== undefined) {
+      if (adapterProviders(ctx).includes(OPENCODE_GO_RESPONSES_ROUTE)) return true;
+      log(`${OPENCODE_GO_RESPONSES_ROUTE} exists in settings but the llm registry has not picked it up yet; retrying`);
+      await sleep(300);
+      continue;
+    }
     const goRoute = providers["opencode-go"];
-    if (goRoute === undefined) return false;
-
+    if (goRoute === undefined) {
+      log(`skipped ${OPENCODE_GO_RESPONSES_ROUTE} provisioning: no opencode-go provider is configured`);
+      return false;
+    }
     const patch = {
       providers: {
         [OPENCODE_GO_RESPONSES_ROUTE]: {
@@ -94,7 +109,6 @@ export function ensureOpencodeGoResponsesRoute(ctx: Context, log: (message: stri
             contextWindow: facts.contextWindow,
             maxTokens: facts.maxTokens,
             input: facts.input,
-            reasoningEfforts: facts.reasoningEfforts,
           })),
         },
       },
@@ -102,11 +116,23 @@ export function ensureOpencodeGoResponsesRoute(ctx: Context, log: (message: stri
     try {
       await settings.update("llm-pi-ai", patch, descriptor.revision);
       log(`provisioned ${OPENCODE_GO_RESPONSES_ROUTE} route for opencode-go Responses models`);
-      return true;
+      await sleep(300);
     } catch (err) {
-      log(`failed to provision ${OPENCODE_GO_RESPONSES_ROUTE} route`, err);
-      return false;
+      log(`failed to provision ${OPENCODE_GO_RESPONSES_ROUTE} route (attempt ${attempt + 1}/3)`, err);
+      await sleep(300);
     }
+  }
+  return adapterProviders(ctx).includes(OPENCODE_GO_RESPONSES_ROUTE);
+}
+
+/** Idempotently add the additive Responses route and wait for adapter
+ * registration. Safe to call from model selection: it blocks until the route
+ * is actually usable or a bounded retry budget is exhausted. */
+export function ensureOpencodeGoResponsesRoute(ctx: Context, log: (message: string, error?: unknown) => void): Promise<boolean> {
+  if (provisioning !== undefined) return provisioning;
+  provisioning = (async () => {
+    if (ctx.get("llm") === undefined) return false;
+    return provisionOnce(ctx, log);
   })();
   void provisioning.then(() => {
     provisioning = undefined;

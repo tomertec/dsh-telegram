@@ -70,6 +70,17 @@ test('SessionLifecycle.create closes only the replaced chat-owned session', asyn
   assert.equal(ctx.created[1].handle.disposed, 1, 'teardown disposes every tracked session');
 });
 
+test('SessionLifecycle.stop aborts only the current turn and keeps the inbox', () => {
+  const lifecycle = new SessionLifecycle();
+  const cancelCalls = [];
+  const agent = { id: 's1', cancel: (cause, options) => cancelCalls.push({ cause, options }) };
+  const ctx = { agents: { list: () => [agent] } };
+  const res = lifecycle.stop(ctx, 's1');
+  assert.equal(res.ok, true);
+  assert.match(res.text, /Stopping the current turn/);
+  assert.deepEqual(cancelCalls, [{ cause: { kind: 'user' }, options: { keepInbox: true } }]);
+});
+
 test('SessionLifecycle.create fails gracefully without agents service', async () => {
   const lifecycle = new SessionLifecycle();
   const res = await lifecycle.create({}, '/tmp');

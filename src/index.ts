@@ -66,7 +66,7 @@ import { exportSessionLog } from "./harness/adapters/downloads.js";
 import { listDynamicCordis } from "./harness/adapters/dynamicCordis.js";
 import { probeCapabilities, missingServices } from "./harness/adapters/capabilities.js";
 import { attachInteractive, type Interactive, questionIdAt } from "./harness/adapters/interactive.js";
-import { ensureOpencodeGoResponsesRoute, normalizeOpencodeGoModel } from "./harness/adapters/opencodeGo.js";
+import { ensureOpencodeGoResponsesRoute, normalizeOpencodeGoModel, opencodeGoModelUsesResponses } from "./harness/adapters/opencodeGo.js";
 import { resetStatusStats, statusSnapshot } from "./harness/adapters/status.js";
 import { Ephemeral } from "./telegram/ephemeral.js";
 import { plain, truncate } from "./telegram/html.js";
@@ -130,7 +130,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.7";
+export const version = "0.3.8";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -557,6 +557,17 @@ async function createSessionForChat(
       const selectedModel = requested.provider !== undefined && requested.model !== undefined
         ? normalizeOpencodeGoModel(requested.provider, requested.model)
         : requested;
+      if (opencodeGoModelUsesResponses(requested.provider, requested.model)) {
+        const ready = await ensureOpencodeGoResponsesRoute(requireCtx(), log);
+        if (!ready) {
+          return {
+            result: {
+              ok: false,
+              text: "opencode-go-responses route is not registered in the llm registry \u2014 restart dsh once more, then create the session again",
+            },
+          };
+        }
+      }
       return sessionLifecycle.create(requireCtx(), state.workspaceRoot, selectedModel, {
         ...(agentPreset === undefined ? {} : { agentPreset }),
         replaceSessionId: state.bridge?.agentIdForChat(chatId),
@@ -2096,7 +2107,12 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "page":
       return;
     case "stop": {
-      const res = sessionLifecycle.stop(requireCtx(), boundAgentId(chatId));
+      const agentId = boundAgentId(chatId);
+      if (agentId === undefined) {
+        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 Stop only aborts this chat's current turn.", { parse_mode: "HTML" });
+        return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
+      }
+      const res = sessionLifecycle.stop(requireCtx(), agentId);
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
     }
@@ -2324,7 +2340,12 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
     case RETURN_BTN:
       return setBarCollapsed(chatId, false);
     case STOP_BTN: {
-      const res = sessionLifecycle.stop(requireCtx(), boundAgentId(chatId));
+      const agentId = boundAgentId(chatId);
+      if (agentId === undefined) {
+        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 the button only stops this chat's current turn.", { parse_mode: "HTML" });
+        return;
+      }
+      const res = sessionLifecycle.stop(requireCtx(), agentId);
       await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
     }
@@ -2428,7 +2449,12 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       await statusPanel.refresh(chatId, t, renderStatus(chatId), true);
       return;
     case "stop": {
-      const res = sessionLifecycle.stop(ctx, boundAgentId(chatId));
+      const agentId = boundAgentId(chatId);
+      if (agentId === undefined) {
+        await send("No live agent in this session \u2014 Stop only aborts this chat's current turn.", false);
+        return;
+      }
+      const res = sessionLifecycle.stop(ctx, agentId);
       await send(res.text, res.ok);
       return;
     }
