@@ -129,7 +129,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.4";
+export const version = "0.3.5";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -566,6 +566,16 @@ async function createSessionForChat(
     if (sessionCreateChains.get(chatId) === settled) sessionCreateChains.delete(chatId);
   });
   return run;
+}
+
+/** Bind a freshly created agent to its chat and diagnose a missed binding
+ * immediately instead of discovering it minutes later via a silent command. */
+function bindCreatedSession(chatId: number, agentId: string | undefined): boolean {
+  if (agentId === undefined) return false;
+  state.bridge?.bindAgent(chatId, agentId);
+  const live = currentAgent(chatId);
+  log(`session bound chatId=${chatId} agentId=${agentId} live=${live?.id ?? "missing"}`);
+  return live !== undefined;
 }
 
 /** Cards that should re-read their data source when web-side settings/plugin
@@ -1524,7 +1534,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
         // instead of failing the tap, and persist the choice as the
         // bridge's default so future sessions inherit it.
         const { result: res, agentId } = await createSessionForChat(chatId, { provider, model }, undefined, true);
-        if (agentId !== undefined) state.bridge?.bindAgent(chatId, agentId);
+        bindCreatedSession(chatId, agentId);
         if (res.ok) {
           state.config.model = { provider, model };
           writeConfig(state.configRoot, state.config);
@@ -1628,7 +1638,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "preset-new": {
       const presetId = payload["presetId"] ?? "";
       const created = await createSessionForChat(chatId, state.config.model, presetId);
-      if (created.agentId !== undefined) state.bridge?.bindAgent(chatId, created.agentId);
+      bindCreatedSession(chatId, created.agentId);
       const suffix = created.agentPreset !== undefined ? ` \u00B7 preset ${plain(created.agentPreset)}` : "";
       await requireTransport().sendText(chatId, created.result.ok ? `${plain(created.result.text)}${suffix}` : `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
       if (created.result.ok) {
@@ -2127,8 +2137,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return;
     case "new": {
       const { result: res, agentId } = await createSessionForChat(chatId);
-      if (agentId !== undefined) state.bridge?.bindAgent(chatId, agentId);
-      await sendWithLiveBar(chatId, res.ok ? `\u2728 ${plain(res.text)}` : `\u274C ${plain(res.text)}`);
+      const bound = bindCreatedSession(chatId, agentId);
+      await sendWithLiveBar(chatId, res.ok
+        ? (bound ? `\u2728 ${plain(res.text)}` : "\u274C Session created but the chat binding is not live yet \u2014 send any message to rebind.")
+        : `\u274C ${plain(res.text)}`);
       return;
     }
     case "compact": {
@@ -2261,8 +2273,10 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
       return openMenuAt(chatId, 0);
     case NEW_BTN: {
       const { result: res, agentId } = await createSessionForChat(chatId);
-      if (agentId !== undefined) state.bridge?.bindAgent(chatId, agentId);
-      await sendWithLiveBar(chatId, res.ok ? `\u2728 ${plain(res.text)}` : `\u274C ${plain(res.text)}`);
+      const bound = bindCreatedSession(chatId, agentId);
+      await sendWithLiveBar(chatId, res.ok
+        ? (bound ? `\u2728 ${plain(res.text)}` : "\u274C Session created but the chat binding is not live yet \u2014 send any message to rebind.")
+        : `\u274C ${plain(res.text)}`);
       return;
     }
     case COMPACT_BTN: {
@@ -2310,11 +2324,15 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
     const host = buildExtensionHost();
     return ext.handler(chatId, args, host);
   }
-  const t = state.transport;
-  if (!t) return;
+  // A Telegram command can only arrive through a live transport; fail loudly
+  // instead of silently returning and leaving the user with no feedback.
+  const t = requireTransport();
   const ctx = requireCtx();
   const agent = currentAgent(chatId);
-  const send = (text: string, okResult = true) => t.sendText(chatId, okResult ? plain(text) : `\u274C ${plain(text)}`, { parse_mode: "HTML" });
+  const send = async (text: string, okResult = true) => {
+    log(`command reply chatId=${chatId} command=${command} kind=${okResult ? "ok" : "error"}`);
+    await t.sendText(chatId, okResult ? plain(text) : `\u274C ${plain(text)}`, { parse_mode: "HTML" });
+  };
   switch (command) {
     case "start":
       state.chats.add(chatId);
@@ -2379,8 +2397,8 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
     }
     case "new": {
       const { result: res, agentId } = await createSessionForChat(chatId);
-      if (agentId !== undefined) state.bridge?.bindAgent(chatId, agentId);
-      await send(res.text, res.ok);
+      const bound = bindCreatedSession(chatId, agentId);
+      await send(res.ok && !bound ? "Session created but the chat binding is not live yet \u2014 send any message to rebind." : res.text, res.ok);
       return;
     }
     case "compact": {
@@ -2612,7 +2630,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       const maxRounds = parts.length > 1 ? Number(parts[parts.length - 1]) : undefined;
       const objective = Number.isFinite(maxRounds) ? parts.slice(0, -1).join(" ") : parts.join(" ");
       if (!agent) {
-        await send("No live agent \u2014 goals are per-agent.");
+        await send("No live agent \u2014 goals are per-agent.", false);
         return;
       }
       if (!objective) {
@@ -2886,7 +2904,7 @@ async function dispatchPhoto(chatId: number, fileId: string, caption: string, me
       await t.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
       return;
     }
-    state.bridge?.bindAgent(chatId, created.agentId);
+    bindCreatedSession(chatId, created.agentId);
     agent = currentAgent(chatId);
   }
   if (!agent) {
@@ -3307,7 +3325,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           // per-chat session gate additionally serializes a fast UI tap
           // (✨ New / model select) that races the first message.
           const created = await createSessionForChat(chatId, state.config.model, undefined, true);
-          if (created.agentId !== undefined) state.bridge?.bindAgent(chatId, created.agentId);
+          bindCreatedSession(chatId, created.agentId);
           if (!created.result.ok) {
             await state.transport?.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
             return;

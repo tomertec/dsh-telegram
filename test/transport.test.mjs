@@ -127,6 +127,39 @@ test('stop is idempotent and a later start works again', async () => {
   assert.equal(poll.calls.length, 2);
 });
 
+test('non-409 polling failures back off exponentially and log only the first', async () => {
+  const delays = [];
+  const logs = [];
+  const transport = new TelegramTransport({
+    token: '123456:backoff-test',
+    log: (message) => logs.push(message),
+    sleep: async (ms) => {
+      delays.push(ms);
+      // Yield to the macrotask queue: an instantly-resolving promise would
+      // starve the setTimeout that stops the poll loop.
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    },
+    queue: { push: async (_key, fn) => fn(), pendingCount: () => 0, configure: () => {} },
+  });
+  let calls = 0;
+  transport.api.getUpdates = async () => {
+    calls += 1;
+    const err = new Error('Bad Gateway');
+    err.error_code = 502;
+    throw err;
+  };
+
+  await transport.start();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await transport.stop();
+
+  assert.ok(calls > 4, `expected several retries, got ${calls}`);
+  assert.deepEqual(delays.slice(0, 4), [2000, 4000, 8000, 16000], 'retry delay doubles up to the cap');
+  const errorLogs = logs.filter((line) => line.includes('backing off'));
+  assert.equal(errorLogs.length, 1, 'only the first failure logs; later ones stay quiet');
+  assert.match(errorLogs[0], /backing off/);
+});
+
 test('unsupported media routes to the document handler with metadata', async () => {
   const transport = makeTransport();
   const calls = [];

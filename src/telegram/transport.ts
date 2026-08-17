@@ -38,6 +38,8 @@ export interface TransportOptions {
   queue?: SendQueue;
   maxMessageLength?: number;
   log?: (message: string, error?: unknown) => void;
+  /** Injectable backoff timer (tests observe/advance polling delays). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 type SendOptions = NonNullable<Parameters<Api["sendMessage"]>[2]>;
@@ -59,6 +61,7 @@ export class TelegramTransport {
   private readonly queue: SendQueue;
   private maxMessageLength: number;
   private readonly log: (message: string, error?: unknown) => void;
+  private readonly sleep: (ms: number) => Promise<void>;
   private handlers: TransportHandlers | undefined;
   private me: { id: number; username: string } | undefined;
   private polling = false;
@@ -74,6 +77,10 @@ export class TelegramTransport {
   /** Consecutive 409 "terminated by other getUpdates" failures. The loop
    * backs off instead of spamming and stops logging every single conflict. */
   private conflict409 = 0;
+  /** Consecutive non-409 polling failures (502/timeout/network). Same
+   * exponential backoff: the first failure logs, later ones stay quiet until
+   * one successful poll resets the meter. */
+  private pollingErrors = 0;
 
   constructor(options: TransportOptions) {
     this.bot = new Bot(options.token);
@@ -81,6 +88,7 @@ export class TelegramTransport {
     this.queue = options.queue ?? new SendQueue();
     this.maxMessageLength = options.maxMessageLength ?? 4096;
     this.log = options.log ?? ((m, e) => console.error(`[dsh-telegram] ${m}`, e ?? ""));
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   setHandlers(handlers: TransportHandlers): void {
@@ -198,6 +206,7 @@ export class TelegramTransport {
               void this.handleUpdate(update).catch((err) => this.log("update handler failed", err));
             }
             this.conflict409 = 0;
+            this.pollingErrors = 0;
           } catch (err) {
             if (abort.signal.aborted) return;
             const code = (err as { error_code?: number } | null)?.error_code;
@@ -210,11 +219,15 @@ export class TelegramTransport {
                 );
               }
               const delay = Math.min(30_000, 2000 * 2 ** Math.min(this.conflict409, 4));
-              await new Promise((resolve) => setTimeout(resolve, delay));
+              await this.sleep(delay);
             } else {
               this.conflict409 = 0;
-              this.log("polling error (retrying in 2s)", err);
-              await new Promise((resolve) => setTimeout(resolve, 2000));
+              this.pollingErrors += 1;
+              if (this.pollingErrors === 1) {
+                this.log("polling error \u2014 backing off and retrying quietly until a poll succeeds", err);
+              }
+              const delay = Math.min(30_000, 2000 * 2 ** Math.min(Math.max(0, this.pollingErrors - 1), 4));
+              await this.sleep(delay);
             }
           }
         }

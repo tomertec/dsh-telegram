@@ -3,6 +3,15 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.5
+
+Issue #4: `/goal` no longer fails silently.
+
+- `/goal` with no bound agent always sends `❌ No live agent — goals are per-agent.`; service errors send the concrete `❌ <error>` message.
+- Command replies are logged (`command reply chatId=... command=... kind=ok|error`) so a swallowed send is visible in the log.
+- Session binding after `✨ New` / `/new` / model select is verified and logged; a created-but-unbound session sends an explicit rebind hint instead of going silent.
+- Non-409 polling failures (502/timeout/network) now back off exponentially (2s→4s→8s→16s→30s) and log only the first failure until a poll succeeds, matching the existing 409 behavior.
+
 ## 0.3.4
 
 - Openclaw turn summary appends a third line with the web-style session stats: `📊 4 轮 · 279 步 | ⚡ LLM 46m41s · 工具调用 5m10s | 🎯 首 token 平均 3.5s · 68 tok/s`.
