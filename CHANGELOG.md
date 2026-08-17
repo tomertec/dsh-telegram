@@ -3,6 +3,10 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.4
+
+- Openclaw turn summary appends a third line with the web-style session stats: `📊 4 轮 · 279 步 | ⚡ LLM 46m41s · 工具调用 5m10s | 🎯 首 token 平均 3.5s · 68 tok/s`.
+
 ## 0.3.3
 
 - Inbound routing now has two per-chat lanes: real chat content stays FIFO (rapid first messages still produce one session), while bar buttons and inline callbacks run in a responsive UI lane — tapping `🗜️ 收起` collapses the bar immediately and tapping `Goal` opens the card immediately, even while a turn is working.

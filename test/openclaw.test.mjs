@@ -125,6 +125,34 @@ test('turn summary adds input/output tokens and cache hit rate', async () => {
   assert.match(summary.text, /📥 输入 900 tok · 📤 输出 120 tok · 💾 缓存命中 44%/);
 });
 
+test('turn summary appends the session stats line', async () => {
+  const { host, ctx } = await setup();
+  host.statusStats = () => ({
+    turns: 4,
+    steps: 279,
+    llmMs: 46 * 60_000 + 41_000,
+    toolMs: 5 * 60_000 + 10_000,
+    ttftMs: 3500,
+    ttftSteps: 1,
+    decodeMs: 1000,
+    decodeTokens: 68,
+    uncachedInputTokens: 900,
+    outputTokens: 120,
+    cacheReadTokens: 400,
+    cacheWriteTokens: 0,
+  });
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'think' } }));
+  await sleep(220);
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+
+  const summary = host.edits.at(-1);
+  assert.match(summary.text, /📊 4 轮 · 279 步/);
+  assert.match(summary.text, /⚡ LLM 46m41s · 工具调用 5m10s/);
+  assert.match(summary.text, /🎯 首 token 平均 3\.5s · 68 tok\/s/);
+});
+
 test('tool result swaps the icon to ✓ and drops the running status', async () => {
   const { host, ctx } = await setup();
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));

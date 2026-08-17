@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.3-2ea44f" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.4-2ea44f" />
   <img alt="License" src="https://img.shields.io/github/license/xqicxx/dsh-telegram?color=blue" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-244%2F244%20green-2ea44f" />
   <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-8A2BE2" />
@@ -58,7 +58,7 @@ DeepSeek Harness 的 Web UI 是 agent 控制面的金标准：会话、模型、
 - **🎯 目标入口** — Goal 在 Menu 第一页（与 Capabilities 同行），卡片只做显示/编辑/暂停，`/goal <objective> [maxRounds]` 启动目标
 - **🗂️ 工作区可直接使用** — Workspace 详情卡提供 `✅ 使用此项目`（设为当前项目）与 `🧭 会话`（打开该项目会话）
 - **🌐 Web 对齐** — 适配器按 Web ApiProxy RPC 契约实现：`session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`、subagent、host、workspace、agentPreset、skills、goals、settings、credentials、llm providers/discovery
-- **⚡ Openclaw 风格实时流** — 思考/工具进度/打字机回复分层渲染，回合总结含思考次数、工具调用、耗时、输入/输出 token 与缓存命中率（`outbound.liveFeed` 热切换）
+- **⚡ Openclaw 风格实时流** — 思考/工具进度/打字机回复分层渲染，回合总结含思考/工具/耗时、输入/输出 token、缓存命中率，以及会话轮数/步数、LLM/工具耗时与 token 速度（`outbound.liveFeed` 热切换）
 - **📝 HTML 感知长文拆分** — 超过 4096 字符时按换行/空格边界切分，绝不切在标签或实体内部，跨切分标签逐段配平
 - **♻️ 可靠发送队列** — 每 chat FIFO + 全局滑动窗口限速；只重试 429/5xx/网络/超时，永久 4xx 只试一次；长轮询重启安全且保留 offset
 - **🔁 热更新与热插拔** — `internal/update` 热应用白名单/规则/限速/长度/watch；teardown 逆序回收全部挂载效应，重复 apply 幂等

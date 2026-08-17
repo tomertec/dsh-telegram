@@ -101,6 +101,24 @@ function formatTokensPerSecond(tps: number): string {
   return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10);
 }
 
+/** One-line variant for the openclaw turn summary:
+ * `📊 4 轮 · 279 步 | ⚡ LLM 46m41s · 工具调用 5m10s | 🎯 首 token 平均 3.5s · 68 tok/s` */
+export function renderStatsLine(stats: StatusStats): string | undefined {
+  const segments: string[] = [];
+  if (stats.steps > 0) {
+    segments.push(`\u{1F4CA} ${stats.turns} \u8F6E \u00B7 ${stats.steps} \u6B65`);
+  }
+  const durations: string[] = [];
+  if (stats.llmMs > 0) durations.push(`LLM ${formatDurationWeb(stats.llmMs)}`);
+  if (stats.toolMs > 0) durations.push(`\u5DE5\u5177\u8C03\u7528 ${formatDurationWeb(stats.toolMs)}`);
+  if (durations.length > 0) segments.push(`\u26A1 ${durations.join(" \u00B7 ")}`);
+  const speeds: string[] = [];
+  if (stats.ttftSteps > 0) speeds.push(`\u9996 token \u5E73\u5747 ${formatDurationWeb(stats.ttftMs / stats.ttftSteps)}`);
+  if (stats.decodeMs > 0) speeds.push(`${formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1e3))} tok/s`);
+  if (speeds.length > 0) segments.push(`\u{1F3AF} ${speeds.join(" \u00B7 ")}`);
+  return segments.length > 0 ? segments.join(" | ") : undefined;
+}
+
 /** Conversation stats, multi-line grouped: turn/step, durations, speeds,
  * cache hit, and tokens. Shared by the status card and the streamed draft
  * finalization. */

@@ -20,6 +20,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { escapeHtml } from "../telegram/html.js";
 import { markdownToHtml } from "../telegram/markdown.js";
+import { renderStatsLine, type StatusStats } from "../harness/adapters/status.js";
 import type { ExtensionHost } from "./types.js";
 
 const MAX_LINES = 8;
@@ -267,13 +268,13 @@ function formatTokensCompact(tokens: number): string {
   return `${scaled(tokens / 1e6)}M`;
 }
 
-function buildSummary(draft: Draft): string {
+function buildSummary(draft: Draft, sessionStats?: StatusStats): string {
   const parts: string[] = [];
   if (draft.reasoningSteps > 0) parts.push(`\u{1F9E0} ${draft.reasoningSteps} thought${draft.reasoningSteps === 1 ? "" : "s"}`);
   if (draft.toolCalls > 0) parts.push(`\u{1F6E0}\uFE0F ${draft.toolCalls} tool call${draft.toolCalls === 1 ? "" : "s"}`);
   const seconds = Math.max(1, Math.round((Date.now() - draft.startedAt) / 1000));
   parts.push(`\u23F1\uFE0F ${seconds}s`);
-  const head = parts.join(" \u00B7 ");
+  const lines = [parts.join(" \u00B7 ")];
   const billed = draft.uncachedInputTokens + draft.cacheReadTokens + draft.cacheWriteTokens;
   if (billed > 0 || draft.outputTokens > 0) {
     const tokens = [
@@ -284,9 +285,11 @@ function buildSummary(draft: Draft): string {
       const hit = Math.round((draft.cacheReadTokens / billed) * 100);
       tokens.push(`\u{1F4BE} \u7F13\u5B58\u547D\u4E2D ${hit}%`);
     }
-    return `${head}\n${tokens.join(" \u00B7 ")}`;
+    lines.push(tokens.join(" \u00B7 "));
   }
-  return head;
+  const statsLine = sessionStats === undefined ? undefined : renderStatsLine(sessionStats);
+  if (statsLine !== undefined) lines.push(statsLine);
+  return lines.join("\n");
 }
 
 interface SessionEventLike {
@@ -431,12 +434,13 @@ export function apply(ctx: Context, _config?: unknown): void {
           draft.timer = undefined;
         }
         commitReasoning(draft);
+        const sessionStats = host.statusStats() as StatusStats | undefined;
         const hasContent = draft.reasoningSteps > 0 || draft.toolCalls > 0;
         const finalize = (messageId: number | undefined): void => {
           if (messageId === undefined) return;
           if (hasContent) {
             void host
-              .editMessage(chatId, messageId, buildSummary(draft), { parse_mode: "HTML" })
+              .editMessage(chatId, messageId, buildSummary(draft, sessionStats), { parse_mode: "HTML" })
               .catch(() => {});
           } else {
             void host.deleteMessage(chatId, messageId).catch(() => {});
