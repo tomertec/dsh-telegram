@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession, listSessionDetails, saveImageAttachment, readImageAttachment, releaseSavedAttachments, displayTitleFor, groupSessionsByProject, orderProjectGroups, sortProjectSessions, UNGROUPED_KEY } from '../dist/harness/adapters/sessions.js';
+import { listQueue, updateQueueItem, searchSessions, readHistory, promptSession, listSessionDetails, saveImageAttachment, readImageAttachment, releaseSavedAttachments, displayTitleFor, groupSessionsByProject, orderProjectGroups, sortProjectSessions, selectSessionModel, UNGROUPED_KEY } from '../dist/harness/adapters/sessions.js';
 
 function queueAgent(id, nextTurn, nextStep, status = 'idle') {
   const make = (items) => items.map((item) => ({ id: item.id, content: [{ type: 'text', text: item.text }] }));
@@ -293,6 +293,27 @@ test('saved photo attachments read back through their exact durable ref', async 
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+test('selectSessionModel uses ctx.get("llm") so a strict context without llm inject does not throw', async () => {
+  const agent = queueAgent('s1', [], []);
+  agent.ctx = { on: () => () => {} };
+  const resolved = { provider: 'opencode-go', model: 'gpt-x', reasoningEffort: 'medium' };
+  const ctx = {
+    agents: {
+      get: (id) => (id === 's1' ? agent : undefined),
+      list: () => [agent],
+    },
+    get: (name) => (name === 'llm' ? { resolveCallConfig: async () => resolved } : undefined),
+  };
+  Object.defineProperty(ctx, 'llm', {
+    get() {
+      throw new Error('cannot get property "llm" without inject');
+    },
+  });
+  const res = await selectSessionModel(ctx, 's1', 'opencode-go', 'gpt-x');
+  assert.equal(res.ok, true);
+  assert.match(res.text, /opencode-go\/gpt-x/);
+});
 
 test('deleteSession removes both raw and wrapped session directories', async () => {
   const { deleteSession } = await import('../dist/harness/adapters/sessions.js');

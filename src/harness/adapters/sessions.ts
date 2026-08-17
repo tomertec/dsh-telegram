@@ -633,7 +633,10 @@ export async function selectSessionModel(
   const agents = agentsOf(ctx);
   const agent = agents?.get(SessionId(sessionId));
   if (!agent) return fail(`session ${sessionId} has no live agent`);
-  const llm = ctx.llm as unknown as
+  // `ctx.get("llm")`, not `ctx.llm`: this plugin's inject list does not
+  // include "llm", and direct property access throws `cannot get property
+  // "llm" without inject` in strict Cordis contexts.
+  const llm = ctx.get("llm") as unknown as
     | {
         resolveCallConfig(config: {
           provider: string;

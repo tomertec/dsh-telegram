@@ -112,6 +112,29 @@ test('consumer mode: core suppresses the reminder and honors markInboundReplied'
   assert.equal(bridge.hasPendingInbound(), false);
 });
 
+test('autonomous turn errors reach the chat even without an inbound message', async () => {
+  const transport = makeTransport();
+  const { ctx } = makeBridge(transport);
+  const { Bridge } = await import('../dist/harness/bridge.js');
+  const bridge = new Bridge({
+    ctx,
+    transport,
+    getConfig: () => ({ inbound: { rules: [], defaultMode: 'auto-handle' }, outbound: { parseMode: 'HTML' } }),
+    onStateChange: () => {},
+    log: () => {},
+  });
+  bridge.attach();
+  bridge.bindAgent(7, 'agent-1');
+  // No deliver(): this is a goal/maintenance turn, not a reply to a message.
+  ctx.emit('session/event', { id: 'agent-1' }, turnEnd({ kind: 'error', error: { message: 'Stream ended without finish_reason' } }));
+  await sleep(10);
+  assert.equal(transport.sent.length, 1);
+  assert.equal(transport.sent[0].chatId, 7);
+  assert.ok(transport.sent[0].text.startsWith('\u274C'));
+  assert.ok(transport.sent[0].text.includes('Stream ended without finish_reason'));
+  assert.equal(transport.sent[0].extra.reply_parameters, undefined);
+});
+
 test('consumer mode still surfaces turn errors verbatim', async () => {
   const { bridge, transport, ctx } = await setup();
   bridge.setAssistantConsumer(() => {});

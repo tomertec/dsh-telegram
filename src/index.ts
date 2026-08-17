@@ -129,7 +129,7 @@ import { TelegramTransport } from "./telegram/transport.js";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export const name = "dsh-telegram";
-export const version = "0.3.5";
+export const version = "0.3.6";
 export const inject = ["tools", "commands", "agents"];
 
 interface State {
@@ -1841,7 +1841,16 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     const payload = tokens.take(data);
     if (payload) {
       log(`token dispatch ${data} action=${payload["action"] ?? "-"}`);
-      return dispatchToken(chatId, payload);
+      try {
+        return await dispatchToken(chatId, payload);
+      } catch (err) {
+        // A callback that failed before producing its effect must stay
+        // retryable: the user would otherwise be trapped behind
+        // "already handled" with no way to try again.
+        const restored = tokens.restore(data, payload);
+        log(`token dispatch failed and token ${restored ? "restored for retry" : "stayed consumed"} action=${payload["action"] ?? "-"}`, err);
+        throw err;
+      }
     }
     const used = tokens.wasUsed(data);
     log(`token miss ${data} (${used ? "already handled" : "bot restarted since the card rendered"})`);

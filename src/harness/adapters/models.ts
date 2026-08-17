@@ -18,7 +18,12 @@ export interface ModelsSummary {
 }
 
 export async function modelsSummary(ctx: Context): Promise<ModelsSummary> {
-  const llm = ctx.llm;
+  const llm = ctx.get("llm") as
+    | {
+        listProviders(): { id: string; name: string }[];
+        listModels(provider: string): Promise<{ id: string; name: string }[]>;
+      }
+    | undefined;
   if (!llm) return { providers: [], current: {} };
   const providers = await Promise.all(
     llm.listProviders().map(async (p) => {

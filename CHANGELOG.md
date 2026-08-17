@@ -3,6 +3,15 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## 0.3.6
+
+Issue #5.
+
+- `selectSessionModel` now reads the llm service through `ctx.get("llm")` instead of the strict `ctx.llm` property, so switching models no longer throws `cannot get property "llm" without inject`. `modelsSummary` got the same hardening.
+- Callback tokens are restored when their dispatch throws before completing: a failed Models tap stays retryable instead of trapping the user behind “already handled”.
+- Turn errors are now delivered to the bound chat even when the turn has no inbound message (goal/maintenance turns): an LLM `TRANSPORT` failure no longer ends in silence.
+- With the model-switch path fixed, opencode-go selections resolve through the llm service's `resolveCallConfig` again.
+
 ## 0.3.5
 
 Issue #4: `/goal` no longer fails silently.

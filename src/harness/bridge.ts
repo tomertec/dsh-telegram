@@ -441,15 +441,19 @@ export class Bridge {
           // turn died before the model ever answered).
           const reason = (event.data as { reason?: { kind?: string; error?: { message?: string } } } | undefined)?.reason;
           const failure = reason?.kind === "error" ? reason.error?.message : undefined;
-          if (failure !== undefined && failure.trim() !== "" && inbound !== undefined && !inbound.replied && !inbound.noReply) {
-            inbound.replied = true;
+          const unanswered = inbound === undefined || (!inbound.replied && !inbound.noReply);
+          if (failure !== undefined && failure.trim() !== "" && unanswered) {
+            // Autonomous turns (a /goal turn, for example) have no inbound
+            // message, but their LLM/infra failure still has to reach the
+            // chat instead of leaving the user staring at silence.
+            if (inbound !== undefined) inbound.replied = true;
             if (state) state.reminded = true;
             void this.transport
               .sendText(chatId, `\u274C ${markdownToHtml(failure.slice(0, 900))}`, {
                 parse_mode: "HTML",
                 ...this.replyParametersFor(chatId),
               })
-              .catch(() => {});
+              .catch((err) => this.log("turn error reply failed", err));
           } else if (
             (this.assistantConsumer === undefined || !this.liveFeedEnabled()) &&
             inbound !== undefined &&

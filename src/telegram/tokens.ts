@@ -42,6 +42,17 @@ export class TokenRegistry {
     return payload;
   }
 
+  /** Put a taken token back when its callback threw before doing anything.
+   * Only restores an id this registry marked used; tokens are never reused
+   * so a successful run can never be un-consumed. */
+  restore(data: string, payload: Record<string, string>): boolean {
+    const id = Number(data.slice(2));
+    if (!Number.isFinite(id) || !this.used.has(id) || this.tokens.has(id)) return false;
+    this.used.delete(id);
+    if (this.tokens.size < this.maxEntries) this.tokens.set(id, payload);
+    return true;
+  }
+
   /** Distinguish "already ran" from "card predates this bot process". */
   wasUsed(data: string): boolean {
     return this.used.has(Number(data.slice(2)));
