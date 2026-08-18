@@ -455,3 +455,94 @@ test('a failed placeholder sends one fallback and never spawns more placeholders
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 });
+
+test('reasoning edits flow at the 200ms throttle instead of lagging one second (#24)', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'fast reasoning' } }));
+  await sleep(300);
+  assert.equal(host.edits.length, 1, 'the first stream frame is edited well under the old 1000ms throttle');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+});
+
+test('after MAX_EDIT_FAILURES the same message is kept and no new placeholder is sent (#23)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  t.mock.timers.setTime(1_000_000);
+  const { host, ctx } = await setup();
+  host.editMessage = async (chatId, messageId, text, options) => {
+    host.edits.push({ chatId, messageId, text, options });
+    return false;
+  };
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  await Promise.resolve();
+  assert.equal(host.sends.length, 1, 'one placeholder for the turn');
+
+  // Six fresh stream frames, each throttled: every flush fails, and the next
+  // frame supersedes the pending backoff retry (schedule clears retryTimer).
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: `v${attempt}` } }));
+    await Promise.resolve();
+    t.mock.timers.tick(200);
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  assert.equal(host.edits.length, 6, 'six failed edits exhausted the cap');
+  assert.equal(host.sends.length, 2, 'placeholder + one stalled-progress fallback, no re-sent Working…');
+  assert.match(host.sends[1].text, /Agent is running/);
+
+  // Fresh content may retry the retained message; it must never spawn a new one.
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'v7' } }));
+  await Promise.resolve();
+  t.mock.timers.tick(200);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(host.sends.length, 2, 'abandoning never calls ensureMessage with a fresh placeholder');
+  assert.equal(host.edits.at(-1).messageId, 100, 'the retained message id stays the edit target');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await Promise.resolve();
+});
+
+test('turn/start reuses the previous placeholder message id instead of sending another (#23)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  t.mock.timers.setTime(1_000_000);
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  await Promise.resolve();
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'first turn' } }));
+  await Promise.resolve();
+  t.mock.timers.tick(200);
+  await Promise.resolve();
+  assert.equal(host.sends.length, 1, 'first placeholder only');
+  assert.equal(host.edits[0].messageId, 100);
+
+  // A restarted turn keeps editing the same Telegram message.
+  ctx.emit('agent-1', ev('turn/start', { turn: 2 }));
+  await Promise.resolve();
+  assert.equal(host.sends.length, 1, 'no second Working… on turn restart');
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'second turn' } }));
+  await Promise.resolve();
+  t.mock.timers.tick(200);
+  await Promise.resolve();
+  assert.equal(host.sends.length, 1);
+  assert.equal(host.edits.at(-1).messageId, 100, 'the reused placeholder is edited in place');
+  ctx.emit('agent-1', ev('turn/end', { turn: 2, reason: { kind: 'completed' } }));
+  await Promise.resolve();
+});
+
+test('reasoning table snapshots render as aligned monospace blocks (#26)', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  const table = ['| col1 | col2 |', '|---|---|', '| a | b |', '| long | text |'].join('\n');
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'block-end', index: 0, block: { type: 'text', text: table } } }));
+  await sleep(300);
+  const streamEdit = host.edits.find((entry) => entry.text.includes('Working\u2026'));
+  assert.ok(streamEdit, 'missing streaming edit');
+  assert.ok(streamEdit.text.includes('<pre>'), 'table is wrapped in a monospace block');
+  assert.match(streamEdit.text, /\| col1\s+\| col2\s+\|/);
+  assert.match(streamEdit.text, /\| a\s+\| b\s+\|/);
+  assert.equal(streamEdit.text.includes('|---|'), false, 'raw separator syntax is gone');
+  assert.equal(streamEdit.text.includes('<i>'), false, 'table reasoning is not emitted as an italic pipe soup');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+});

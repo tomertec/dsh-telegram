@@ -19,7 +19,7 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 import { escapeHtml } from "../telegram/html.js";
-import { markdownToHtml } from "../telegram/markdown.js";
+import { markdownTablePreBlock, markdownToHtml } from "../telegram/markdown.js";
 import { type StatusStats } from "../harness/adapters/status.js";
 import { safeWrap } from "../telegram/safe.js";
 import { renderTurnReceipt } from "../telegram/turn-receipt.js";
@@ -31,11 +31,12 @@ const REASONING_MAX_CHARS = 120;
 const REASONING_KEEP_CHARS = 600;
 const TOOL_DETAIL_CHARS = 90;
 /**
- * Streaming edits are throttled to one per second per chat. Telegram allows
- * ~1 edit/s on a chat; 120ms let fast chunk streams pile N edits onto one
- * message and trigger 429 (issue #15).
+ * Streaming edits are throttled per chat for a flowing feel without edit
+ * storms. The 429 protection from issue #15 now lives in the diff check +
+ * exponential backoff on the SAME message, not in a long throttle: 1000ms
+ * made reasoning visibly lag behind the model stream (issue #24).
  */
-const EDIT_THROTTLE_MS = 1000;
+const EDIT_THROTTLE_MS = 200;
 /** Long tools emit no chunks; heartbeat keeps the draft visibly ticking. */
 const LIVENESS_HEARTBEAT_MS = 30_000;
 /** After a failed edit, retry the SAME message with exponential backoff
@@ -249,7 +250,15 @@ function mergeReasoning(current: string, incoming: string): string {
 }
 
 function reasoningLineHtml(raw: string): string {
-  const normalized = normalizeReasoning(raw);
+  // A reasoning snapshot that is a GFM table renders as an aligned
+  // monospace block instead of leaking raw pipes (issue #26).
+  const stripped = (raw ?? "").replace(THINKING_TAG_RE, "");
+  const table = markdownTablePreBlock(stripped);
+  if (table !== undefined) return `\u{1F9E0} ${table}`;
+  const normalized = stripThinkingMarkdown(stripped)
+    .replace(THINKING_HEADER_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (normalized === "") return "";
   const chars = Array.from(normalized);
   let body = normalized;
@@ -428,14 +437,19 @@ export function apply(ctx: Context, _config?: unknown): void {
       console.error("[dsh-telegram] openclaw-edit FAILED", `chatId=${chatId} messageId=${messageId} editFails=${draft.editFails + 1}`);
       draft.editFails += 1;
       if (draft.editFails > MAX_EDIT_FAILURES) {
-        // The message is gone beyond recovery (deleted, or permanently
-        // rejected). One fresh placeholder may replace it; the throttle and
-        // failure cap keep that from becoming another storm.
+        // Abandoning the escape hatch is what spawned placeholder storm v2:
+        // clearing messageId and calling ensureMessage() here re-sent a fresh
+        // "Working…" every 5 failures. Keep the SAME messageId reference and
+        // tell the user once that live progress is stalled; new content may
+        // still try the retained message, but never spawns another one (#23).
         console.error("[dsh-telegram] openclaw-edit abandoned", `chatId=${chatId} messageId=${messageId}`);
-        draft.messageId = undefined;
-        draft.lastHtml = undefined;
         draft.editFails = 0;
-        ensureMessage(chatId, draft);
+        if (draft.fallbackSent !== true) {
+          draft.fallbackSent = true;
+          void safeWrap("openclaw-stalled-fallback", () =>
+            host.send(chatId, "\u26A0\uFE0F Agent is running, but live progress cannot be delivered right now \u2014 use /history to see details.", { parse_mode: "HTML" }),
+          );
+        }
         return;
       }
       // 429/network errors were already retried by the transport queue; if it
@@ -534,6 +548,10 @@ export function apply(ctx: Context, _config?: unknown): void {
         clearTimers(previous);
         previous.dirty = false;
       }
+      // A restarted turn reuses the previous placeholder's message id and its
+      // failed-send latch instead of spawning another "Working…" (#23).
+      const previousMessageId = previous?.messageId;
+      const previousPlaceholderFailed = previous?.placeholderFailed;
       chats.delete(chatId);
       answers.delete(chatId);
       chats.set(chatId, {
@@ -551,6 +569,8 @@ export function apply(ctx: Context, _config?: unknown): void {
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        ...(previousMessageId === undefined ? {} : { messageId: previousMessageId }),
+        ...(previousPlaceholderFailed === true ? { placeholderFailed: true } : {}),
       });
       // Visible feedback starts with the turn itself, not with the first
       // tool/reasoning event (#12): the placeholder later collapses into the

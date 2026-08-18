@@ -106,9 +106,9 @@
   （`dsh-tools/lib/types/schema.d.ts:178`）。参数 schema 为隐式 open object 根：
   `parameters: { [k]: ParameterPropertySpec }`；输出需
   `output: { schema: ValueSchemaSpec, render(args, value): ContentBlock[] }`。
-- 本插件的 5 个模型工具（telegram_send / telegram_reply / telegram_broadcast /
-  telegram_status / telegram_mark_no_reply）全部 fire-and-forget 入发送队列，
-  绝不 await Telegram I/O。
+- 本插件的 7 个模型工具（telegram_send / telegram_reply / telegram_broadcast /
+  telegram_attach / telegram_send_file / telegram_status / telegram_mark_no_reply）
+  全部经同一发送队列发往白名单 chat；文件工具额外做 workspace 根与 50MB 上限校验。
 
 ## 命令注册
 

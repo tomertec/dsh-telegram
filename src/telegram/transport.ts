@@ -338,6 +338,26 @@ export class TelegramTransport {
     });
   }
 
+  /** Send an OGG/OPUS voice note (agent outbound attachments, issue #25). */
+  sendVoice(chatId: number, buffer: Uint8Array, filename: string, caption?: string): Promise<number | undefined> {
+    return this.queue.push(chatId, async () => {
+      const msg = await withTimeout(this.api.sendVoice(chatId, new InputFile(buffer, filename), {
+        ...(caption === undefined ? {} : { caption, parse_mode: "HTML" as const }),
+      }), 60_000);
+      return msg.message_id;
+    });
+  }
+
+  /** Send an audio track (mp3/m4a/... — agent outbound attachments, #25). */
+  sendAudio(chatId: number, buffer: Uint8Array, filename: string, caption?: string): Promise<number | undefined> {
+    return this.queue.push(chatId, async () => {
+      const msg = await withTimeout(this.api.sendAudio(chatId, new InputFile(buffer, filename), {
+        ...(caption === undefined ? {} : { caption, parse_mode: "HTML" as const }),
+      }), 60_000);
+      return msg.message_id;
+    });
+  }
+
   /** Remove/replace an inline keyboard in place (approval/question settles). */
   editReplyMarkup(chatId: number, messageId: number, markup: unknown): Promise<boolean> {
     return this.queue.push(chatId, async () => {

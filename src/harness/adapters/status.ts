@@ -46,6 +46,9 @@ interface EventScanCache {
   scannedEnd: number;
   stats?: StatusStats;
   preset?: string;
+  /** Session header preset (first `session` event) — cached independently of
+   * the append-only `agent-preset/selected` tail scan (#22). */
+  headerPreset?: string;
 }
 const eventScanCache = new WeakMap<object, EventScanCache>();
 
@@ -164,6 +167,9 @@ export function renderStatsStrip(stats: NonNullable<ReturnType<typeof statusSnap
  * profile; the projection registry only adds LLM/tool latency figures. */
 interface EventLike {
   type?: string;
+  /** Some session-header projections flatten `agentPreset` onto the envelope
+   * instead of nesting it under `data` (#22). */
+  agentPreset?: unknown;
   data?: {
     agentPreset?: unknown;
     usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
@@ -225,6 +231,7 @@ function eventStatsFor(agent: unknown): StatusStats | undefined {
   // (compaction/reset) falls through to a full rescan.
   let stats: StatusStats | undefined;
   let start = 0;
+  const fullRescan = cached === undefined || cached.scannedEnd >= end;
   if (cached !== undefined && cached.scannedEnd < end) {
     stats = cached.stats;
     start = cached.scannedEnd + 1;
@@ -232,9 +239,27 @@ function eventStatsFor(agent: unknown): StatusStats | undefined {
   const folded = stats === undefined ? emptyEventStats() : { ...stats };
   for (let index = start; index <= end; index += 1) foldEvent(folded, events[index]!);
   const result = meaningfulStats(folded) ? folded : undefined;
-  const preset = latestPreset(source, cached?.preset, cached?.scannedEnd);
-  eventScanCache.set(key, { scannedEnd: end, stats: result, preset });
+  // Official resolveSessionPreset order: latest agent-preset/selected event
+  // wins, otherwise the preset the session was created with (issue #22).
+  // The header preset only changes when the event log itself is rebuilt.
+  const headerPreset = fullRescan ? sessionHeaderPreset(source) : (cached !== undefined ? cached.headerPreset : sessionHeaderPreset(source));
+  const preset = latestPreset(source, cached?.preset, cached?.scannedEnd) ?? headerPreset;
+  eventScanCache.set(key, { scannedEnd: end, stats: result, preset, headerPreset });
   return result;
+}
+
+/** First `session` event carries the session header (created from the roster
+ * preset). web's resolveSessionPreset falls back to it when no
+ * `agent-preset/selected` event has switched the preset yet (issue #22). */
+function sessionHeaderPreset(source: SessionEventsSource | undefined): string | undefined {
+  const events = source?.session?.events;
+  if (!Array.isArray(events)) return undefined;
+  for (const event of events) {
+    if (event?.type !== "session") continue;
+    const preset = event.data?.agentPreset ?? event.agentPreset;
+    if (preset !== undefined && preset !== null) return String(preset);
+  }
+  return undefined;
 }
 
 /** Latest `agent-preset/selected` with the same incremental-tail strategy. */
@@ -274,10 +299,11 @@ export function statusSnapshot(ctx: Context, preferAgentId?: string, fallbackToF
   const eventStats = agent === undefined ? undefined : eventStatsFor(agent);
   const hasStats = eventStats !== undefined || projected !== undefined || usage !== undefined || toolCalls > 0;
   const selection = agentId === undefined ? {} : currentSessionModel(ctx, String(agentId));
-  const session = agent as unknown as { session?: { events?: readonly { type?: string; data?: { agentPreset?: unknown } }[]; header?: { agentPreset?: unknown } } } | undefined;
-  // eventStatsFor above populates the shared scan cache (and preset tail
-  // cache) for the same agent, so this is O(1) after the first scan.
-  const preset = (eventScanCache.get(agent as object)?.preset) ?? session?.session?.header?.agentPreset;
+  // eventStatsFor above populates the shared scan cache (preset tail cache +
+  // session-header fallback) for the same agent, so this is O(1) after the
+  // first scan; the direct call only covers agents without event logs.
+  const cachedScan = eventScanCache.get(agent as object);
+  const preset = cachedScan?.preset ?? cachedScan?.headerPreset ?? (cachedScan === undefined ? sessionHeaderPreset(agent as SessionEventsSource | undefined) : undefined);
   const presetText = preset === undefined ? undefined : String(preset);
   return {
     agentId: agent?.id,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { markdownToHtml } from '../dist/telegram/markdown.js';
+import { markdownTablePreBlock, markdownToHtml } from '../dist/telegram/markdown.js';
 import { splitText } from '../dist/telegram/html.js';
 
 test('markdownToHtml renders the issue example without literal markers', () => {
@@ -78,6 +78,28 @@ test('GFM tables become aligned monospace blocks instead of raw pipes (#19)', ()
 
 test('a lone separator-looking line stays prose instead of half a table', () => {
   assert.equal(markdownToHtml('not a table\n|---|'), 'not a table\n|---|');
+});
+
+test('markdownTablePreBlock finds a table anywhere and renders it as aligned monospace (#26)', () => {
+  const input = [
+    'leading prose',
+    '| col1 | col2 |',
+    '|------|------|',
+    '| a    | b    |',
+    '| long | text |',
+    'trailing prose',
+  ].join('\n');
+  const html = markdownTablePreBlock(input);
+  assert.ok(html, 'a table block was detected');
+  assert.match(html, /^<pre>/);
+  assert.match(html, /\| col1\s+\| col2\s+\|/);
+  assert.match(html, /\| a\s+\| b\s+\|/);
+  assert.match(html, /\| long \| text \|/);
+  assert.equal(html.includes('------'), false, 'separator syntax is replaced by an aligned rule');
+});
+
+test('markdownTablePreBlock leaves table-less text alone', () => {
+  assert.equal(markdownTablePreBlock('| not a header |\nand prose'), undefined);
 });
 
 test('unordered and ordered lists keep their structure', () => {

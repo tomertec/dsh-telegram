@@ -215,3 +215,20 @@
 - 新增/更新回归测试 19 例（详见 TESTING.md §67）。
 - `npm run check`：**340/340 pass**。
 - 已提交 `040bbd2` 并推送 main；GitHub issues #16-#21 全部关闭，open issues 已清空。
+
+## Round 30（本轮）
+
+- 修复 open issues #22-#26：
+  - #22 status Router preset：fallback 改读 events 首个 session event 的
+    agentPreset（兼容 data/envelope 平铺），headerPreset 入增量缓存。
+  - #23 placeholder storm v2：MAX_EDIT_FAILURES 保留 messageId 不再重发占位、
+    每 turn 仅一次 stall fallback；turn/start 复用 messageId 与
+    placeholderFailed 闩锁。
+  - #24 EDIT_THROTTLE_MS 1000→200，diff+退避继续承担 429 防护。
+  - #25 新增 telegram_attach / telegram_send_file（workspace 白名单、1-10 文件、
+    50MB、roster、photo/voice/audio/document 分流）；transport 补
+    sendVoice/sendAudio。
+  - #26 reasoning 表格 snapshot 走 `markdownTablePreBlock` → `<pre>` 等宽块。
+- 新增回归：status 2、markdown 2、openclaw 4、telegram-attach 1（总 349）。
+- `npm run check`：**349/349 pass**；`npm pack --dry-run` 通过（149 files）。
+- 待办：提交推送 + 关闭 issues #22-#26。

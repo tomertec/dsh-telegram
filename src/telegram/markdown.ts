@@ -91,6 +91,25 @@ function renderTableBlock(rows: readonly string[]): string | undefined {
   return `<pre>${[rowText(header), separator, ...body.map((row) => rowText([...Array(columns)].map((_, index) => row[index] ?? "")))].join("\n")}</pre>`;
 }
 
+/** First GFM table found anywhere in a text, as an aligned monospace block.
+ * Streaming progress lines use this so a table snapshot renders as a table
+ * instead of leaking raw `|`/`---` pipes (issue #26). Full assistant answers
+ * go through `markdownToHtml`, which already handles the same blocks (#19). */
+export function markdownTablePreBlock(markdown: string): string | undefined {
+  const lines = markdown.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (parseTableRow(lines[index]!) === undefined || index + 1 >= lines.length) continue;
+    if (!isTableSeparator(parseTableRow(lines[index + 1]!) ?? [])) continue;
+    const rows: string[] = [];
+    while (index < lines.length && parseTableRow(lines[index]!) !== undefined) {
+      rows.push(lines[index]!);
+      index += 1;
+    }
+    return renderTableBlock(rows);
+  }
+  return undefined;
+}
+
 /** Inline Markdown on one line. Escapes every literal character, so generated
  * HTML is always balanced enough for the transport splitter. */
 function renderInline(input: string, depth = 0): string {

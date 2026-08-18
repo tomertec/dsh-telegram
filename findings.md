@@ -266,3 +266,21 @@
 - 测试新增 19 例：markdown 表格、receipt、status 增量扫描、goal/openclaw heartbeat 与通知开关、session dispose deadline、opencode latch deadline、interactive 零投递、config notify、UI lane 集成（#16/#17/#20）。
 - `npm run check`：**340/340 pass**。
 - 提交 `040bbd2` 已推 main；GitHub open issues 已清空（#16-#21 全部关闭并附修复说明）。
+
+## Round 30 发现与修复（GitHub issues #22-#26）
+
+- #22：`session?.session?.header?.agentPreset` 是永不存在的路径；真实 header 在
+  events 首个 `type:"session"` 事件上。兼容 `data.agentPreset` 与 envelope
+  平铺两种投影；headerPreset 独立进增量缓存，append 不再重扫。
+- #23：placeholder storm v2 的两条逃逸路径都在 openclaw.ts：
+  MAX_EDIT_FAILURES 后清 messageId 并 ensureMessage（5 连败即新占位）与
+  turn/start 丢 messageId/placeholderFailed。已改为保留同消息 + 每 turn 一次
+  stall fallback + turn 重启复用 messageId/失败闩锁。
+- #24：EDIT_THROTTLE_MS=1000 是 #15 的过度防御；diff 检查 + 同消息指数退避
+  已足够。改回 200ms。
+- #25：底层 sendDocument/sendPhoto 能力完整但无 agent 工具；新增
+  telegram_attach + telegram_send_file 别名（1-10 文件、workspace 白名单、
+  50MB、roster、按扩展名分流）。dsh-tools rc.6 的 array schema 不支持
+  minItems/maxItems，数量上限在 execute 内手动校验。
+- #26：最终答案路径 #19 已覆盖；缺 openclaw reasoning 路径。新增
+  `markdownTablePreBlock`（任意位置首个 GFM 表）并接入 reasoningLineHtml。

@@ -171,11 +171,10 @@ test('statusSnapshot resolves the agent preset from session events (official res
     options: { provider: 'opencode-go', model: 'deepseek-v4-flash' },
     session: {
       events: [
-        { type: 'session', data: {} },
+        { type: 'session', data: { agentPreset: 'code' } },
         { type: 'agent-preset/selected', data: { agentPreset: 'standard' } },
         { type: 'turn/start', data: {} },
       ],
-      header: { agentPreset: 'code' },
     },
     inbox: { nextTurn: [], nextStep: [] },
   };
@@ -187,17 +186,47 @@ test('statusSnapshot resolves the agent preset from session events (official res
   assert.equal(snap.preset, 'standard');
 });
 
-test('statusSnapshot falls back to the session header preset', async () => {
+test('statusSnapshot falls back to the preset carried by the first session event (#22)', async () => {
   const { statusSnapshot } = await import('../dist/harness/adapters/status.js');
   const agent = {
     id: 's1',
     status: 'idle',
     options: { provider: 'opencode-go', model: 'deepseek-v4-flash' },
-    session: { events: [{ type: 'session', data: {} }], header: { agentPreset: 'code' } },
+    // Real session shape: `agent.session.header` does not exist; the preset
+    // lives on events[0] (`{"type":"session","agentPreset":"standard"}`).
+    session: { events: [{ type: 'session', data: { agentPreset: 'standard' } }, { type: 'turn/start', data: {} }] },
     inbox: { nextTurn: [], nextStep: [] },
   };
   const ctx = { agents: { list: () => [agent], get: () => agent }, get: () => ({ list: () => [] }) };
-  assert.equal(statusSnapshot(ctx).preset, 'code');
+  assert.equal(statusSnapshot(ctx).preset, 'standard');
+});
+
+test('statusSnapshot reads a preset flattened onto the session event envelope (#22)', async () => {
+  const { statusSnapshot } = await import('../dist/harness/adapters/status.js');
+  const agent = {
+    id: 's1',
+    status: 'idle',
+    options: { provider: 'opencode-go', model: 'deepseek-v4-flash' },
+    // Some persistence projections log `{"type":"session","agentPreset":...}`
+    // with the header field on the envelope rather than under `data`.
+    session: { events: [{ type: 'session', agentPreset: 'standard' }, { type: 'turn/start', data: {} }] },
+    inbox: { nextTurn: [], nextStep: [] },
+  };
+  const ctx = { agents: { list: () => [agent], get: () => agent }, get: () => ({ list: () => [] }) };
+  assert.equal(statusSnapshot(ctx).preset, 'standard');
+});
+
+test('statusSnapshot keeps the fallback undefined when neither event source names a preset (#22)', async () => {
+  const { statusSnapshot } = await import('../dist/harness/adapters/status.js');
+  const agent = {
+    id: 's1',
+    status: 'idle',
+    options: { provider: 'opencode-go', model: 'deepseek-v4-flash' },
+    session: { events: [{ type: 'session', data: {} }, { type: 'turn/start', data: {} }] },
+    inbox: { nextTurn: [], nextStep: [] },
+  };
+  const ctx = { agents: { list: () => [agent], get: () => agent }, get: () => ({ list: () => [] }) };
+  assert.equal(statusSnapshot(ctx).preset, undefined);
 });
 
 test('statusSnapshot counts turns/steps/tools/tokens from session events', async () => {

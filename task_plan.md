@@ -183,3 +183,23 @@
 6. [x] #21 renderTurnReceipt 单行 5 metrics；移除 token/editText/性能段；openclaw editText 命中率改为日志。
 7. [x] 回归测试 + `npm run check` 全绿：**340/340 pass**。
 8. [x] 提交推送 + 关闭 issues #16-#21（commit `040bbd2` 已 push main；open issues 已清空）。
+
+## Round 30 任务计划（修复 open issues #22-#26）
+
+> 基于 GitHub open issues（2026-08-18）：#22 preset fallback、#23 placeholder storm v2、
+> #24 reasoning 1s 节流、#25 agent 发文件工具、#26 表格 pre/code 渲染。
+
+### 步骤
+1. [x] #22 status.ts：session header preset fallback 改为扫 events 首个 `type:"session"` 的 `data.agentPreset`（现状读不存在的 `session.header`）。
+2. [x] #23 openclaw.ts：MAX_EDIT_FAILURES 后不再清 messageId/不再发新占位，仅发一次 stall fallback；turn/start 复用上一条 placeholder 的 messageId（含 placeholderFailed 闩锁）。
+3. [x] #24 openclaw.ts：EDIT_THROTTLE_MS 1000 → 200（diff 检查 + 退避仍在，恢复流式感）。
+4. [x] #25 新增 `telegram_attach`（+ `telegram_send_file` 别名）：workspace 路径白名单、1-10 文件、50MB 上限、chatId roster 校验、按扩展名自动分流 photo/voice/audio/document；transport 补 sendVoice/sendAudio。
+5. [x] #26 markdown.ts 导出表格→pre 助手并接入 openclaw reasoning 路径（最终答案路径 #19 已覆盖，补回归测试锁定）。
+6. [x] 补回归测试（status preset、openclaw 风暴/节流/表格、attach 安全与分流）。
+7. [x] `npm run check` 全绿 + CHANGELOG/README 同步。
+8. [~] 提交推送 + 关闭 issues #22-#26。
+
+### 约束
+- 不破坏 #15/#19 已收敛行为：编辑仍走 diff 检查、失败仍指数退避、同消息重试。
+- 新工具只允许白名单 chat + workspace root 内文件；文件发送仍走 SendQueue 全局限速。
+- 测试不依赖真实 Telegram。

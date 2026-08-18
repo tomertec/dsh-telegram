@@ -67,7 +67,7 @@ DeepSeek Harness's web UI is the gold standard for controlling an agent: session
 - **♻️ Reliability-first queue** — per-chat FIFO + global sliding-window rate limit; retries only 429/5xx/network/timeout, permanent 4xx fails once; restart-safe long polling with offset preservation
 - **🔁 Hot update & hot plug** — `internal/update` live-applies whitelist/rules/rate/length/watch without restart; teardown reverses every mount effect and re-apply is idempotent
 - **🛡️ Safe by default** — chat allowlist (`empty = deny all`), agent tools restricted to the roster, callback payloads percent-encoded, callback tokens single-use and bounded, secrets never ride back
-- **🤖 Agent tools** — `telegram_send` / `telegram_reply` / `telegram_broadcast` / `telegram_status` / `telegram_mark_no_reply`, all routed through the same audited send pipeline
+- **🤖 Agent tools** — `telegram_send` / `telegram_reply` / `telegram_broadcast` / `telegram_attach` (files: photo/voice/audio/document) / `telegram_status` / `telegram_mark_no_reply`, all routed through the same audited send pipeline
 
 ## Quick Start
 

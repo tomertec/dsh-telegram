@@ -15,9 +15,10 @@ import type {} from "@deepseek-ai/dsh-agent";
 import type { CommandInvocation, CommandResult } from "@deepseek-ai/dsh-commands";
 import type {} from "@deepseek-ai/dsh-session";
 import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { defineTool, type ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { homedir } from "node:os";
-import { basename, join, parse, resolve } from "node:path";
+import { basename, join, parse, resolve, sep } from "node:path";
 import { isChatAllowed, readConfig, resolveToken, writeConfig, overlayConfig, getConfigPath, patchFromPath, type ConfigSection, type TelegramConfig } from "./config.js";
 import { Bridge } from "./harness/bridge.js";
 import { compactCurrent } from "./harness/adapters/compact.js";
@@ -446,6 +447,90 @@ const failCmd = (text: string): CommandResult => ({ kind: "error", text });
 function requireTransport(): TelegramTransport {
   if (!state.transport) throw new Error("Telegram is not running: set TELEGRAM_BOT_TOKEN and send /telegram start.");
   return state.transport;
+}
+
+/** Agent outbound attachments (issue #25): 1-10 workspace files, 50MB each,
+ * routed to sendPhoto/sendVoice/sendAudio/sendDocument by file extension. */
+const ATTACH_MAX_COUNT = 10;
+const ATTACH_MAX_BYTES = 50 * 1024 * 1024;
+const ATTACH_PHOTO_EXTENSIONS = new Set(["jpg", "jpeg", "png"]);
+const ATTACH_VOICE_EXTENSIONS = new Set(["ogg", "opus"]);
+const ATTACH_AUDIO_EXTENSIONS = new Set(["mp3", "m4a", "aac", "wav", "flac"]);
+
+function attachExtension(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  return dot === -1 ? "" : filename.slice(dot + 1).toLowerCase();
+}
+
+function attachWithinWorkspace(root: string, target: string): boolean {
+  return target === root || target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+}
+
+async function sendWorkspaceAttachments(
+  args: { paths?: unknown; chatId?: unknown; caption?: unknown },
+  exec: ToolRunContext,
+): Promise<string> {
+  const paths = Array.isArray(args.paths) ? args.paths.filter((entry): entry is string => typeof entry === "string") : [];
+  if (!Array.isArray(args.paths)) return JSON.stringify({ ok: false, error: "paths must be an array of 1-10 workspace-relative file paths" });
+  if (paths.length < 1 || paths.length > ATTACH_MAX_COUNT) {
+    return JSON.stringify({ ok: false, error: `paths must contain 1-10 entries, got ${paths.length}` });
+  }
+  const agentId = exec.agent?.id === undefined ? undefined : String(exec.agent.id);
+  const fallbackAgentId = agentId ?? state.bridge?.currentAgentIdValue();
+  const resolvedChat = args.chatId !== undefined ? Number(args.chatId) : (fallbackAgentId !== undefined ? state.bridge?.chatIdForAgent(fallbackAgentId) : undefined);
+  if (resolvedChat === undefined || !Number.isInteger(resolvedChat) || !state.chats.has(resolvedChat)) {
+    return JSON.stringify({
+      ok: false,
+      error:
+        args.chatId !== undefined
+          ? `chat ${args.chatId} is not in the allowed roster`
+          : "no bound Telegram chat context \u2014 pass chatId explicitly",
+    });
+  }
+  const t = requireTransport();
+  const root = resolve(state.workspaceRoot);
+  const results: { path: string; ok: boolean; method?: string; messageId?: number | null; bytes?: number; error?: string }[] = [];
+  for (const rel of paths) {
+    const abs = resolve(root, rel);
+    try {
+      if (!attachWithinWorkspace(root, abs)) {
+        results.push({ path: rel, ok: false, error: "path is outside the workspace root" });
+        continue;
+      }
+      const info = await stat(abs);
+      if (!info.isFile()) {
+        results.push({ path: rel, ok: false, error: "not a file" });
+        continue;
+      }
+      if (info.size > ATTACH_MAX_BYTES) {
+        results.push({ path: rel, ok: false, error: `exceeds the ${ATTACH_MAX_BYTES / (1024 * 1024)}MB Telegram limit` });
+        continue;
+      }
+      const buffer = await readFile(abs);
+      const filename = basename(abs);
+      const ext = attachExtension(filename);
+      const caption = typeof args.caption === "string" && args.caption !== "" ? args.caption : undefined;
+      let method: string;
+      let messageId: number | undefined;
+      if (ATTACH_PHOTO_EXTENSIONS.has(ext)) {
+        method = "sendPhoto";
+        messageId = await t.sendPhoto(resolvedChat, buffer, filename, caption);
+      } else if (ATTACH_VOICE_EXTENSIONS.has(ext)) {
+        method = "sendVoice";
+        messageId = await t.sendVoice(resolvedChat, buffer, filename, caption);
+      } else if (ATTACH_AUDIO_EXTENSIONS.has(ext)) {
+        method = "sendAudio";
+        messageId = await t.sendAudio(resolvedChat, buffer, filename, caption);
+      } else {
+        method = "sendDocument";
+        messageId = await t.sendDocument(resolvedChat, buffer, filename, caption);
+      }
+      results.push({ path: rel, ok: messageId !== undefined, method, messageId: messageId ?? null, bytes: buffer.length });
+    } catch (err) {
+      results.push({ path: rel, ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return JSON.stringify({ ok: results.length > 0 && results.every((entry) => entry.ok), results });
 }
 
 /** ChatOps adapter on the UI control lane: cards, menus and status panels
@@ -3963,6 +4048,38 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         disable_notification: args.disableNotification === true,
       });
       return JSON.stringify({ ok: true, messageId: id ?? null });
+    },
+  }));
+
+  // Agent outbound attachments (#25). `telegram_attach` matches pi-telegram's
+  // tool name for cross-project agent migration; `telegram_send_file` is the
+  // original issue name kept as a drop-in alias.
+  const attachToolParameters = {
+    paths: {
+      type: "array" as const,
+      required: true as const,
+      items: { type: "string" as const, description: "Workspace-relative file path (1-10 entries)." },
+      description: "One or more local files under the workspace root.",
+    },
+    chatId: { type: "string" as const, description: "Target chat id. Defaults to the executing agent's bound Telegram chat." },
+    caption: { type: "string" as const, description: "Optional caption shown above the file (HTML)." },
+  };
+  ctx.tools.register(defineTool({
+    name: "telegram_attach",
+    description: "Send 1-10 workspace files to a Telegram chat. Images (.jpg/.jpeg/.png) go as photos, .ogg/.opus as voice notes, other audio as audio, and everything else as a document. Paths outside the workspace root or chats outside the allowed roster are rejected.",
+    parameters: attachToolParameters,
+    output: textOutput(),
+    async execute(args, exec) {
+      return sendWorkspaceAttachments(args, exec);
+    },
+  }));
+  ctx.tools.register(defineTool({
+    name: "telegram_send_file",
+    description: "Alias of telegram_attach: send 1-10 workspace files to a Telegram chat as photo/voice/audio/document by extension.",
+    parameters: attachToolParameters,
+    output: textOutput(),
+    async execute(args, exec) {
+      return sendWorkspaceAttachments(args, exec);
     },
   }));
 

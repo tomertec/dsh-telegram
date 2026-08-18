@@ -66,7 +66,7 @@ DeepSeek Harness 的 Web UI 是 agent 控制面的金标准：会话、模型、
 - **♻️ 可靠发送队列** — 每 chat FIFO + 全局滑动窗口限速；只重试 429/5xx/网络/超时，永久 4xx 只试一次；长轮询重启安全且保留 offset
 - **🔁 热更新与热插拔** — `internal/update` 热应用白名单/规则/限速/长度/watch；teardown 逆序回收全部挂载效应，重复 apply 幂等
 - **🛡️ 默认安全** — chat 白名单（空 = 拒绝一切入站）、agent 工具仅限白名单、回调数据百分号编码、token 单次消费且有界、密钥永不回显
-- **🤖 Agent 工具** — `telegram_send` / `telegram_reply` / `telegram_broadcast` / `telegram_status` / `telegram_mark_no_reply`，全部走同一套经审计的发送管线
+- **🤖 Agent 工具** — `telegram_send` / `telegram_reply` / `telegram_broadcast` / `telegram_attach`（发文件：图片/语音/音频/文档）/ `telegram_status` / `telegram_mark_no_reply`，全部走同一套经审计的发送管线
 
 ## 快速开始
 

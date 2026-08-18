@@ -1458,3 +1458,53 @@ Telegram 却只显示项目基名/id。根因：真实 `SessionPersistence.readR
   openclaw-liveness、opencode-go-latch、session-lifecycle、compaction-watch、
   interactive、config、ui-lane.integration。
 - `npm run check`：**340/340 pass**。
+
+## 68. 修复 open issues #22-#26（2026-08-18，349/349）
+
+### #22 Status Router 一直显示 router-default
+
+- 根因：preset fallback 读 `agent.session.header.agentPreset`，但真实 session
+  header 是 events 里第一个 `type:"session"` 事件的 `data.agentPreset`。
+- 修复：`sessionHeaderPreset()` 扫首个 session header event；增量扫描缓存
+  新增 `headerPreset` 槽位（append 不重扫，shrunk 时全量重扫）。
+- 回归：status 测试改为真实事件形状；新增「两者都无 → undefined」用例。
+
+### #23 placeholder storm v2
+
+- MAX_EDIT_FAILURES 耗尽后不再 `messageId=undefined + ensureMessage()` 重发
+  新 `⚙️ Working…`；保留同一 messageId，每 turn 只发一次
+  “live progress stalled — use /history” 兜底提示。
+- `turn/start` 复用上一条 placeholder 的 `messageId` 与 `placeholderFailed`
+  闩锁：turn 重启编辑原消息，不再新发占位。
+- 回归（mock 时钟）：6 次失败后 sends 只多一条兜底、后续 chunk 仍编辑
+  messageId=100；turn/start 重启 sends 不增加、编辑落在同一 messageId。
+
+### #24 reasoning 延迟 1s
+
+- `EDIT_THROTTLE_MS` 1000 → 200。#15 的 429 防护由 diff 检查 + 同消息指数
+  退避承担，不需要 1s 节流。
+- 回归：300ms 内首个 stream 帧必须已 edit。
+
+### #25 agent 发文件工具
+
+- 新增 `telegram_attach`（pi-telegram 同名）+ `telegram_send_file` 别名：
+  1-10 个 workspace 内文件 / chatId 缺省取执行 agent 绑定 chat /
+  roster 白名单 / workspace 根防穿越 / 50MB 上限。
+- 按扩展名分流：jpg/jpeg/png → sendPhoto；ogg/opus → sendVoice；
+  mp3/m4a/aac/wav/flac → sendAudio；其它 → sendDocument。
+- `TelegramTransport` 新增 `sendVoice`/`sendAudio`，同一 SendQueue 限速管线。
+- 回归：`test/telegram-attach.test.mjs`（分流、默认 chat、roster/穿越/缺失/
+  50MB/非文件/数量上限、别名）。
+
+### #26 reasoning 表格渲染
+
+- 最终答案路径 #19 已覆盖 `markdownToHtml` 表格→`<pre>`；本轮补 openclaw
+  进度卡路径：导出 `markdownTablePreBlock`（任意位置找首个 GFM 表），
+  `reasoningLineHtml` 对表格 snapshot 输出等宽 `<pre>` 而不是裸 `|` 字符。
+- 回归：markdown helper 任意位置识别/无表返回 undefined；openclaw 表格
+  snapshot 编辑帧含 `<pre>`、无 `|---|`、无 `<i>` 管道汤。
+
+### 测试记录
+
+- 新增/更新：status、markdown、openclaw、telegram-attach。
+- `npm run check`：**349/349 pass**。
