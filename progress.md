@@ -185,4 +185,4 @@
   - 卡片每 5s 原地 auto-refresh；Back/Close/换卡/teardown 自动停表；`turn/end` 立即刷新活跃卡片。
   - 全部完成时卡片头变为 `✅ Todos complete · X/Y done`（新增 `telegram/todos-card.ts` 纯渲染模块）。
 - `npm run check`：**317/317 pass**（新增 openclaw 4 例、todos 缓存 4 例、todos-card 渲染 3 例、Todo 卡 5s 刷新集成测试 1 例）。
-- 待办：用户确认后 commit/push，并关闭 issues #14/#15。
+- 已提交 `29669fd` 并推送 main；issues #14/#15 已评论并关闭（评论含修复说明）。

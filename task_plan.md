@@ -148,7 +148,7 @@
 5. [x] 补回归测试（openclaw 失败不换占位、diff 抑制 400、重试退避、todos 缓存、todos 卡渲染/生命周期）。
 6. [x] `npm run check` 全绿：**317/317 pass**。
 7. [x] 更新 CHANGELOG（README 无配置变化）。
-8. [ ] 用户确认后 commit/push 并关闭 issues #14/#15。
+8. [x] commit `29669fd` 已推送 main；issues #14/#15 已关闭。
 
 ### 关键约束
 - 卡片/占位继续走 control lane（openCard 已用 uiOps）。
