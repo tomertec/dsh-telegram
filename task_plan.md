@@ -172,3 +172,14 @@
 ### 约束
 - 只做防御性修复：正常路径行为不变；超时只影响“本来就永久挂起”的场景。
 - 不改变外部服务契约，不重写 UI 数据加载。
+
+## Round 29 任务计划（修复全部 open issues #16-#21）
+
+1. [x] #16 cardOrigin：dispatchBarButton 统一标 `bar`，openMenuAt/command 标 `menu`；back 按来源关闭/回菜单。
+2. [x] #17 收起：删 carrier 后发 `buildCollapsedBarKeyboard()` 的 collapsed carrier；typing 10 分钟到点若 turn 仍在跑则续一轮。
+3. [x] #18 GoalProgressFeed/openclaw 增加 30s heartbeat（标题带 elapsed），goal 自主 turn 完成时 push 一条新 receipt 消息；`notify.onComplete/onLongTask` 可配置（默认 true）。
+4. [x] #19 markdownToHtml 增加 GFM 表格块 → `<pre>` 等宽对齐；校验所有 assistant 送达路径走 markdownToHtml。
+5. [x] #20 LOOP_AUDIT 8 项全部落地（eventStats 缓存 / UI lane deadline / listDirectory timeout / interactive 零投递 / sessionlog 超时 / dispose 超时 / opencode-go 闩锁 / 内存清理）。
+6. [x] #21 renderTurnReceipt 单行 5 metrics；移除 token/editText/性能段；openclaw editText 命中率改为日志。
+7. [x] 回归测试 + `npm run check` 全绿：**340/340 pass**。
+8. [ ] 提交推送 + 关闭 issues #16-#21。

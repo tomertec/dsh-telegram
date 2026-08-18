@@ -199,3 +199,19 @@
   - `markdown renderInline` 增加递归深度上限 32（防栈溢出）。
 - `npm run check`：**319/319 pass**（新增 queue clamp、markdown 深度、media signal、Todo/Status 切换集成测试）。
 - 待办：commit/push 本轮；中风险项按 LOOP_AUDIT 计划后续轮次实施。
+
+## Round 29（本轮）
+
+- 修复全部 open issues #16-#21：
+  - #16 bar 卡片 Back：来源记录（bar/menu）分流，bar → 关卡回聊天。
+  - #17 收起发 collapsed keyboard 新 carrier；typing 10 分钟 guard 在 turn 仍跑时续轮。
+  - #18 openclaw + GoalProgress 30s heartbeat；goal 完成 push 新 receipt（响铃）；
+    `notify.onComplete/onLongTask` 配置开关（默认 true）。
+  - #19 markdown GFM 表格 → `<pre>` 等宽对齐；assistant 送达路径复核。
+  - #20 LOOP_AUDIT 中风险 8 项全部落地（增量 eventStats 缓存、UI lane 10s deadline、
+    fs timeout、interactive 零投递、sessionlog 超时、dispose 超时、opencode latch、
+    会话级内存清理）。
+  - #21 turn receipt 单行 5 metrics；token/性能/editText 命中率内部化。
+- 新增/更新回归测试 19 例（详见 TESTING.md §67）。
+- `npm run check`：**340/340 pass**。
+- 待办：git 提交/推送 + 关闭 GitHub issues #16-#21。

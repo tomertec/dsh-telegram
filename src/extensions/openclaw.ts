@@ -36,6 +36,8 @@ const TOOL_DETAIL_CHARS = 90;
  * message and trigger 429 (issue #15).
  */
 const EDIT_THROTTLE_MS = 1000;
+/** Long tools emit no chunks; heartbeat keeps the draft visibly ticking. */
+const LIVENESS_HEARTBEAT_MS = 30_000;
 /** After a failed edit, retry the SAME message with exponential backoff
  * instead of clearing `messageId` and spawning another "…" placeholder. */
 const EDIT_RETRY_BASE_MS = 1500;
@@ -156,6 +158,8 @@ interface Draft {
   lastHtml?: string;
   /** Backoff timer that re-attempts the last failed edit on the SAME message. */
   retryTimer?: ReturnType<typeof setTimeout>;
+  /** Periodic liveness edit while a tool stays silent (issue #18). */
+  heartbeatTimer?: ReturnType<typeof setTimeout>;
   /** Consecutive edit failures on the current message. */
   editFails: number;
   /** Edits attempted / succeeded for this turn (receipt hit-rate line). */
@@ -290,15 +294,18 @@ function render(draft: Draft, title: string): string {
   return lines.join("\n");
 }
 
-function buildSummary(draft: Draft, sessionStats?: StatusStats): string {
+function buildSummary(draft: Draft, sessionStats?: StatusStats, goalObjective?: string): string {
+  if (draft.editAttempts > 0) {
+    const rate = Math.round((draft.editSucceeded / draft.editAttempts) * 100);
+    console.error("[dsh-telegram] openclaw-edit stats", `attempted=${draft.editAttempts} succeeded=${draft.editSucceeded} hit=${rate}%`);
+  }
   return renderTurnReceipt({
     durationMs: Date.now() - draft.startedAt,
     reasoningSteps: draft.reasoningSteps,
     toolCalls: draft.toolCalls,
     tokens: draft,
     sessionStats,
-    editAttempts: draft.editAttempts,
-    editSucceeded: draft.editSucceeded,
+    ...(goalObjective === undefined ? {} : { goalObjective }),
   });
 }
 
@@ -359,10 +366,20 @@ export function apply(ctx: Context, _config?: unknown): void {
   });
 
   /** Goal-aware draft title (issue #7): goal turns show the objective and
-   * step count; ordinary turns keep the openclaw working header. */
-  const titleFor = (chatId: number, draft: Draft): string => {
+   * step count; ordinary turns keep the openclaw working header. The elapsed
+   * timer only appears on the 30s liveness heartbeat so normal throttled
+   * edits stay diff-stable (issue #15 + issue #18). */
+  const titleFor = (chatId: number, draft: Draft, liveness = false): string => {
     const goal = host.goalForChat?.(chatId);
-    return goal === undefined ? "\u2699\uFE0F Working\u2026" : `\u{1F4CA} ${goal.objective.slice(0, 60)} \u00B7 step ${draft.step}`;
+    if (goal === undefined) {
+      return liveness
+        ? `\u2699\uFE0F Working \u00B7 \u23F1\uFE0F ${Math.max(1, Math.round((Date.now() - draft.startedAt) / 1000))}s`
+        : "\u2699\uFE0F Working\u2026";
+    }
+    const base = `\u{1F4CA} ${goal.objective.slice(0, 48)} \u00B7 step ${draft.step}`;
+    return liveness
+      ? `${base} \u00B7 \u23F1\uFE0F ${Math.max(1, Math.round((Date.now() - draft.startedAt) / 1000))}s`
+      : base;
   };
 
   const clearTimers = (draft: Draft): void => {
@@ -373,6 +390,10 @@ export function apply(ctx: Context, _config?: unknown): void {
     if (draft.retryTimer !== undefined) {
       clearTimeout(draft.retryTimer);
       draft.retryTimer = undefined;
+    }
+    if (draft.heartbeatTimer !== undefined) {
+      clearTimeout(draft.heartbeatTimer);
+      draft.heartbeatTimer = undefined;
     }
   };
 
@@ -428,6 +449,22 @@ export function apply(ctx: Context, _config?: unknown): void {
         }, delay);
       }
     });
+  };
+
+  const armHeartbeat = (chatId: number, draft: Draft): void => {
+    if (draft.heartbeatTimer !== undefined) return;
+    draft.heartbeatTimer = setTimeout(() => {
+      draft.heartbeatTimer = undefined;
+      if (chats.get(chatId) !== draft) return;
+      // Edit immediately with the elapsed title: throttling to a 1s frame
+      // would strip the liveness suffix again, and 1 edit/30s is far below
+      // the per-chat rate limit.
+      flush(chatId, draft, titleFor(chatId, draft, true), true);
+      armHeartbeat(chatId, draft);
+    }, LIVENESS_HEARTBEAT_MS);
+    // The heartbeat is a liveness convenience, not a lifecycle owner: it must
+    // never keep a test process (or an idle Node process) alive by itself.
+    draft.heartbeatTimer.unref?.();
   };
 
   const schedule = (chatId: number, draft: Draft): void => {
@@ -518,7 +555,9 @@ export function apply(ctx: Context, _config?: unknown): void {
       // Visible feedback starts with the turn itself, not with the first
       // tool/reasoning event (#12): the placeholder later collapses into the
       // openclaw receipt or is deleted for an empty turn.
-      ensureMessage(chatId, chats.get(chatId)!);
+      const fresh = chats.get(chatId)!;
+      ensureMessage(chatId, fresh);
+      if ((host.getConfigPath?.("notify.onLongTask") ?? true) !== false) armHeartbeat(chatId, fresh);
       return;
     }
     // Final delivery must never depend on the live draft: a turn whose
@@ -527,15 +566,21 @@ export function apply(ctx: Context, _config?: unknown): void {
     // the draft-existence guard.
     if (type === "turn/end") {
       const draft = chats.get(chatId);
+      const goal = host.goalForChat?.(chatId);
+      let goalReceipt: string | undefined;
       if (draft !== undefined) {
         clearTimers(draft);
         commitReasoning(draft);
         const sessionStats = host.statusStats() as StatusStats | undefined;
         const hasContent = draft.reasoningSteps > 0 || draft.toolCalls > 0;
+        const summary = hasContent ? buildSummary(draft, sessionStats, goal?.objective) : undefined;
+        if (goal !== undefined) {
+          goalReceipt = summary ?? `\u2705 ${goal.objective.slice(0, 60)} \u00B7 \u23F1\uFE0F ${Math.max(1, Math.round((Date.now() - draft.startedAt) / 1000))}s`;
+        }
         const finalize = (messageId: number | undefined): void => {
           if (messageId === undefined) return;
-          if (hasContent) {
-            void safeWrap("openclaw-finalize", () => host.editMessage(chatId, messageId, buildSummary(draft, sessionStats), { parse_mode: "HTML" }));
+          if (summary !== undefined) {
+            void safeWrap("openclaw-finalize", () => host.editMessage(chatId, messageId, summary, { parse_mode: "HTML" }));
           } else {
             void safeWrap("openclaw-cleanup", () => host.deleteMessage(chatId, messageId));
           }
@@ -575,6 +620,12 @@ export function apply(ctx: Context, _config?: unknown): void {
           .catch((err) => {
             console.error("[dsh-telegram] openclaw-final-answer FAILED", err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
           });
+      } else if (goal !== undefined && goalReceipt !== undefined && (host.getConfigPath?.("notify.onComplete") ?? true) !== false) {
+        // Goal turns have no inbound answer, so an in-place draft edit is the
+        // only signal. Push a fresh receipt message too (issue #18).
+        void safeWrap("openclaw-goal-completion", () =>
+          host.send(chatId, goalReceipt!, { parse_mode: "HTML", disable_notification: false }),
+        );
       }
       return;
     }

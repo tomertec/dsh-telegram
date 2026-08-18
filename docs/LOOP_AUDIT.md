@@ -1,8 +1,8 @@
 # dsh-telegram 死锁 / 卡死 / 无限递归 / 循环审计
 
-日期：2026-08-18（Round 28）
+日期：2026-08-18（Round 28 审计，Round 29 完成中风险落地）
 范围：`src/**/*.ts` 全部 12.5k 行 + 关键集成路径
-结论：**未发现跨模块互相等待的经典死锁**；发现 6 个已修复的高风险点、8 个需要后续轮次处理的中风险点，以及 1 个低风险内存增长点。
+结论：**未发现跨模块互相等待的经典死锁**；6 个高风险点已在 Round 28 修复，8 个中风险点已在 Round 29 全部落地，另记录 1 个低风险内存增长点。Round 29 后 `npm run check` 340/340 pass。
 
 ## 审计方法
 
@@ -24,31 +24,31 @@
 | 7 | `src/telegram/queue.ts` `takeSlot` | `maxPerWindow<=0` / `windowMs<=0` 时等待条件数学上不可达 → 无限循环（配置层已挡，公共类仍可被误构造） | 构造与 `configure` 做正数 clamp；回归测试 |
 | 8 | `src/telegram/markdown.ts` `renderInline` | 嵌套 inline Markdown 无深度上限，超深输入 RangeError/栈溢出（表现为 bot 卡死） | `MAX_INLINE_DEPTH=32`，超限转义剩余文本；回归测试 |
 
-## 中风险（计划后续轮次，不影响功能的方案）
+## 中风险（Round 29 已全部落地）
 
-1. **`statusSnapshot.eventStatsFor` 每次全量扫 `session.events`**：Bridge 对每个 tool/step 事件刷新面板 → 长会话 O(n²)，表现为“跑得越久 UI 越卡”。
-   方案：仿 `listTodos` 做 `WeakMap<agent, {scannedEnd, stats}>` 增量累加；`agent-preset/selected` 也做反向索引缓存。预计不动任何外部契约。
+1. ✅ **`statusSnapshot.eventStatsFor` 每次全量扫 `session.events`**：Bridge 对每个 tool/step 事件刷新面板 → 长会话 O(n²)，表现为“跑得越久 UI 越卡”。
+   → `WeakMap<agent, {scannedEnd, stats, preset}>` 增量 tail 扫描；数组缩短回退全量重扫（`src/harness/adapters/status.ts`）。
 
-2. **UI lane 数据加载无统一超时**：`modelCatalog/listSkills/listSubagents/listSessionDetails/describeSettings/credentials/...` 任一服务挂起会永久卡住该 chat 的 `uiChains`，后续所有按钮无响应。
-   方案：新增 `withDeadline(ms, fn)` 包卡片数据加载，超时发 `❌ 加载失败` 卡片并返回；默认 8-10s，只影响“本来永远挂起”的路径。
+2. ✅ **UI lane 数据加载无统一超时**：`modelCatalog/listSkills/listSubagents/listSessionDetails/...` 任一服务挂起会永久卡住该 chat 的 `uiChains`。
+   → `cardLoad()` 10s deadline：model catalog / sessions / history / search / skills / subagents / subagent history / presets / feedback 全部接入，超时发可见失败卡片（`src/index.ts`）。
 
-3. **`listDirectory` 的 `readdir/stat` 无 AbortSignal**：坏盘/NFS 挂起卡住 Host/Workspace 卡。
-   方案：`AbortSignal.timeout(10s)` + 超时降级为错误提示；大目录已经 200 条封顶。
+3. ✅ **`listDirectory` 的 `readdir/stat` 无超时**：坏盘/NFS 挂起卡住 Host/Workspace 卡。
+   → `withFsTimeout(10s)` 覆盖 `readdir/stat/mkdir`（含 `isDirectory`），超时降级为错误提示（`src/harness/adapters/host.ts`）。
 
-4. **interactive 零投递挂起**：approval/question `broadcast` 若没有任何 chat 收到卡，等待用户回答的 Promise 永不 settle（只能等 signal）。
-   方案：`delivered.length === 0` 时 question reject、approval settle("cancelled")，并 log；有 chat 的正常流程完全不变。
+4. ✅ **interactive 零投递挂起**：approval/question 无人收到卡时 Promise 永不 settle。
+   → `delivered.length === 0` 时 question reject、approval settle("cancelled")（`src/harness/adapters/interactive.ts`）。
 
-5. **`exportSessionLog` 流式读无超时**：`reader.read()` 永不 done 会卡住 `/sessionlog`。
-   方案：用 `AbortSignal.timeout(120s)`（50MB 上限，留足慢网余量）并在超时 `reader.cancel()`。
+5. ✅ **`exportSessionLog` 流式读无超时**：`reader.read()` 永不 done 会卡住 `/sessionlog`。
+   → `AbortSignal.timeout(120s)` + 超时 `reader.cancel()`（`src/harness/adapters/downloads.ts`）。
 
-6. **`SessionLifecycle.create` await 旧 agent `dispose()`**：dispose 永不 settle 会让 `sessionCreateChains` 卡死。
-   方案：dispose 与 10s 超时竞速；超时只记日志、不阻塞新会话创建（旧会话已不再被引用，和当前 catch 语义一致）。
+6. ✅ **`SessionLifecycle.create` await 旧 agent `dispose()`**：dispose 永不 settle 会让 `sessionCreateChains` 卡死。
+   → `disposeWithin(10s)` race；超时只记日志、不阻塞新会话创建（`src/harness/adapters/sessions.ts`）。
 
-7. **`ensureOpencodeGoResponsesRoute` 单例闩锁**：`settings.update` 挂起时所有等待模型切换的调用复用同一 stuck promise。
-   方案：`provisionOnce` 外层 15s 超时；`finally` 清 `provisioning`，失败照旧返回 false（模型切换显示明确错误）。
+7. ✅ **`ensureOpencodeGoResponsesRoute` 单例闩锁**：`settings.update` 挂起时所有等待模型切换的调用复用同一 stuck promise。
+   → 15s deadline + `finally` 清 latch，失败返回 false（`src/harness/adapters/opencodeGo.ts`）。
 
-8. **低风险内存增长**：`CompactionWatcher.states`（无 `compaction/end` 不删）、`toolCallCounts`（session 删除不清）、`Bridge.droppedEvents`（unbound agent 累计）。
-   方案：分别在 `session/disposed`、`deleteSession`、`turn/end`/rebind 时清理对应 entry。
+8. ✅ **内存增长**：`CompactionWatcher.states` / `toolCallCounts` / `Bridge.droppedEvents`。
+   → 统一在 `session/disposed` 清理（另清 statusSubagentCounts 与 todoSnapshots）。
 
 ## 已确认安全的并发结构（审计通过）
 

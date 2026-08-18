@@ -39,6 +39,15 @@ export interface StatusSnapshot {
 
 /** Live tool/call counts per session — the web trajectory's call count. */
 const toolCallCounts = new Map<string, number>();
+/** Incremental per-agent event scan cache (issue #20/#1): `eventStatsFor` and
+ * the preset lookup were re-walking the whole event list on every tool/step
+ * event, which made long sessions degrade O(n²). */
+interface EventScanCache {
+  scannedEnd: number;
+  stats?: StatusStats;
+  preset?: string;
+}
+const eventScanCache = new WeakMap<object, EventScanCache>();
 
 /** Increment the bound session's tool-call counter (called from the bridge). */
 export function noteToolCall(sessionId: string): void {
@@ -48,6 +57,12 @@ export function noteToolCall(sessionId: string): void {
 /** Drop in-memory stats counters on hot unplug / re-mount. */
 export function resetStatusStats(): void {
   toolCallCounts.clear();
+}
+
+/** Session disposal cleanup (LOOP_AUDIT #8): the live tool-call counter must
+ * not accumulate entries for every session the bot ever touched. */
+export function forgetStatusSession(sessionId: string): void {
+  toolCallCounts.delete(sessionId);
 }
 
 interface SessionLike {
@@ -150,51 +165,92 @@ export function renderStatsStrip(stats: NonNullable<ReturnType<typeof statusSnap
 interface EventLike {
   type?: string;
   data?: {
+    agentPreset?: unknown;
     usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
     chunk?: { type?: string; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } };
   };
 }
 
-function eventStatsFor(agent: unknown): StatusStats | undefined {
-  const events = (agent as { session?: { events?: readonly EventLike[] } })?.session?.events;
-  if (!events) return undefined;
-  let turns = 0;
-  let steps = 0;
-  let toolCalls = 0;
-  let uncachedInputTokens = 0;
-  let outputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheWriteTokens = 0;
-  for (const event of events) {
-    if (event.type === "turn/start") turns += 1;
-    else if (event.type === "step/start") steps += 1;
-    else if (event.type === "tool/call") toolCalls += 1;
-    else if (event.type === "assistant/chunk") {
-      const usage = event.data?.chunk?.type === "usage" ? event.data.chunk.usage : event.data?.usage;
-      if (usage !== undefined) {
-        uncachedInputTokens += usage.inputTokens ?? 0;
-        outputTokens += usage.outputTokens ?? 0;
-        cacheReadTokens += usage.cacheReadTokens ?? 0;
-        cacheWriteTokens += usage.cacheWriteTokens ?? 0;
-      }
-    }
-  }
-  if (turns === 0 && steps === 0 && toolCalls === 0 && outputTokens === 0 && cacheReadTokens === 0) return undefined;
+interface SessionEventsSource {
+  session?: { events?: readonly EventLike[] };
+}
+
+function emptyEventStats(): NonNullable<StatusStats> {
   return {
-    turns,
-    steps,
-    toolCalls,
+    turns: 0,
+    steps: 0,
+    toolCalls: 0,
     llmMs: 0,
     toolMs: 0,
     ttftMs: 0,
     ttftSteps: 0,
     decodeMs: 0,
     decodeTokens: 0,
-    uncachedInputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheWriteTokens,
+    uncachedInputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
   };
+}
+
+function foldEvent(stats: NonNullable<StatusStats>, event: EventLike): void {
+  if (event.type === "turn/start") stats.turns += 1;
+  else if (event.type === "step/start") stats.steps += 1;
+  else if (event.type === "tool/call") stats.toolCalls += 1;
+  else if (event.type === "assistant/chunk") {
+    const usage = event.data?.chunk?.type === "usage" ? event.data.chunk.usage : event.data?.usage;
+    if (usage !== undefined) {
+      stats.uncachedInputTokens += usage.inputTokens ?? 0;
+      stats.outputTokens += usage.outputTokens ?? 0;
+      stats.cacheReadTokens += usage.cacheReadTokens ?? 0;
+      stats.cacheWriteTokens += usage.cacheWriteTokens ?? 0;
+    }
+  }
+}
+
+function meaningfulStats(stats: StatusStats): boolean {
+  return stats.turns > 0 || stats.steps > 0 || stats.toolCalls > 0 || stats.outputTokens > 0 || stats.cacheReadTokens > 0;
+}
+
+function eventStatsFor(agent: unknown): StatusStats | undefined {
+  const source = agent as SessionEventsSource | undefined;
+  const events = source?.session?.events;
+  if (!events) return undefined;
+  const key = agent as object;
+  const cached = eventScanCache.get(key);
+  const end = events.length - 1;
+  if (cached !== undefined && cached.scannedEnd === end) return cached.stats;
+
+  // Append-only fast path: fold only the newly appended tail. A shrunk array
+  // (compaction/reset) falls through to a full rescan.
+  let stats: StatusStats | undefined;
+  let start = 0;
+  if (cached !== undefined && cached.scannedEnd < end) {
+    stats = cached.stats;
+    start = cached.scannedEnd + 1;
+  }
+  const folded = stats === undefined ? emptyEventStats() : { ...stats };
+  for (let index = start; index <= end; index += 1) foldEvent(folded, events[index]!);
+  const result = meaningfulStats(folded) ? folded : undefined;
+  const preset = latestPreset(source, cached?.preset, cached?.scannedEnd);
+  eventScanCache.set(key, { scannedEnd: end, stats: result, preset });
+  return result;
+}
+
+/** Latest `agent-preset/selected` with the same incremental-tail strategy. */
+function latestPreset(source: SessionEventsSource | undefined, cachedPreset: string | undefined, cachedEnd: number | undefined): string | undefined {
+  const events = source?.session?.events;
+  if (!events) return undefined;
+  let preset = cachedPreset;
+  const start = cachedEnd !== undefined && cachedEnd < events.length - 1 ? cachedEnd + 1 : 0;
+  for (let index = events.length - 1; index >= start; index -= 1) {
+    const event = events[index];
+    if (event?.type === "agent-preset/selected") {
+      preset = String(event.data?.agentPreset ?? "");
+      break;
+    }
+  }
+  return preset;
 }
 
 export function statusSnapshot(ctx: Context, preferAgentId?: string, fallbackToFirst = true): StatusSnapshot {
@@ -219,25 +275,17 @@ export function statusSnapshot(ctx: Context, preferAgentId?: string, fallbackToF
   const hasStats = eventStats !== undefined || projected !== undefined || usage !== undefined || toolCalls > 0;
   const selection = agentId === undefined ? {} : currentSessionModel(ctx, String(agentId));
   const session = agent as unknown as { session?: { events?: readonly { type?: string; data?: { agentPreset?: unknown } }[]; header?: { agentPreset?: unknown } } } | undefined;
-  const events = session?.session?.events ?? [];
-  let preset: string | undefined;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event?.type === "agent-preset/selected") {
-      preset = String(event.data?.agentPreset ?? "");
-      break;
-    }
-  }
-  if (preset === undefined && session?.session?.header?.agentPreset !== undefined) {
-    preset = String(session.session.header.agentPreset);
-  }
+  // eventStatsFor above populates the shared scan cache (and preset tail
+  // cache) for the same agent, so this is O(1) after the first scan.
+  const preset = (eventScanCache.get(agent as object)?.preset) ?? session?.session?.header?.agentPreset;
+  const presetText = preset === undefined ? undefined : String(preset);
   return {
     agentId: agent?.id,
     status: agent ? agent.status : "none",
     provider: selection.provider ?? agent?.options.provider,
     model: selection.model ?? agent?.options.model,
     reasoningEffort: selection.reasoningEffort,
-    preset,
+    preset: presetText,
     queue: agent ? agent.inbox.nextTurn.length + agent.inbox.nextStep.length : 0,
     sessions: sessions ? sessions.list().length : 0,
     ...(!hasStats

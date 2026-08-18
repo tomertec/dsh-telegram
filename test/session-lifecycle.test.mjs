@@ -87,3 +87,15 @@ test('SessionLifecycle.create fails gracefully without agents service', async ()
   assert.equal(res.result.ok, false);
   await lifecycle.dispose().catch(() => {});
 });
+
+test('a hung agent dispose cannot wedge session close/create forever (#20)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const lifecycle = new SessionLifecycle();
+  lifecycle.adopt({ agent: { id: 'hung' }, dispose: () => new Promise(() => {}) });
+
+  const closing = lifecycle.close('hung');
+  t.mock.timers.tick(10_000);
+  const res = await closing;
+  assert.equal(res.ok, true, 'close returns after the 10s dispose deadline');
+  await lifecycle.dispose().catch(() => {});
+});

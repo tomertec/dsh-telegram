@@ -12,6 +12,9 @@ import { SessionId } from "@deepseek-ai/dsh-session";
 import { fail, ok, type AdapterResult } from "./types.js";
 
 export const TELEGRAM_DOCUMENT_LIMIT_BYTES = 50 * 1024 * 1024;
+/** The ZIP is capped at 50 MB, so 120s is generous even on slow links; a
+ * stalled stream must fail the command instead of hanging /sessionlog. */
+const SESSION_LOG_EXPORT_TIMEOUT_MS = 120_000;
 
 interface ExportDepsLike {
   sessionQuery?: unknown;
@@ -74,7 +77,7 @@ export async function exportSessionLog(ctx: Context, sessionId: string, includeD
   }
   const deps = seam.sessionLogExportDeps(ctx);
   if (!deps.sessionPersistence) return { result: fail("session persistence is unavailable in this profile \u2014 the session log cannot be exported") };
-  const signal = new AbortController().signal;
+  const signal = AbortSignal.timeout(SESSION_LOG_EXPORT_TIMEOUT_MS);
   try {
     await seam.flushLiveSessionLog(deps, sessionId, signal);
     const raw = await (deps.sessionPersistence as { readRaw(id: string, signal?: AbortSignal): Promise<unknown> }).readRaw(sessionId, signal);
@@ -84,7 +87,15 @@ export async function exportSessionLog(ctx: Context, sessionId: string, includeD
     const chunks: Uint8Array[] = [];
     let total = 0;
     for (;;) {
-      const { done, value } = await reader.read();
+      let readResult: { done: boolean; value?: Uint8Array };
+      try {
+        readResult = await reader.read();
+      } catch (err) {
+        void reader.cancel().catch(() => {});
+        if (signal.aborted) throw new Error(`session log ZIP export timed out after ${Math.round(SESSION_LOG_EXPORT_TIMEOUT_MS / 1000)}s`);
+        throw err;
+      }
+      const { done, value } = readResult;
       if (done) break;
       if (value) {
         total += value.byteLength;

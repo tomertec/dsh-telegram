@@ -254,3 +254,14 @@
 13. **`ensureOpencodeGoResponsesRoute` 单例闩锁**：settings.update 挂起时同 promise 永久复用。方案：provisionOnce 外层加 15s 超时且无论成败清 `provisioning`。
 14. **低风险内存增长**：`CompactionWatcher.states`（无 compaction/end 时不删）、`toolCallCounts`（session 删除不清）、`Bridge.droppedEvents`（unbound agent 累计）。方案：session/disposed、deleteSession、turn/end 分别清理。
 15. **`encodedCallback` O(n²)**：长路径/长 id 截断循环每字符 UTF-16 截断。方案：二分/按字节逐步截断。
+
+## Round 29 实施（issues #16-#21）
+
+- #16：`cardOrigins` 记录 `menu`/`bar`；`m:back` 按来源关闭或回菜单；bar 全入口统一在 `dispatchBarButton` 标记。集成测试覆盖两条路径。
+- #17：persistent reply keyboard 只能被新键盘替代——收起时删旧 carrier 后发 `buildCollapsedBarKeyboard()` 新 carrier；`runningTurns` 集合 + `turnStillRunning()`（agent.status 兜底）让 10 分钟 typing guard 在 turn 仍在跑时续轮。
+- #18：openclaw 与 GoalProgressFeed 30s heartbeat（`.unref()` 防撑测试/空闲进程）；openclaw 正常帧标题保持 `⚙️ Working…` diff-stable，只有 heartbeat 帧加 `⏱️ Ns`，因此 #15 的 diff 抑制不回退；goal turn 完成 push 新 receipt（响铃）。新增 `notify.onComplete/onLongTask` 配置（默认 true）。
+- #19：GFM 表格转 `<pre>` 等宽对齐；assistant 送达路径复核（bridge 即时转发 / openclaw 最终答案 / turn error 均已走 `markdownToHtml`）。
+- #20：LOOP_AUDIT 中风险 8 项全部落地（见 TESTING §67）；`encodedCallback` 低风险 O(n²) 不在 issue #20 的 8 项清单内，保持观察。
+- #21：receipt 单行 5 metrics；token/性能/editText 命中率全部内部化（editText 命中率保留在 openclaw 日志）。
+- 测试新增 19 例：markdown 表格、receipt、status 增量扫描、goal/openclaw heartbeat 与通知开关、session dispose deadline、opencode latch deadline、interactive 零投递、config notify、UI lane 集成（#16/#17/#20）。
+- `npm run check`：**340/340 pass**。

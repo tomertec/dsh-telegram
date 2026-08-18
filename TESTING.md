@@ -1381,3 +1381,80 @@ Telegram 却只显示项目基名/id。根因：真实 `SessionPersistence.readR
 - Menu 第一页开关文案改为动作式：`💡 显示 Bar`（已收起）/ `💡 收起 Bar`（显示中）。
 - 新增 `/bar [on|off]` 命令：无参数 toggle，`on` 显示，`off` 收起。
 - `npm run check`：**244/244 pass**。
+
+## 67. 修复全部 open issues #16-#21（2026-08-18，340/340）
+
+### #16 bar 卡片 Back 语义
+
+- 新增 `cardOrigins: Map<chat, "menu" | "bar">`：`dispatchBarButton` 统一标
+  `bar`，`dispatchCommand`/`openMenuAt` 标 `menu`。
+- `m:back` 按来源分流：bar 打开 → 同 `Close` 关卡回聊天；menu 打开 →
+  回到最近 menu 页；close/换 chat/teardown 清理来源。
+- 集成回归：`test/ui-lane.integration.test.mjs` 分别验证 bar Todos 返回关闭、
+  menu Todos 返回菜单。
+
+### #17 收起 + typing 10 分钟断档
+
+- `setBarCollapsed(true)` 删除旧 bar 载体后发送
+  `buildCollapsedBarKeyboard()` 新载体——persistent reply keyboard 只能被
+  新的替代键盘替换，只删消息不生效。
+- `runningTurns` 每 chat 跟踪 turn/start→turn/end；typing 10 分钟 guard
+  到点时若 turn 仍在运行则续一轮（丢失 turn/end 仍以 agent.status 兜底）。
+- 集成回归：收起发送折叠键盘、返回恢复全量 bar；mock 时钟 10 分钟验证
+  typing 续期与 turn/end 停表。
+
+### #18 长任务活跃信号 + 完成推送
+
+- openclaw 与 GoalProgressFeed 都增加 30s liveness heartbeat：静默工具
+  执行时进度卡标题/行内 elapsed 继续跳动（heartbeat 用 `.unref()`，不撑住
+  空闲进程）。
+- goal 自主 turn 完成时，除原地编辑进度卡外，再 push 一条新 receipt 消息
+  （`disable_notification:false` 响铃）。
+- 可配置：`notify.onComplete` / `notify.onLongTask`（默认 true），支持
+  `/config set notify.onComplete false` 热更新。
+- 回归：openclaw/goal-progress 心跳、完成推送、通知开关测试。
+
+### #19 Markdown 表格
+
+- `markdownToHtml` 支持 GFM 管道表格：识别 `|---|` 分隔行，输出 Telegram
+  HTML 支持的 `<pre>` 等宽对齐块（Telegram HTML 无 `<table>`）。
+- 复核所有 assistant 送达路径均走 `markdownToHtml`（bridge 即时转发、
+  openclaw 最终答案、turn error 消息）。
+- 回归：真实 issue 表格样例、无表格隔离、加粗并排渲染。
+
+### #20 LOOP_AUDIT 中风险 8 项全部落地
+
+1. `eventStatsFor` + preset 查找改为 WeakMap 增量 tail 扫描（append-only
+   场景 O(1)），数组缩短回退全量重扫。
+2. UI 卡片数据加载统一 `cardLoad` 10s deadline：modelCatalog / sessions /
+   history / search / skills / subagents / subagent history / presets /
+   feedback，超时发可见失败卡片。
+3. `listDirectory`/`isDirectory`/`createDirectory` 的 fs 调用全部加 10s
+   timeout race（本仓 @types/node 无 fs signal 类型，race 语义等价）。
+4. interactive 零投递：question reject、approval settle("cancelled")，不再
+   永久挂起 agent 工具调用。
+5. `exportSessionLog` 使用 `AbortSignal.timeout(120s)` 并 cancel reader。
+6. `SessionLifecycle.close` 的 dispose 加 10s deadline，create 替换会话
+   不再被挂起的 dispose 卡死。
+7. `ensureOpencodeGoResponsesRoute` provisioning latch 加 15s deadline，
+   无论成败 finally 清 latch。
+8. 内存清理：session/disposed 时清 CompactionWatcher.states、
+   toolCallCounts、statusSubagentCounts、todoSnapshots、Bridge.droppedEvents。
+- 回归：status 增量扫描、compaction 清理、interactive 零投递、session
+  dispose deadline、opencode latch deadline、UI lane 10s 失败卡片。
+
+### #21 turn receipt 精简为单行 5 metrics
+
+- `renderTurnReceipt` 输出单行：`⚙️ 完成 · ⏱️ Ns · 🧠 N 次思考 ·
+  🛠️ N 次工具 · 📊 N 轮 · N 步 · 💾 命中 X%`。
+- 移除输入/输出 token、OpenClaw editText 命中率、性能段与分割线；
+  editText 命中率改为 openclaw 内部日志。
+- 回归：`test/turn-receipt.test.mjs`（单行、五项、goal 前缀、0 billed
+  不显示命中率）；openclaw/goal-progress 旧断言同步更新。
+
+### 测试记录
+
+- 新增/更新：markdown、turn-receipt、status、goal-progress、openclaw、
+  openclaw-liveness、opencode-go-latch、session-lifecycle、compaction-watch、
+  interactive、config、ui-lane.integration。
+- `npm run check`：**340/340 pass**。

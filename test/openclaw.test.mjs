@@ -106,12 +106,10 @@ test('openclaw streams reasoning and tool lines then collapses to a summary', as
   assert.ok(lastStream.text.includes('<b>\u2713 bash</b> <code>ls -la</code>'), 'result landed: ✓ icon, no trailing status');
 
   const summary = edits[edits.length - 1];
-  assert.equal(summary.text, [
-    '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s',
-    '\u2500'.repeat(9),
-    '\u{1F9E0} 1 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177',
-    '\u{1F3AF} OpenClaw: 1 \u6B21 editText \u00B7 \u547D\u4E2D 100%',
-  ].join('\n'));
+  // Issue #21: one compact line with the five user-facing metrics only.
+  assert.equal(summary.text, '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s \u00B7 \u{1F9E0} 1 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177');
+  assert.equal(summary.text.includes('\u{1F3AF} OpenClaw'), false, 'internal edit metrics stay out of the user receipt');
+  assert.equal(summary.text.includes('\u2500'), false, 'no separator line');
   assert.equal(host.deletes.length, 0);
 });
 
@@ -127,7 +125,9 @@ test('turn summary adds input/output tokens and cache hit rate', async () => {
 
   const summary = host.edits.at(-1);
   assert.match(summary.text, /🧠 1 次思考 · 🛠️ 1 次工具/);
-  assert.match(summary.text, /📥 输入 900 tok · 📤 输出 120 tok · 💾 命中 44%/);
+  assert.match(summary.text, /💾 命中 44%/);
+  assert.equal(summary.text.includes('📥'), false, 'token billing stays out of the one-line receipt');
+  assert.equal(summary.text.includes('📤'), false);
 });
 
 test('turn summary appends the session stats line', async () => {
@@ -154,8 +154,9 @@ test('turn summary appends the session stats line', async () => {
 
   const summary = host.edits.at(-1);
   assert.match(summary.text, /📊 4 轮 · 279 步/);
-  assert.match(summary.text, /⚡ LLM 46m41s · 工具调用 5m10s/);
-  assert.match(summary.text, /🎯 首 token 平均 3\.5s · 68 tok\/s/);
+  assert.equal(summary.text.includes('⚡'), false, 'performance segments are internal-only');
+  assert.equal(summary.text.includes('tok/s'), false);
+  assert.equal(summary.text.split('\n').length, 1, 'receipt is a single line');
 });
 
 test('tool result swaps the icon to ✓ and drops the running status', async () => {
@@ -193,12 +194,7 @@ test('tool line commits the reasoning burst and the next burst starts a new line
   assert.ok(first >= 0 && tool >= 0 && second >= 0);
   assert.ok(first < tool && tool < second, 'bursts interleave with the tool line');
   const summary = host.edits.at(-1);
-  assert.equal(summary.text, [
-    '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s',
-    '\u2500'.repeat(9),
-    '\u{1F9E0} 2 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177',
-    '\u{1F3AF} OpenClaw: 1 \u6B21 editText \u00B7 \u547D\u4E2D 100%',
-  ].join('\n'));
+  assert.equal(summary.text, '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s \u00B7 \u{1F9E0} 2 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177');
 });
 
 test('reasoning text is HTML-escaped and whitespace folds to one line', async () => {

@@ -369,6 +369,11 @@ function askViaTelegram(delivery: InteractiveDelivery, request: QuestionRequestL
       .then((delivered) => {
         for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
         pending.answerer = delivered[0]?.chatId;
+        // Zero deliveries would leave the tool execution waiting forever for
+        // a card nobody received (LOOP_AUDIT #4). Settle with a clear error.
+        if (delivered.length === 0 && questions.delete(id)) {
+          reject(new Error("no allowed Telegram chat is available to answer this question"));
+        }
       })
       .catch(() => {});
   });
@@ -429,6 +434,9 @@ export function attachInteractive(ctx: Context, delivery: InteractiveDelivery, o
           void broadcastForSession(delivery, req.agent.id, cardText, approvalKeyboard(id, goalId))
             .then((delivered) => {
               for (const entry of delivered) pending.messageIds.set(entry.chatId, entry.messageId);
+              // Zero deliveries would block the agent forever on a card no
+              // chat can answer (LOOP_AUDIT #4): cancel instead.
+              if (delivered.length === 0) settle("cancelled");
             })
             .catch(() => {});
         });

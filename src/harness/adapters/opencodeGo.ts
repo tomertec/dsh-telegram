@@ -127,12 +127,29 @@ async function provisionOnce(ctx: Context, log: (message: string, error?: unknow
 
 /** Idempotently add the additive Responses route and wait for adapter
  * registration. Safe to call from model selection: it blocks until the route
- * is actually usable or a bounded retry budget is exhausted. */
+ * is actually usable or a bounded retry budget is exhausted. The singleton
+ * itself is also bounded (LOOP_AUDIT #7): a hung settings.update must never
+ * make every later model selection await the same stuck promise. */
+const PROVISION_DEADLINE_MS = 15_000;
+
 export function ensureOpencodeGoResponsesRoute(ctx: Context, log: (message: string, error?: unknown) => void): Promise<boolean> {
   if (provisioning !== undefined) return provisioning;
   provisioning = (async () => {
     if (ctx.get("llm") === undefined) return false;
-    return provisionOnce(ctx, log);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        provisionOnce(ctx, log),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => {
+            log(`skipped ${OPENCODE_GO_RESPONSES_ROUTE} provisioning: deadline exceeded after ${PROVISION_DEADLINE_MS}ms`);
+            resolve(false);
+          }, PROVISION_DEADLINE_MS);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   })();
   void provisioning.then(() => {
     provisioning = undefined;

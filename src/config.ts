@@ -98,6 +98,14 @@ export interface TelegramConfig {
      */
     userQuestions?: QuestionOwnership;
   };
+  /** Long-task notifications (issue #18): goal completion push + periodic
+   * liveness heartbeat while a silent tool keeps running. */
+  notify?: {
+    /** Send a fresh receipt message (with sound) when a goal turn finishes. */
+    onComplete?: boolean;
+    /** Edit the progress card every 30s so elapsed time keeps moving. */
+    onLongTask?: boolean;
+  };
 }
 
 export const DEFAULT_CONFIG: TelegramConfig = Object.freeze({
@@ -126,6 +134,7 @@ export const DEFAULT_CONFIG: TelegramConfig = Object.freeze({
   model: {},
   media: { transcribe: { model: 'whisper-1' } },
   interactive: { userQuestions: 'telegram' as const },
+  notify: { onComplete: true, onLongTask: true },
 });
 
 /** Config errors carry a JSON-pointer-ish path so humans can fix `.pi/telegram.json`. */
@@ -355,6 +364,17 @@ export function normalizeConfig(raw: unknown): TelegramConfig {
     }
   }
 
+  const notify = raw['notify'];
+  if (notify !== undefined) {
+    if (!isRecord(notify)) throw new ConfigError('notify', 'must be an object');
+    const onComplete = readBoolean(notify, 'onComplete', 'notify');
+    const onLongTask = readBoolean(notify, 'onLongTask', 'notify');
+    base.notify = {
+      onComplete: onComplete ?? base.notify!.onComplete,
+      onLongTask: onLongTask ?? base.notify!.onLongTask,
+    };
+  }
+
   return base;
 }
 
@@ -374,6 +394,7 @@ function cloneDefault(): TelegramConfig {
     model: { ...DEFAULT_CONFIG.model },
     media: { transcribe: { ...DEFAULT_CONFIG.media!.transcribe } },
     interactive: { ...DEFAULT_CONFIG.interactive },
+    notify: { ...DEFAULT_CONFIG.notify },
   };
 }
 
@@ -431,8 +452,8 @@ export function writeConfig(workspaceRoot: string, config: TelegramConfig): stri
   return file;
 }
 
-export type ConfigSection = "security" | "watch" | "inbound" | "outbound" | "compact" | "mode" | "workspace" | "reasoning" | "model" | "media" | "interactive";
-const CONFIG_SECTIONS: readonly ConfigSection[] = ["security", "watch", "inbound", "outbound", "compact", "mode", "workspace", "reasoning", "model", "media", "interactive"];
+export type ConfigSection = "security" | "watch" | "inbound" | "outbound" | "compact" | "mode" | "workspace" | "reasoning" | "model" | "media" | "interactive" | "notify";
+const CONFIG_SECTIONS: readonly ConfigSection[] = ["security", "watch", "inbound", "outbound", "compact", "mode", "workspace", "reasoning", "model", "media", "interactive", "notify"];
 
 /**
  * Overlay a raw loader-provided config (from `ctx.config` / `internal/update`)

@@ -5,7 +5,7 @@ import { GoalProgressFeed } from '../dist/telegram/goal-progress.js';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ev = (type, data = {}) => ({ type, data });
 
-function harness({ liveRenderer = false, pending = false } = {}) {
+function harness({ liveRenderer = false, pending = false, notify = { onComplete: true, onLongTask: true } } = {}) {
   const listeners = new Map();
   const sends = [];
   const edits = [];
@@ -34,6 +34,8 @@ function harness({ liveRenderer = false, pending = false } = {}) {
     }),
     liveRendererActive: () => liveRenderer,
     pendingInbound: () => pending,
+    notifyOnComplete: () => notify.onComplete !== false,
+    notifyOnLongTask: () => notify.onLongTask !== false,
   };
   const ctx = {
     on: (name, cb) => {
@@ -82,4 +84,42 @@ test('streaming renderer suppresses the card and inbound user turns stay silent'
   const inbound = harness({ pending: true });
   inbound.emit('agent-1', ev('turn/start', { turn: 1 }));
   assert.equal(inbound.sends.length, 0);
+});
+
+test('goal heartbeat keeps the elapsed timer moving and completion pushes a fresh receipt (#18)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  t.mock.timers.setTime(1_000_000);
+
+  const { feed, sends, edits, emit } = harness();
+  emit('agent-1', ev('turn/start', { turn: 1 }));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(sends.length, 1, 'initial progress card');
+  const editsBefore = edits.length;
+
+  t.mock.timers.tick(30_000);
+  await Promise.resolve();
+  assert.ok(edits.length > editsBefore, 'silent tool still gets a 30s heartbeat edit');
+  assert.match(edits.at(-1).text, /⏱️ 30s/);
+
+  emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  assert.equal(sends.length, 2, 'completion is a NEW message, not just an in-place edit');
+  assert.equal(sends[1].options.disable_notification, false, 'completion push rings the user');
+  assert.match(sends[1].text, /✅ research the market/);
+  feed.detach();
+});
+
+test('notify.onLongTask/onComplete=false disables heartbeat and completion push (#18)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { feed, sends, edits, emit } = harness({ notify: { onComplete: false, onLongTask: false } });
+  emit('agent-1', ev('turn/start', { turn: 1 }));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(sends.length, 1, 'progress card still opens');
+  t.mock.timers.tick(30_000);
+  await Promise.resolve();
+  assert.equal(edits.length, 0, 'heartbeat switch off');
+  emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  assert.equal(sends.length, 1, 'completion push switch off');
+  feed.detach();
 });

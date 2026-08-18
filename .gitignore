@@ -4,3 +4,6 @@ dist/
 .env
 .pi/
 coverage/
+
+# Session workspace metadata
+.jspace/

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteToolCall, resetStatusStats, statusSnapshot } from '../dist/harness/adapters/status.js';
+import { forgetStatusSession, noteToolCall, resetStatusStats, statusSnapshot } from '../dist/harness/adapters/status.js';
 
 function agent(id, queue = []) {
   return {
@@ -64,6 +64,53 @@ test('noteToolCall counts per session and reset clears counters', () => {
   assert.equal(statusSnapshot(fakeCtx('s2', { sessionStats: {} })).stats.toolCalls, 1);
   resetStatusStats();
   assert.equal(statusSnapshot(fakeCtx('s1', { sessionStats: {} })).stats.toolCalls, 0);
+});
+
+test('forgetStatusSession drops the live tool counter for a disposed session (#20)', () => {
+  resetStatusStats();
+  noteToolCall('gone');
+  forgetStatusSession('gone');
+  assert.equal(statusSnapshot(fakeCtx('gone', { sessionStats: {} })).stats.toolCalls, 0);
+});
+
+test('event stats scan incrementally instead of re-walking the whole log (#20)', async () => {
+  const { statusSnapshot } = await import('../dist/harness/adapters/status.js');
+  const raw = [
+    { type: 'turn/start', data: {} },
+    { type: 'step/start', data: {} },
+    { type: 'tool/call', data: {} },
+  ];
+  let elementReads = 0;
+  const events = new Proxy(raw, {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && /^\d+$/.test(property)) elementReads += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const agent = {
+    id: 'incr',
+    status: 'running',
+    options: { provider: 'opencode-go', model: 'deepseek-v4-flash' },
+    session: { events, header: {} },
+    inbox: { nextTurn: [], nextStep: [] },
+  };
+  const ctx = {
+    agents: { list: () => [agent], get: () => agent },
+    get: () => ({ list: () => [] }),
+  };
+
+  assert.equal(statusSnapshot(ctx).stats.toolCalls, 1);
+  const readsAfterFirst = elementReads;
+  assert.ok(readsAfterFirst > 0, 'initial scan walks the existing tail');
+
+  // Unchanged event array: cached scan end means zero event ELEMENT reads.
+  assert.equal(statusSnapshot(ctx).stats.toolCalls, 1);
+  assert.equal(elementReads, readsAfterFirst, 'cache hit never walks an event');
+
+  // One appended event: exactly one tail scan (stats + preset), not a full rescan.
+  raw.push({ type: 'tool/call', data: {} });
+  assert.equal(statusSnapshot(ctx).stats.toolCalls, 2);
+  assert.equal(elementReads, readsAfterFirst + 2, 'append walks only the newly appended tail');
 });
 
 test('renderStatsStrip mirrors the web stats line verbatim', async () => {

@@ -506,6 +506,12 @@ export class Bridge {
       }),
     );
     this.disposers.push(this.ctx.on("agent/status", () => this.notifyStateChange()));
+    // LOOP_AUDIT #8: dropped-event diagnostics are bounded by session life.
+    this.disposers.push(
+      this.ctx.on("session/disposed", (session: { id?: unknown }) => {
+        if (session?.id !== undefined) this.droppedEvents.delete(String(session.id));
+      }),
+    );
   }
 
   detach(): void {

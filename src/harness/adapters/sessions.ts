@@ -904,6 +904,25 @@ export async function deleteSession(ctx: Context, sessionId: string): Promise<Ad
  * replaces them. Creation never disposes a global "previous" agent anymore:
  * chat A's session must survive chat B pressing `✨ New`.
  */
+/** Disposing a replaced agent is cleanup, not a user operation: a hung
+ * dispose must not wedge the per-chat session-create chain (LOOP_AUDIT #6). */
+const AGENT_DISPOSE_TIMEOUT_MS = 10_000;
+
+function disposeWithin(dispose: Promise<unknown>, label: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    dispose.then(() => undefined, () => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        console.error(`[dsh-telegram] ${label} dispose timed out after ${AGENT_DISPOSE_TIMEOUT_MS}ms`);
+        resolve();
+      }, AGENT_DISPOSE_TIMEOUT_MS);
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
 export class SessionLifecycle {
   private handle: AgentHandle | undefined;
   private readonly handles = new Map<string, AgentHandle>();
@@ -997,14 +1016,17 @@ export class SessionLifecycle {
     if (handle !== undefined) {
       this.handles.delete(agentId);
       if (this.handle === handle) this.handle = undefined;
-      await handle.dispose().catch((err) => console.error("[dsh-telegram] failed to dispose agent", err));
+      await disposeWithin(handle.dispose().catch((err) => console.error("[dsh-telegram] failed to dispose agent", err)), agentId);
       return ok(`\u23F9 Closed ${agentId}`);
     }
     const live = ctx !== undefined ? agentsOf(ctx) : undefined;
     const agent = live?.get(SessionId(agentId));
     if (agent === undefined) return fail(`no disposal handle for agent ${agentId}`);
-    await (agent as unknown as { dispose(): Promise<void> }).dispose().catch((err) =>
-      console.error("[dsh-telegram] failed to dispose agent", err),
+    await disposeWithin(
+      (agent as unknown as { dispose(): Promise<void> }).dispose().catch((err) =>
+        console.error("[dsh-telegram] failed to dispose agent", err),
+      ),
+      agentId,
     );
     return ok(`\u23F9 Closed ${agentId}`);
   }

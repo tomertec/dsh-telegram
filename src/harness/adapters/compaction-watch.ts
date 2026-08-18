@@ -103,6 +103,7 @@ export function contextUsageOf(agent: AgentLike | undefined): CompactionUsage {
 export class CompactionWatcher {
   private readonly states = new Map<string, SessionState>();
   private dispose: (() => void) | undefined;
+  private disposeSession: (() => void) | undefined;
 
   constructor(private readonly deps: CompactionWatcherDeps) {}
 
@@ -113,11 +114,19 @@ export class CompactionWatcher {
       const event = args[1] as EventLike;
       this.record(String(session.id), event);
     });
+    // LOOP_AUDIT #8: sessions that never emit compaction/end must not leave a
+    // watcher state behind forever.
+    this.disposeSession = on("session/disposed", (...args: unknown[]) => {
+      const session = args[0] as { id?: unknown } | undefined;
+      if (session?.id !== undefined) this.states.delete(String(session.id));
+    });
   }
 
   detach(): void {
     this.dispose?.();
     this.dispose = undefined;
+    this.disposeSession?.();
+    this.disposeSession = undefined;
     this.states.clear();
   }
 

@@ -92,3 +92,46 @@ test('a watcher-triggered successful compaction is announced with its summary', 
   assert.match(calls[1], /notify:.*上下文已压缩 ~1234 tokens/);
   assert.match(calls[1], /摘要: kept the essence/);
 });
+
+test('session disposal drops watcher state so a new episode can compact again (#20)', async () => {
+  const listeners = new Map();
+  const calls = [];
+  const ctx = {
+    agents: { get: () => ({ id: 'agent-1', session: { events: [] }, options: {} }) },
+    compaction: { async compactIfNeeded() { calls.push('compact'); return {}; } },
+    on: (name, cb) => {
+      if (!listeners.has(name)) listeners.set(name, []);
+      listeners.get(name).push(cb);
+      return () => {};
+    },
+  };
+  const watcher = new CompactionWatcher({
+    ctx,
+    log: () => {},
+    chatIdForAgent: () => 7,
+    threshold: () => 0.8,
+    policy: () => 'auto',
+    cooldownMs: () => 60_000,
+    askApproval: () => {},
+    notify: () => {},
+    now: () => Date.now(),
+  });
+  watcher.attach();
+  const emit = (name, sessionId, event) => {
+    for (const cb of listeners.get(name) ?? []) cb({ id: sessionId }, event);
+  };
+  const pressure = () => {
+    emit('session/event', 'agent-1', ev('request/context', { contextWindow: 1000 }));
+    emit('session/event', 'agent-1', ev('assistant/chunk', { chunk: { type: 'usage', usage: { inputTokens: 800, cacheReadTokens: 100 } } }));
+    emit('session/event', 'agent-1', ev('step/end', {}));
+  };
+  pressure();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, ['compact']);
+
+  emit('session/disposed', 'agent-1', {});
+  pressure();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, ['compact', 'compact'], 'cooldown latch was forgotten with the session');
+  watcher.detach();
+});

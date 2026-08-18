@@ -298,6 +298,39 @@ test('question cards and the answered status route to the session-owned chat', a
   interactive.detach();
 });
 
+test('a question nobody receives rejects instead of waiting forever (#20)', async () => {
+  const delivery = fakeDelivery();
+  delivery.broadcast = async () => [];
+  let provider;
+  const ctx = {
+    get: (name) => (name === 'userQuestions' ? { provider: undefined, registerProvider(p) { provider = p; return () => {}; } } : undefined),
+  };
+  const interactive = attachInteractive(ctx, delivery);
+  await assert.rejects(
+    provider.ask(questionRequest('s1', [{ id: 'q1', question: 'Pick one' }])),
+    /no allowed Telegram chat is available/,
+  );
+  interactive.detach();
+});
+
+test('an approval nobody receives cancels instead of blocking the tool (#20)', async () => {
+  const delivery = fakeDelivery();
+  delivery.broadcast = async () => [];
+  const events = fakeEvents();
+  const ctx = { get: (name) => (name === 'approval' ? {} : undefined), on: events.on.bind(events) };
+  const interactive = attachInteractive(ctx, delivery);
+  const listener = events.listeners.get('approval/request');
+  const req = {
+    agent: { id: 's1', session: { events: [{ seq: 0, type: 'approval/asked', data: { id: 'app0', callId: 'c0' } }] } },
+    toolName: 'bash',
+    callId: 'c0',
+    signal: undefined,
+  };
+  const outcome = await listener(req, async () => 'fallback');
+  assert.equal(outcome, 'cancelled');
+  interactive.detach();
+});
+
 test('telegram ownership answers ask_user_question at tools/execute when the web proxy owns the provider seam', async () => {
   const delivery = fakeDelivery();
   delivery.chatForSession = (sessionId) => (sessionId === 's-owner' ? 555 : undefined);

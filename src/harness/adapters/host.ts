@@ -9,6 +9,26 @@ import { dirname, join, resolve } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 import { fail, ok, type AdapterResult } from "./types.js";
 
+/** Node's fs.promises typings in this profile predate `signal`; the timeout
+ * race gives the same bounded behaviour for readdir/stat/mkdir (LOOP_AUDIT #3). */
+const FS_TIMEOUT_MS = 10_000;
+
+function withFsTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error(`filesystem operation timed out after ${FS_TIMEOUT_MS}ms`);
+        err.name = "AbortError";
+        reject(err);
+      }, FS_TIMEOUT_MS);
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
 export interface HostView {
   version: string;
   cwd: string;
@@ -38,11 +58,13 @@ export function describeHost(ctx: Context, activeCwd: string = process.cwd(), ve
 export async function listDirectory(path: string): Promise<AdapterResult & { entries?: { name: string; kind: "file" | "directory"; size?: number }[] }> {
   try {
     const target = resolve(path);
-    const names = await readdir(target);
+    // Bad disks/NFS can hang readdir/stat forever and wedge the UI lane;
+    // degrade to an error card after 10s instead (LOOP_AUDIT #3).
+    const names = await withFsTimeout(readdir(target));
     const entries = await Promise.all(
       names.slice(0, 200).map(async (name) => {
         try {
-          const info = await stat(join(target, name));
+          const info = await withFsTimeout(stat(join(target, name)));
           return { name, kind: (info.isDirectory() ? "directory" : "file") as "file" | "directory", ...(info.isFile() ? { size: info.size } : {}) };
         } catch {
           return { name, kind: "file" as const };
@@ -53,6 +75,9 @@ export async function listDirectory(path: string): Promise<AdapterResult & { ent
     const lines = entries.map((entry) => `${entry.kind === "directory" ? "\u{1F4C1}" : "\u{1F4C4}"} ${entry.name}${entry.size === undefined ? "" : ` (${entry.size} B)`}`);
     return { ok: true, text: `\u{1F4C2} ${target}\n${lines.join("\n").slice(0, 3500)}`, entries };
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return fail(`directory listing timed out after 10s: ${path}`);
+    }
     return fail(err instanceof Error ? err.message : String(err));
   }
 }
@@ -60,7 +85,7 @@ export async function listDirectory(path: string): Promise<AdapterResult & { ent
 /** True only when the path exists and resolves to a directory. */
 export async function isDirectory(path: string): Promise<boolean> {
   try {
-    const info = await stat(resolve(path));
+    const info = await withFsTimeout(stat(resolve(path)));
     return info.isDirectory();
   } catch {
     return false;
@@ -69,9 +94,10 @@ export async function isDirectory(path: string): Promise<boolean> {
 
 export async function createDirectory(path: string): Promise<AdapterResult> {
   try {
-    await mkdir(resolve(path), { recursive: false });
+    await withFsTimeout(mkdir(resolve(path), { recursive: false }));
     return ok(`\u{1F4C1} Created ${path}`);
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") return fail(`directory creation timed out after 10s: ${path}`);
     return fail(err instanceof Error ? err.message : String(err));
   }
 }

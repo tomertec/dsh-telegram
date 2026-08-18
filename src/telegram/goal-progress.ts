@@ -32,6 +32,9 @@ export interface ProgressDeps {
   /** openclaw (or another renderer) owns presentation while mounted. */
   liveRendererActive(): boolean;
   pendingInbound(chatId: number): boolean;
+  /** Long-task notification switches (`notify.on*`, default true). */
+  notifyOnComplete?(): boolean;
+  notifyOnLongTask?(): boolean;
 }
 
 export interface ProgressSnapshot {
@@ -59,6 +62,7 @@ interface Running {
   messageId?: number;
   sending?: Promise<number | undefined>;
   timer?: ReturnType<typeof setTimeout>;
+  heartbeatTimer?: ReturnType<typeof setTimeout>;
   finalized: boolean;
 }
 
@@ -82,6 +86,9 @@ interface TokenUsageLike {
 }
 
 const EDIT_THROTTLE_MS = 250;
+/** Long tools can be silent for a while: heartbeat every 30s so the elapsed
+ * timer keeps moving and the user sees the task is alive (issue #18). */
+const LIVENESS_HEARTBEAT_MS = 30_000;
 
 function bar(done: number, total: number): string {
   const width = 10;
@@ -111,6 +118,7 @@ export class GoalProgressFeed {
     this.dispose = undefined;
     for (const draft of this.running.values()) {
       if (draft.timer !== undefined) clearTimeout(draft.timer);
+      if (draft.heartbeatTimer !== undefined) clearTimeout(draft.heartbeatTimer);
     }
     this.running.clear();
   }
@@ -152,6 +160,7 @@ export class GoalProgressFeed {
       };
       this.running.set(chatId, draft);
       this.sendCard(chatId, draft);
+      if (this.deps.notifyOnLongTask?.() !== false) this.armHeartbeat(chatId, draft);
       return;
     }
     const draft = this.running.get(chatId);
@@ -188,6 +197,10 @@ export class GoalProgressFeed {
         clearTimeout(draft.timer);
         draft.timer = undefined;
       }
+      if (draft.heartbeatTimer !== undefined) {
+        clearTimeout(draft.heartbeatTimer);
+        draft.heartbeatTimer = undefined;
+      }
       this.finalize(chatId, draft);
       this.running.delete(chatId);
     }
@@ -211,6 +224,20 @@ export class GoalProgressFeed {
       draft.timer = undefined;
       this.editCard(chatId, draft, this.renderRunning(chatId, draft));
     }, EDIT_THROTTLE_MS);
+  }
+
+  /** Periodic liveness edit: even with no new session events the card's
+   * elapsed timer advances, so a long silent tool never looks frozen. */
+  private armHeartbeat(chatId: number, draft: Running): void {
+    if (draft.heartbeatTimer !== undefined) return;
+    draft.heartbeatTimer = setTimeout(() => {
+      draft.heartbeatTimer = undefined;
+      if (this.running.get(chatId) !== draft || draft.finalized) return;
+      this.editCard(chatId, draft, this.renderRunning(chatId, draft));
+      this.armHeartbeat(chatId, draft);
+    }, LIVENESS_HEARTBEAT_MS);
+    // Liveness only: never keep an otherwise-idle process alive.
+    draft.heartbeatTimer.unref?.();
   }
 
   private sendCard(chatId: number, draft: Running): void {
@@ -247,5 +274,13 @@ export class GoalProgressFeed {
     };
     if (draft.messageId !== undefined) settle(draft.messageId);
     else if (draft.sending !== undefined) void safeWrap(`goal-progress-finalize-pending(${chatId})`, () => draft.sending!.then(settle), this.deps.log);
+    // Completion push (issue #18): a silent in-place edit is easy to miss,
+    // so goal turns also deliver one fresh receipt message with notifications.
+    if (this.deps.notifyOnComplete?.() !== false) {
+      void safeWrap(`goal-progress-completion(${chatId})`, () => this.deps.ops.send(chatId, receipt, {
+        parse_mode: "HTML",
+        disable_notification: false,
+      }), this.deps.log);
+    }
   }
 }

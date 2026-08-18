@@ -63,6 +63,34 @@ function safeHref(href: string): boolean {
   return /^(https?|tg|mailto):\/\/\S+$/i.test(href) || /^mailto:[^@\s]+@[^@\s]+$/i.test(href);
 }
 
+
+/** GFM table support (issue #19): Telegram HTML has no <table>, so a pipe
+ * table becomes a monospace <pre> block with columns aligned to the widest
+ * cell. Cells are escaped text (bold/code inside a table stay readable). */
+function parseTableRow(line: string): string[] | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return undefined;
+  return trimmed.slice(1, -1).split("|").map((cell) => cell.trim());
+}
+
+function isTableSeparator(cells: string[]): boolean {
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function renderTableBlock(rows: readonly string[]): string | undefined {
+  const parsed = rows.map((row) => parseTableRow(row)).filter((row): row is string[] => row !== undefined);
+  if (parsed.length < 2) return undefined;
+  const header = parsed[0]!;
+  if (!isTableSeparator(parsed[1]!)) return undefined;
+  const body = parsed.slice(2).filter((row) => row.length > 0);
+  const columns = header.length;
+  const widths = header.map((cell, index) => Math.max(cell.length, ...body.map((row) => (row[index] ?? "").length)));
+  const pad = (cell: string, index: number): string => `${cell}${" ".repeat(Math.max(0, widths[index]! - cell.length))}`;
+  const rowText = (cells: string[]): string => `| ${cells.map((cell, index) => pad(escapeHtml(cell), index)).join(" | ")} |`;
+  const separator = `| ${header.map((_, index) => "-".repeat(widths[index]!)).join(" | ")} |`;
+  return `<pre>${[rowText(header), separator, ...body.map((row) => rowText([...Array(columns)].map((_, index) => row[index] ?? "")))].join("\n")}</pre>`;
+}
+
 /** Inline Markdown on one line. Escapes every literal character, so generated
  * HTML is always balanced enough for the transport splitter. */
 function renderInline(input: string, depth = 0): string {
@@ -244,6 +272,19 @@ export function markdownToHtml(markdown: string): string {
         // Unterminated fence: the rest of the message was consumed as code.
       }
       continue;
+    }
+
+    const tableRows: string[] = [];
+    if (parseTableRow(line) !== undefined && index + 1 < lines.length && isTableSeparator(parseTableRow(lines[index + 1]!) ?? [])) {
+      while (index < lines.length && parseTableRow(lines[index]!) !== undefined) {
+        tableRows.push(lines[index]!);
+        index += 1;
+      }
+      const table = renderTableBlock(tableRows);
+      if (table !== undefined) {
+        out.push(table);
+        continue;
+      }
     }
 
     if (/^\s*>/.test(line)) {

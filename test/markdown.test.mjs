@@ -60,6 +60,26 @@ test('fenced code blocks become escaped <pre> blocks', () => {
   assert.equal(html, '<pre>const x = &quot;&lt;tag&gt;&quot;;</pre>');
 });
 
+test('GFM tables become aligned monospace blocks instead of raw pipes (#19)', () => {
+  const html = markdownToHtml([
+    '| 消息 | 文件 | 大小 |',
+    '|---|---|---|',
+    '| 📌 ① | `a.xlsx` | 26,666B |',
+    '| 📌 ② | `b.csv` | 39,723B |',
+    '',
+    '**三个文件已发送**',
+  ].join('\n'));
+  assert.match(html, /<pre>\| 消息\s+\| 文件\s+\| 大小\s+\|/);
+  assert.match(html, /\| 📌 ① \| `a\.xlsx`\s+\| 26,666B\s+\|/);
+  assert.equal(html.includes('|---|'), false, 'separator syntax is replaced');
+  assert.match(html, /<b>三个文件已发送<\/b>/, 'markdown around the table still renders');
+  assert.equal(html.split('<pre>').length, 2, 'exactly one monospace table block');
+});
+
+test('a lone separator-looking line stays prose instead of half a table', () => {
+  assert.equal(markdownToHtml('not a table\n|---|'), 'not a table\n|---|');
+});
+
 test('unordered and ordered lists keep their structure', () => {
   const html = markdownToHtml('- one\n- two\n\n1. first\n2. second');
   assert.match(html, /• one\n• two/);

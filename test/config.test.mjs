@@ -174,6 +174,19 @@ test('overlayConfig applies the interactive section live', () => {
   assert.equal(config.interactive.userQuestions, 'web');
 });
 
+test('notify switches default on and validate/hot-apply (#18)', () => {
+  const defaults = normalizeConfig(undefined);
+  assert.deepEqual(defaults.notify, { onComplete: true, onLongTask: true });
+  const quiet = normalizeConfig({ notify: { onComplete: false } });
+  assert.equal(quiet.notify.onComplete, false);
+  assert.equal(quiet.notify.onLongTask, true, 'partial notify config keeps the other switch');
+  assert.throws(() => normalizeConfig({ notify: { onComplete: 'yes' } }), /notify\.onComplete/);
+  const live = overlayConfig(normalizeConfig(undefined), { notify: { onLongTask: false } });
+  assert.ok(live.changed.includes('notify'));
+  assert.equal(live.config.notify.onLongTask, false);
+  assert.equal(live.config.notify.onComplete, true);
+});
+
 test('normalizeConfig validates and overlays the compact section (#8)', () => {
   const config = normalizeConfig({ compact: { threshold: 0.85, policy: 'auto', cooldownMs: 120000 } });
   assert.equal(config.compact.threshold, 0.85);

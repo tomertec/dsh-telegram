@@ -68,7 +68,7 @@ import { probeCapabilities, missingServices } from "./harness/adapters/capabilit
 import { attachInteractive, type Interactive, questionIdAt } from "./harness/adapters/interactive.js";
 import { ensureOpencodeGoResponsesRoute, normalizeOpencodeGoModel, opencodeGoModelUsesResponses } from "./harness/adapters/opencodeGo.js";
 import { saveDocumentAttachment, transcribeVoice } from "./harness/adapters/media.js";
-import { resetStatusStats, statusSnapshot } from "./harness/adapters/status.js";
+import { forgetStatusSession, resetStatusStats, statusSnapshot } from "./harness/adapters/status.js";
 import { CompactionWatcher, contextUsageOf } from "./harness/adapters/compaction-watch.js";
 import { diffTodos, listTodos, normalizeTodos, pendingTodoCount, type TodoView } from "./harness/adapters/todos.js";
 import { GoalProgressFeed, type ProgressSnapshot } from "./telegram/goal-progress.js";
@@ -245,6 +245,7 @@ function teardownMount(): void {
   pendingStartAfterAllow.clear();
   for (const timer of typingLoops.values()) clearInterval(timer);
   typingLoops.clear();
+  runningTurns.clear();
   for (const timer of todoCardTimers.values()) clearInterval(timer);
   todoCardTimers.clear();
   for (const timer of state.barTimers.values()) clearTimeout(timer);
@@ -266,6 +267,7 @@ function teardownMount(): void {
   compactionWatcher = undefined;
   activeCardRenderers.clear();
   menuPageIndex.clear();
+  cardOrigins.clear();
   void safeWrap("session-lifecycle-dispose", () => sessionLifecycle.dispose(), log);
   ephemeral.reset();
   statusPanel.reset();
@@ -280,10 +282,12 @@ function ejectChat(chatId: number): void {
   state.bridge?.bindAgent(chatId, undefined);
   state.chats.delete(chatId);
   stopTyping(chatId);
+  runningTurns.delete(chatId);
   const todoTimer = todoCardTimers.get(chatId);
   if (todoTimer !== undefined) clearInterval(todoTimer);
   todoCardTimers.delete(chatId);
   activeCardRenderers.delete(chatId);
+  cardOrigins.delete(chatId);
   state.barCounts.delete(chatId);
   state.barTodoCounts.delete(chatId);
   const timer = state.barTimers.get(chatId);
@@ -477,7 +481,14 @@ function notifyDispatchFailure(chatId: number, label: string, err: unknown): voi
  * so long agent turns re-assert it every 4s until turn/end stops it. A hard
  * cap clears a leaked loop when an agent is disposed without turn/end. */
 const typingLoops = new Map<number, ReturnType<typeof setInterval>>();
+/** Chats whose latest turn/start has not yet seen turn/end (issue #17). */
+const runningTurns = new Set<number>();
 const TYPING_KEEPALIVE_MAX_MS = 10 * 60_000;
+
+function turnStillRunning(chatId: number): boolean {
+  if (runningTurns.has(chatId)) return true;
+  return currentAgent(chatId)?.status === "running";
+}
 
 function startTyping(chatId: number): void {
   stopTyping(chatId);
@@ -489,10 +500,13 @@ function startTyping(chatId: number): void {
     void fire();
   }, 4000);
   typingLoops.set(chatId, timer);
-  // Self-arming one-shot guard: even if the turn/end event is lost, the loop
-  // cannot type forever. A later turn simply replaces the old interval.
+  // Self-arming one-shot guard: if turn/end was lost the loop must still die.
+  // When the turn is genuinely still running, renew one more keep-alive
+  // window instead of silently dropping the typing indicator (#17).
   setTimeout(() => {
-    if (typingLoops.get(chatId) === timer) stopTyping(chatId);
+    if (typingLoops.get(chatId) !== timer) return;
+    if (turnStillRunning(chatId)) startTyping(chatId);
+    else stopTyping(chatId);
   }, TYPING_KEEPALIVE_MAX_MS);
 }
 
@@ -518,6 +532,20 @@ const STATUS_SUBAGENTS_TIMEOUT_MS = 5000;
 
 /** Bound one in-process service promise so `refreshStatusSubagents` always
  * settles and clears the shared latch, even when a service hangs. */
+/** Card data-loading deadline (issue #20/#2): a hung service must fail the
+ * card with a visible message instead of wedging the chat's UI lane forever. */
+const CARD_LOAD_TIMEOUT_MS = 10_000;
+
+async function cardLoad<T>(chatId: number, label: string, load: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await withTimeout(Promise.resolve().then(load), CARD_LOAD_TIMEOUT_MS, label);
+  } catch (err) {
+    log(`${label} load failed`, err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
+    await uiSend(chatId, `\u274C ${label} \u52A0\u8F7D\u5931\u8D25\uFF1A${plain(truncate(err instanceof Error ? err.message : String(err), 120))}`, { parse_mode: "HTML" });
+    return undefined;
+  }
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
@@ -721,6 +749,9 @@ async function askConfirm(chatId: number, text: string, confirmPayload: Record<s
 }
 
 const menuPageIndex = new Map<number, number>();
+/** Which entry point opened the current card: bar-opened cards close on Back,
+ * menu-opened cards return to the last menu page (issue #16). */
+const cardOrigins = new Map<number, "menu" | "bar">();
 
 /** Telegram sizes the bubble (and its inline keyboard) to the widest text
  * line. A trailing line of non-breaking spaces forces the card to span the
@@ -732,6 +763,7 @@ function widenCard(text: string): string {
 /** Paginated core menu. Page 0 = non-bar frequent actions; bar-mirrored
  * functions live on page 1; display-only/rare cards on pages 2-3. */
 async function openMenuAt(chatId: number, page: number): Promise<void> {
+  cardOrigins.set(chatId, "menu");
   const snapshot = statusSnapshot(requireCtx(), boundAgentId(chatId), false);
   const model = snapshot.provider ? `${snapshot.provider}/${snapshot.model ?? "default"}` : (snapshot.model ?? "default");
   const project = basename(state.workspaceRoot) || "/";
@@ -785,7 +817,8 @@ async function openModelsCard(chatId: number): Promise<void> {
   const ctx = requireCtx();
   const agent = currentAgent(chatId);
   const current = agent ? currentSessionModel(ctx, agent.id) : {};
-  const catalog = await modelCatalog(ctx, current);
+  const catalog = await cardLoad(chatId, "model catalog", () => modelCatalog(ctx, current));
+  if (catalog === undefined) return;
   const lines = [
     `\u{1F9E9} Models \u00B7 current: ${current.provider ? `${plain(current.provider)}/` : ""}${plain(current.model ?? "default")}${current.reasoningEffort ? ` (${plain(current.reasoningEffort)})` : ""} \u00B7 routable: ${catalog.routable ? "yes" : "no"}`,
     "",
@@ -807,7 +840,8 @@ async function openProviderModelsCard(chatId: number, providerId: string, page =
   const ctx = requireCtx();
   const agent = currentAgent(chatId);
   const current = agent ? currentSessionModel(ctx, agent.id) : {};
-  const catalog = await modelCatalog(ctx, current);
+  const catalog = await cardLoad(chatId, "model catalog", () => modelCatalog(ctx, current));
+  if (catalog === undefined) return;
   const group = catalog.groups.find((candidate) => candidate.id === providerId);
   log(`provider card requested=${providerId} groups=${catalog.groups.map((g) => g.id).join(",")} found=${group !== undefined}`);
   if (!group) return openModelsCard(chatId);
@@ -898,8 +932,9 @@ const ALL_PROJECTS_KEY = "__all__";
 /** Load the Sessions roster once and project it into web-style ordered project groups. */
 async function sessionProjectSnapshot(chatId: number): Promise<{ details: SessionDetail[]; groups: ProjectGroup[]; bound?: string }> {
   const ctx = requireCtx();
-  const details = await listSessionDetails(ctx);
-  const workspaces = listWorkspaces(ctx).items;
+  const details = await cardLoad(chatId, "sessions roster", () => listSessionDetails(ctx));
+  const workspaces = details === undefined ? [] : listWorkspaces(ctx).items;
+  if (details === undefined) return { details: [], groups: [], bound: undefined };
   const groups = groupSessionsByProject(details, workspaces);
   const bound = state.bridge?.agentIdForChat(chatId) ?? state.bridge?.currentAgentIdValue();
   return { details, groups: orderProjectGroups(groups, bound), bound };
@@ -985,7 +1020,8 @@ async function openSessionProjectsCard(chatId: number, page = 0): Promise<void> 
 
 async function openSessionDetailCard(chatId: number, sessionId: string): Promise<void> {
   const ctx = requireCtx();
-  const details = await listSessionDetails(ctx);
+  const details = await cardLoad(chatId, "session details", () => listSessionDetails(ctx));
+  if (details === undefined) return;
   const session = details.find((candidate) => candidate.id === sessionId);
   if (!session) {
     await uiSend(chatId, `\u274C Session ${plain(truncate(sessionId, 32))} not found.`, { parse_mode: "HTML" });
@@ -1005,7 +1041,8 @@ async function openSessionDetailCard(chatId: number, sessionId: string): Promise
 }
 
 async function openHistoryCard(chatId: number, sessionId: string, beforeSeq?: number): Promise<void> {
-  const items = await readHistory(requireCtx(), sessionId, 21, beforeSeq);
+  const items = await cardLoad(chatId, "session history", () => readHistory(requireCtx(), sessionId, 21, beforeSeq));
+  if (items === undefined) return;
   const hasMore = items.length > 20;
   const visible = items.slice(0, 20);
   const olderBefore = hasMore ? visible[0]?.seq : undefined;
@@ -1023,7 +1060,8 @@ async function openHistoryCard(chatId: number, sessionId: string, beforeSeq?: nu
 const SEARCH_PAGE_SIZE = 10;
 
 async function openSearchCard(chatId: number, query: string, page = 0): Promise<void> {
-  const hits = await searchSessions(requireCtx(), query, 100);
+  const hits = await cardLoad(chatId, "search results", () => searchSessions(requireCtx(), query, 100));
+  if (hits === undefined) return;
   const totalPages = Math.max(1, Math.ceil(hits.length / SEARCH_PAGE_SIZE));
   const safe = Math.max(0, Math.min(page, totalPages - 1));
   const pageHits = hits.slice(safe * SEARCH_PAGE_SIZE, (safe + 1) * SEARCH_PAGE_SIZE);
@@ -1334,7 +1372,8 @@ async function openGoalsCard(chatId: number): Promise<void> {
 
 async function openSkillsCard(chatId: number): Promise<void> {
   const agent = currentAgent(chatId);
-  const skills = await listSkills(requireCtx(), agent?.id);
+  const skills = await cardLoad(chatId, "skills list", () => listSkills(requireCtx(), agent?.id));
+  if (skills === undefined) return;
   const userSkills = skills.filter((skill) => skill.userInvocable);
   const lines = [`\u{1F9D1}\u200D\u{1F3EB} Skills (${userSkills.length} user-invocable)`, ""];
   for (const skill of userSkills.slice(0, 30)) {
@@ -1354,7 +1393,8 @@ async function openSubagentsCard(chatId: number): Promise<void> {
     await openCard(chatId, "No live agent \u2014 subagents hang off a parent session.", buildBackKeyboard());
     return;
   }
-  const entries = await listSubagents(requireCtx(), agent.id);
+  const entries = await cardLoad(chatId, "subagents list", () => listSubagents(requireCtx(), agent.id));
+  if (entries === undefined) return;
   const lines = [`\u{1F916} Subagents of ${plain(truncate(agent.id, 24))} (${entries.length})`, ""];
   for (const entry of entries.slice(0, 15)) {
     const flags: string[] = [entry.kind, entry.activity];
@@ -1369,12 +1409,17 @@ async function openSubagentsCard(chatId: number): Promise<void> {
 }
 
 async function isContinuableSubagent(parentId: string, childId: string): Promise<boolean> {
-  const entries = await listSubagents(requireCtx(), parentId);
-  return entries.some((entry) => entry.id === childId && entry.kind === "child" && entry.mode === "continuable");
+  try {
+    const entries = await withTimeout(listSubagents(requireCtx(), parentId), STATUS_SUBAGENTS_TIMEOUT_MS, "subagents.listChildren");
+    return entries.some((entry) => entry.id === childId && entry.kind === "child" && entry.mode === "continuable");
+  } catch {
+    return false;
+  }
 }
 
 async function openSubagentDetailCard(chatId: number, parentId: string, childId: string): Promise<void> {
-  const entries = await listSubagents(requireCtx(), parentId);
+  const entries = await cardLoad(chatId, "subagents list", () => listSubagents(requireCtx(), parentId));
+  if (entries === undefined) return;
   const entry = entries.find((candidate) => candidate.id === childId);
   const lines = [
     `\u{1F916} ${plain(truncate(childId, 32))}`,
@@ -1401,7 +1446,9 @@ async function openSubagentDetailCard(chatId: number, parentId: string, childId:
 }
 
 async function openPresetsCard(chatId: number): Promise<void> {
-  const { presets, authorable, hasDocument } = await listAgentPresets(requireCtx());
+  const presetsView = await cardLoad(chatId, "agent presets", () => listAgentPresets(requireCtx()));
+  if (presetsView === undefined) return;
+  const { presets, authorable, hasDocument } = presetsView;
   const lines = [`\u{1F3AD} Agent presets (${presets.length}) \u00B7 authorable: ${authorable} \u00B7 document: ${hasDocument ? "yes" : "no"}`, ""];
   for (const preset of presets.slice(0, 20)) {
     lines.push(`${preset.isDefault ? "\u2B50" : "\u2022"} ${plain(preset.id)} \u00B7 ${preset.trust}${preset.broken ? " \u00B7 broken" : ""}`);
@@ -1566,7 +1613,8 @@ async function openCapabilitiesCard(chatId: number): Promise<void> {
 }
 
 async function openFeedbackListCard(chatId: number, sessionId: string): Promise<void> {
-  const items = await listFeedback(requireCtx(), sessionId);
+  const items = await cardLoad(chatId, "feedback list", () => listFeedback(requireCtx(), sessionId));
+  if (items === undefined) return;
   const lines = [`\u{1F4CB} Feedback \u00B7 ${plain(truncate(sessionId, 24))} (${items.length})`, ""];
   const rows: { text: string; callback_data: string }[][] = [];
   for (const item of items.slice(0, 20)) {
@@ -1827,7 +1875,8 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       return openSubagentsCard(chatId);
     }
     case "subagent-history": {
-      const items = await subagentHistory(requireCtx(), payload["childId"] ?? "", 15);
+      const items = await cardLoad(chatId, "subagent history", () => subagentHistory(requireCtx(), payload["childId"] ?? "", 15));
+      if (items === undefined) return;
       const lines = [`\u{1F4DC} ${plain(truncate(payload["childId"] ?? "", 24))}`, ""];
       for (const item of items) lines.push(`[${item.seq}] ${item.role} ${plain(truncate(item.text, 100))}`);
       await openCard(chatId, lines.join("\n"), buildBackKeyboard());
@@ -2291,13 +2340,21 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   switch (action) {
     case "close":
       stopTodoCardRefresh(chatId);
+      cardOrigins.delete(chatId);
       activeCardRenderers.delete(chatId);
       await ephemeral.clear(chatId, uiOps(requireTransport()));
       return;
     case "back":
-      // Return to the menu page the user was last on (Back from page 2 must
-      // not yank them back to page 1).
       stopTodoCardRefresh(chatId);
+      // Bar-opened cards close back to the chat; menu-opened cards return to
+      // the menu page the user was last on (Back from page 2 must not yank
+      // them back to page 1). See issue #16.
+      if (cardOrigins.get(chatId) === "bar") {
+        cardOrigins.delete(chatId);
+        activeCardRenderers.delete(chatId);
+        await ephemeral.clear(chatId, uiOps(requireTransport()));
+        return;
+      }
       return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
     case "more":
       return openMenuAt(chatId, (menuPageIndex.get(chatId) ?? 0) + 1);
@@ -2497,6 +2554,7 @@ const TELEGRAM_COMMANDS = [
 
 async function dispatchBarButton(chatId: number, label: string): Promise<void> {
   log(`bar button ${label}`);
+  cardOrigins.set(chatId, "bar");
   const ext = extensionForBar(label);
   if (ext) {
     const host = buildExtensionHost();
@@ -2567,6 +2625,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
   // A Telegram command can only arrive through a live transport; fail loudly
   // instead of silently returning and leaving the user with no feedback.
   const t = requireTransport();
+  cardOrigins.set(chatId, "menu");
   const ctx = requireCtx();
   const agent = currentAgent(chatId);
   const send = async (text: string, okResult = true) => {
@@ -3377,7 +3436,18 @@ function setBarCollapsed(chatId: number, collapsed: boolean): void {
   if (!t) return;
   if (collapsed) {
     state.barCollapsed.set(chatId, true);
-    void safeWrap(`bar-collapse(${chatId})`, () => dropBarCarrier(chatId, t), log);
+    void safeWrap(`bar-collapse(${chatId})`, async () => {
+      await dropBarCarrier(chatId, t);
+      // A persistent reply keyboard survives the carrier deletion; Telegram
+      // only replaces it when another keyboard message lands. Send the
+      // collapsed one-button keyboard as the new carrier (#17).
+      const id = await t.sendTextControl(chatId, "\u{1F5DC}\uFE0F Bar \u5DF2\u6536\u8D77", {
+        parse_mode: "HTML",
+        disable_notification: true,
+        reply_markup: buildCollapsedBarKeyboard(),
+      });
+      if (id !== undefined) state.barCarriers.set(chatId, id);
+    }, log);
     return;
   }
   const count = currentQueueCount(chatId);
@@ -3503,7 +3573,12 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       transport: state.transport,
       getConfig: () => state.config,
       onStateChange: refreshAllPanels,
-      onTurnRunning: (chatId, running) => (running ? startTyping(chatId) : stopTyping(chatId)),
+      onTurnRunning: (chatId, running) => {
+        if (running) runningTurns.add(chatId);
+        else runningTurns.delete(chatId);
+        if (running) startTyping(chatId);
+        else stopTyping(chatId);
+      },
       log,
     });
     state.bridge.attach();
@@ -3523,6 +3598,8 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       statusStats: (chatId) => statusSnapshot(requireCtx(), boundAgentId(chatId), false).stats,
       liveRendererActive: () => state.bridge?.hasAssistantConsumer() ?? false,
       pendingInbound: (chatId) => state.bridge?.hasPendingInbound(chatId) ?? false,
+      notifyOnComplete: () => state.config.notify?.onComplete !== false,
+      notifyOnLongTask: () => state.config.notify?.onLongTask !== false,
     });
     goalProgress.attach(ctx);
 
@@ -3599,6 +3676,19 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         }),
       );
     }
+    // Bounded per-session bookkeeping (LOOP_AUDIT #8): drop live counters as
+    // soon as the harness reports the session disposed.
+    refreshEventDisposers.push(
+      onRefreshEvent("session/disposed", (...args: unknown[]) => {
+        const session = args[0] as { id?: unknown } | undefined;
+        if (session?.id === undefined) return;
+        const id = String(session.id);
+        forgetStatusSession(id);
+        statusSubagentCounts.delete(id);
+        const chatId = state.bridge?.chatIdForAgent(id);
+        if (chatId !== undefined) todoSnapshots.delete(chatId);
+      }),
+    );
 
     state.interactive = attachInteractive(
       ctx,
