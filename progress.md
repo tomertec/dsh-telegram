@@ -231,4 +231,4 @@
   - #26 reasoning 表格 snapshot 走 `markdownTablePreBlock` → `<pre>` 等宽块。
 - 新增回归：status 2、markdown 2、openclaw 4、telegram-attach 1（总 349）。
 - `npm run check`：**349/349 pass**；`npm pack --dry-run` 通过（149 files）。
-- 待办：提交推送 + 关闭 issues #22-#26。
+- 已提交 `be550f3` 并推送 main；issues #22-#26 全部关闭，open issues 已清空。

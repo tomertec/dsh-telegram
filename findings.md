@@ -284,3 +284,4 @@
   minItems/maxItems，数量上限在 execute 内手动校验。
 - #26：最终答案路径 #19 已覆盖；缺 openclaw reasoning 路径。新增
   `markdownTablePreBlock`（任意位置首个 GFM 表）并接入 reasoningLineHtml。
+- 提交 `be550f3` 已 push main，issues #22-#26 已关闭。

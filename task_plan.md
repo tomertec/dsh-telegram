@@ -197,7 +197,7 @@
 5. [x] #26 markdown.ts 导出表格→pre 助手并接入 openclaw reasoning 路径（最终答案路径 #19 已覆盖，补回归测试锁定）。
 6. [x] 补回归测试（status preset、openclaw 风暴/节流/表格、attach 安全与分流）。
 7. [x] `npm run check` 全绿 + CHANGELOG/README 同步。
-8. [~] 提交推送 + 关闭 issues #22-#26。
+8. [x] 提交推送 + 关闭 issues #22-#26（commit `be550f3` 已 push main；open issues 已清空）。
 
 ### 约束
 - 不破坏 #15/#19 已收敛行为：编辑仍走 diff 检查、失败仍指数退避、同消息重试。
