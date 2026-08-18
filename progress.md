@@ -214,4 +214,4 @@
   - #21 turn receipt 单行 5 metrics；token/性能/editText 命中率内部化。
 - 新增/更新回归测试 19 例（详见 TESTING.md §67）。
 - `npm run check`：**340/340 pass**。
-- 待办：git 提交/推送 + 关闭 GitHub issues #16-#21。
+- 已提交 `040bbd2` 并推送 main；GitHub issues #16-#21 全部关闭，open issues 已清空。

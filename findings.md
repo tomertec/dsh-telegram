@@ -265,3 +265,4 @@
 - #21：receipt 单行 5 metrics；token/性能/editText 命中率全部内部化（editText 命中率保留在 openclaw 日志）。
 - 测试新增 19 例：markdown 表格、receipt、status 增量扫描、goal/openclaw heartbeat 与通知开关、session dispose deadline、opencode latch deadline、interactive 零投递、config notify、UI lane 集成（#16/#17/#20）。
 - `npm run check`：**340/340 pass**。
+- 提交 `040bbd2` 已推 main；GitHub open issues 已清空（#16-#21 全部关闭并附修复说明）。
