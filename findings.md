@@ -233,3 +233,24 @@
 - Telegram 400/429 错误经 SendQueue 处理后到 openclaw 只剩 boolean，无法区分「消息没了」和「限流耗尽」；因此用「保留同消息 + 指数退避 + 5 次上限」策略兜底。
 - Todo 卡 auto-refresh 若文本未变，Ephemeral 的 lastText 去重会跳过 edit；集成测试必须推入新的 `todo/write` 事件才能断言刷新真实发生。
 - 新测试文件：`test/todos-card.test.mjs`、`test/todos-card-refresh.integration.test.mjs`；集成测试用 patched TelegramTransport 验证 5s tick 与 Close 停表。
+
+## Round 28 审计：死锁/卡死/无限递归/循环
+
+### 已确认并本轮修复（见代码）
+1. **Todos 定时器“复活”卡（真 bug）**：`Status` 按钮/命令走 `ephemeral.open + statusPanel.refresh`，不经过 `openCard`，因此不会替换 `activeCardRenderers`；Todo 卡 5s 定时器认为仍是当前卡，会在 Status 卡上重新 `ephemeral.replace` 回 Todo 卡。→ 状态卡与 Todo 卡互相覆盖。
+2. **`refreshStatusSubagents` 共享闩锁可永久卡住**：`statusSubagentSync` 只有在所有 `listSubagents()` settle 后才清空；一个永远不返回的服务调用会让后续所有 `refreshAllPanels()` 都挂在同一个 promise 上，状态面板/bar 停止刷新。→ 每个 agent 查询加超时，保证 finally 必达。
+3. **`transcribeVoice` / `downloadFile` / `sendTextFallback` 的 fetch 无超时**：Node fetch 可无限挂起；语音转写/图片下载会永久卡住该 chat 的 user lane，fallback 会卡住关键 ack。→ AbortSignal.timeout。
+4. **`setCommands` 无 withTimeout**：/start 路径 await 一个可能挂起的 setMyCommands。→ 与其他 Bot API 调用一致加 20s。
+5. **`SendQueue.takeSlot` 在 maxPerWindow<=0 时数学上无限循环**（`stamps.length < 0` 永远 false）；配置层已挡 1..30，但 SendQueue 是公共类。→ 构造/configure 时 clamp 到 >=1。
+6. **`markdownToHtml` 的 `renderInline` 无递归深度上限**：嵌套 `**a**`/`[..](..)` 超过调用栈可 RangeError；超长同前缀内容也 O(n²)。→ 增加深度上限，超限直接转义剩余内容（正常消息零影响）。
+
+### 中风险（已写修复方案，待后续轮次实施）
+7. **`statusSnapshot.eventStatsFor` 每次全量扫 session.events**：Bridge 对每个 tool/step 事件调 refreshAllPanels → statusSnapshot → 全扫；长会话 O(n²)，是“事件多时 UI 越来越卡/像死锁”的主要来源。方案：仿 listTodos 做 WeakMap<agent,{scannedEnd,stats}> 增量累加 + preset 反向缓存。
+8. **UI lane 的卡片数据调用无统一超时**：`modelCatalog/listSkills/listSubagents/listSessionDetails/describeSettings/...` await 外部服务；任一挂起会永久卡住该 chat 的 uiChains，后续所有按钮无响应。方案：新增 `withDeadline(ms, fn)` 包卡片数据加载，失败发“加载失败”卡片而不是静默挂起。
+9. **`listDirectory`/`readdir+stat` 无 AbortSignal**：NFS/坏盘挂起会卡住 Host/Workspace 卡。方案：fs.promises 调用加 `AbortSignal.timeout(10s)`，超时降级为错误提示。
+10. **interactive 零投递挂起**：approval/question `broadcastForSession` 若没有任何 chat 收到卡，promise 永不 settle（等 signal）。方案：delivered.length===0 时对 question reject、对 approval settle("cancelled") 并记日志。
+11. **`exportSessionLog` 读流无超时**：reader.read() 永不 done 会卡住 `/sessionlog`。方案：复用 AbortSignal.timeout(120s)（50MB 上限，给足余量）并 cancel reader。
+12. **`SessionLifecycle.create` await 旧 agent dispose**：dispose 永不 settle 会让 sessionCreateChains 卡死（新会话点不了）。方案：dispose 加 10s 超时竞速，失败只记日志不阻塞创建返回。
+13. **`ensureOpencodeGoResponsesRoute` 单例闩锁**：settings.update 挂起时同 promise 永久复用。方案：provisionOnce 外层加 15s 超时且无论成败清 `provisioning`。
+14. **低风险内存增长**：`CompactionWatcher.states`（无 compaction/end 时不删）、`toolCallCounts`（session 删除不清）、`Bridge.droppedEvents`（unbound agent 累计）。方案：session/disposed、deleteSession、turn/end 分别清理。
+15. **`encodedCallback` O(n²)**：长路径/长 id 截断循环每字符 UTF-16 截断。方案：二分/按字节逐步截断。

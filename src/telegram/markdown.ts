@@ -24,6 +24,10 @@ import { escapeHtml } from "./html.js";
 
 const isWord = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9]/.test(ch);
 
+/** Pathological deeply-nested model markup must degrade instead of
+ * overflowing the call stack (a crash that looks like a frozen bot). */
+const MAX_INLINE_DEPTH = 32;
+
 /** Emphasis openers are valid at a word/punctuation boundary; closers must not
  * run into another word character. This keeps `snake_case` and `2*3*4` intact. */
 function canOpen(delimiter: string, input: string, index: number): boolean {
@@ -61,7 +65,8 @@ function safeHref(href: string): boolean {
 
 /** Inline Markdown on one line. Escapes every literal character, so generated
  * HTML is always balanced enough for the transport splitter. */
-function renderInline(input: string): string {
+function renderInline(input: string, depth = 0): string {
+  if (depth > MAX_INLINE_DEPTH) return escapeHtml(input);
   let out = "";
   for (let index = 0; index < input.length; ) {
     const ch = input[index];
@@ -99,7 +104,7 @@ function renderInline(input: string): string {
           const href = input.slice(hrefStart, hrefEnd);
           const label = input.slice(index + 1, labelEnd);
           if (safeHref(href) && label !== "") {
-            out += `<a href="${escapeHtml(href)}">${renderInline(label)}</a>`;
+            out += `<a href="${escapeHtml(href)}">${renderInline(label, depth + 1)}</a>`;
             index = hrefEnd + 1;
             continue;
           }
@@ -114,7 +119,7 @@ function renderInline(input: string): string {
     if (triple !== undefined && canOpen(triple, input, index)) {
       const close = findClosing(input, index, triple);
       if (close !== -1) {
-        out += `<b><i>${renderInline(input.slice(index + 3, close))}</i></b>`;
+        out += `<b><i>${renderInline(input.slice(index + 3, close), depth + 1)}</i></b>`;
         index = close + 3;
         continue;
       }
@@ -129,7 +134,7 @@ function renderInline(input: string): string {
         if (input[close + strong.length] === strong[0] && input.slice(index + strong.length, close).includes(strong[0])) {
           close += 1;
         }
-        out += `<b>${renderInline(input.slice(index + strong.length, close))}</b>`;
+        out += `<b>${renderInline(input.slice(index + strong.length, close), depth + 1)}</b>`;
         index = close + strong.length;
         continue;
       }
@@ -139,7 +144,7 @@ function renderInline(input: string): string {
     if (strike !== undefined && canOpen(strike, input, index)) {
       const close = findClosing(input, index, strike);
       if (close !== -1) {
-        out += `<s>${renderInline(input.slice(index + 2, close))}</s>`;
+        out += `<s>${renderInline(input.slice(index + 2, close), depth + 1)}</s>`;
         index = close + 2;
         continue;
       }
@@ -148,7 +153,7 @@ function renderInline(input: string): string {
     if ((ch === "*" || ch === "_") && canOpen(ch, input, index)) {
       const close = findClosing(input, index, ch);
       if (close !== -1) {
-        out += `<i>${renderInline(input.slice(index + 1, close))}</i>`;
+        out += `<i>${renderInline(input.slice(index + 1, close), depth + 1)}</i>`;
         index = close + 1;
         continue;
       }

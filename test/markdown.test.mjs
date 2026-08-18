@@ -95,3 +95,11 @@ test('long normalized replies split into balanced Telegram HTML chunks', () => {
     assertBalanced(part);
   }
 });
+
+test('deeply nested inline markup degrades instead of overflowing the stack', () => {
+  const depth = 80;
+  const nested = `${'**'.repeat(depth)}deep${'**'.repeat(depth)}`;
+  const html = markdownToHtml(nested);
+  assert.ok(html.includes('deep'), 'deep content survives as escaped text once the depth guard trips');
+  assert.doesNotThrow(() => markdownToHtml(`${'['.repeat(500)}deep`));
+});

@@ -140,3 +140,20 @@ test('configure hot-updates the limiter while in-flight work keeps flowing', asy
   assert.deepEqual(results, [0, 1, 2, 3, 4, 5, 6, 7]);
   assert.equal(queue.pendingCount(), 0);
 });
+
+test('non-positive limiter settings clamp instead of spinning forever', async () => {
+  let slept = 0;
+  const queue = new SendQueue({
+    maxPerWindow: 0,
+    windowMs: 0,
+    retry: { attempts: -1, baseDelayMs: -10 },
+    sleep: async (ms) => {
+      slept += ms;
+    },
+  });
+  assert.equal(await queue.push('c', async () => 'ok'), 'ok');
+  assert.equal(queue.pendingCount(), 0);
+  assert.equal(slept, 0, 'a clamped queue never enters the rate-limit wait loop');
+  queue.configure({ maxPerWindow: 0, windowMs: 0 });
+  assert.equal(await queue.push('c', async () => 'ok2'), 'ok2');
+});

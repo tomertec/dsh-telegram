@@ -186,3 +186,16 @@
   - 全部完成时卡片头变为 `✅ Todos complete · X/Y done`（新增 `telegram/todos-card.ts` 纯渲染模块）。
 - `npm run check`：**317/317 pass**（新增 openclaw 4 例、todos 缓存 4 例、todos-card 渲染 3 例、Todo 卡 5s 刷新集成测试 1 例）。
 - 已提交 `29669fd` 并推送 main；issues #14/#15 已评论并关闭（评论含修复说明）。
+
+## Round 28（本轮）
+
+- 全项目死锁/卡死/无限递归/循环审计：扫描全部 while/for(;;)/setInterval/await 无超时/自递归路径；逐模块审查并发结构。
+- 审计报告写入 `docs/LOOP_AUDIT.md`；高风险 8 项已修复、中风险 8 项已列 plan（findings.md + LOOP_AUDIT）。
+- 本轮修复：
+  - Status 打开时停 Todo 5s 定时器（修“Todo 卡复活”）。
+  - `statusSubagentSync` 闩锁加 5s 超时，保证 finally 必清。
+  - `downloadFile`/`sendTextFallback`/`setCommands`/`transcribeVoice` 网络调用全部加超时。
+  - `SendQueue` 对非正 maxPerWindow/windowMs 做 clamp（防无限循环）。
+  - `markdown renderInline` 增加递归深度上限 32（防栈溢出）。
+- `npm run check`：**319/319 pass**（新增 queue clamp、markdown 深度、media signal、Todo/Status 切换集成测试）。
+- 待办：commit/push 本轮；中风险项按 LOOP_AUDIT 计划后续轮次实施。

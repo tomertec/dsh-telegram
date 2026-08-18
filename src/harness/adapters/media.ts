@@ -39,6 +39,7 @@ export async function transcribeVoice(
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
       body: form,
+      signal: AbortSignal.timeout(60_000),
     });
     const payload = (await response.json()) as TranscribeResponse;
     if (!response.ok) return fail(`transcription failed (${response.status}): ${payload.error?.message ?? "unknown error"}`);

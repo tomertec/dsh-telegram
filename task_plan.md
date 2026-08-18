@@ -155,3 +155,20 @@
 - 不引入新的 per-chat 编辑风暴：编辑仍经 SendQueue 全局限速 + 429 retry_after。
 - 保持现有 305 测试全绿，新增测试不依赖真实 Telegram。
 
+
+## Round 28 任务计划（死锁/卡死/循环审计）
+
+### 目标
+全项目审计死锁、卡死、无限递归/循环，记录并给出不影响功能的修复计划；本轮落地高危安全修复。
+
+### 步骤
+1. [x] 全量静态扫描 + 逐模块审计（while/for(;;)/setInterval/递归/await 无超时）。
+2. [x] 风险清单写入 findings.md（高 6 项、中 8 项、低 1 项）。
+3. [x] 修复高风险项：Todo 定时器复活卡、statusSubagentSync 闩锁、fetch 超时、SendQueue clamp、markdown 递归深度。
+4. [x] 补回归测试（状态卡切换停 Todo 定时器、fetch 超时信号、clamp、嵌套 markdown）。
+5. [x] `npm run check` 全绿：**319/319 pass**。
+6. [ ] 提交；中风险项留待后续轮次（plan 已列在 findings.md 与 docs/LOOP_AUDIT.md）。
+
+### 约束
+- 只做防御性修复：正常路径行为不变；超时只影响“本来就永久挂起”的场景。
+- 不改变外部服务契约，不重写 UI 数据加载。

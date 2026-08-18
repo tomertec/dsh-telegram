@@ -300,15 +300,17 @@ export class TelegramTransport {
     if (this.pollLoop === loop) this.pollLoop = undefined;
   }
 
-  /** Download one photo through the Bot API file endpoint. */
+  /** Download one photo through the Bot API file endpoint. Both the metadata
+   * call and the byte download are bounded: a hung connection must not wedge
+   * the chat's inbound lane forever. */
   async downloadFile(fileId: string): Promise<Uint8Array | undefined> {
-    const file = await this.api.getFile(fileId).catch((err) => {
+    const file = await withTimeout(this.api.getFile(fileId), 20_000).catch((err) => {
       this.log("getFile failed", err);
       return undefined;
     });
     if (!file?.file_path) return undefined;
     const url = `https://api.telegram.org/file/bot${this.bot.token}/${file.file_path}`;
-    const response = await fetch(url).catch((err) => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(60_000) }).catch((err) => {
       this.log("photo download failed", err);
       return undefined;
     });
@@ -363,7 +365,7 @@ export class TelegramTransport {
   }
 
   async setCommands(commands: { command: string; description: string }[]): Promise<void> {
-    await this.api.setMyCommands(commands).catch((err) => this.log("setMyCommands failed", err));
+    await withTimeout(this.api.setMyCommands(commands), 20_000).catch((err) => this.log("setMyCommands failed", err));
   }
 
   /** Telegram's native menu button (next to the input field) opens the bot
@@ -485,6 +487,7 @@ export class TelegramTransport {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chat_id: chatId, text, ...options }),
+        signal: AbortSignal.timeout(15_000),
       });
       const payload = (await response.json()) as { ok?: boolean; result?: { message_id?: number } };
       if (payload.ok !== true) {

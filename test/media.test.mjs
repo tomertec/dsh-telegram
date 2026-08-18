@@ -9,7 +9,7 @@ import { saveDocumentAttachment, transcribeVoice } from '../dist/harness/adapter
 test('transcribeVoice posts multipart form data to an OpenAI-compatible endpoint', async () => {
   const calls = [];
   const fetchImpl = async (url, init) => {
-    calls.push({ url, headers: init.headers, body: init.body });
+    calls.push({ url, headers: init.headers, body: init.body, signal: init.signal });
     return new Response(JSON.stringify({ text: '  hello from voice  ' }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const res = await transcribeVoice(new Uint8Array([1, 2, 3]), 'voice.ogg', { baseUrl: 'https://example.test/v1/', apiKey: 'key', model: 'whisper-1' }, {}, fetchImpl);
@@ -19,6 +19,7 @@ test('transcribeVoice posts multipart form data to an OpenAI-compatible endpoint
   assert.equal(calls[0].url, 'https://example.test/v1/audio/transcriptions');
   assert.equal(calls[0].headers.Authorization, 'Bearer key');
   assert.ok(calls[0].body instanceof FormData);
+  assert.ok(calls[0].signal instanceof AbortSignal, 'transcription fetch is bounded by an abort timeout');
 });
 
 test('transcribeVoice degrades cleanly without a key and on provider errors', async () => {

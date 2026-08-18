@@ -512,6 +512,23 @@ export { renderStatsStrip };
  * before the next in-place edit. */
 const statusSubagentCounts = new Map<string, number>();
 let statusSubagentSync: Promise<void> | undefined;
+/** One slow subagent listing must never latch `statusSubagentSync` forever:
+ * every later panel refresh would otherwise await the same stuck promise. */
+const STATUS_SUBAGENTS_TIMEOUT_MS = 5000;
+
+/** Bound one in-process service promise so `refreshStatusSubagents` always
+ * settles and clears the shared latch, even when a service hangs. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
 
 async function refreshStatusSubagents(): Promise<void> {
   const ctx = requireCtx();
@@ -520,7 +537,7 @@ async function refreshStatusSubagents(): Promise<void> {
     agents.map(async (agent) => {
       const id = String(agent.id);
       try {
-        const entries = await listSubagents(ctx, id);
+        const entries = await withTimeout(listSubagents(ctx, id), STATUS_SUBAGENTS_TIMEOUT_MS, `subagents.listChildren(${id})`);
         statusSubagentCounts.set(id, entries.length);
       } catch {
         statusSubagentCounts.delete(id);
@@ -565,6 +582,18 @@ function renderStatus(chatId?: number): string {
 function requireCtx(): Context {
   if (!state.context) throw new Error("dsh-telegram context is not attached");
   return state.context;
+}
+
+/** Open the live Status panel. Unlike `openCard`, the status panel does not
+ * own `activeCardRenderers`; before replacing the previous transient card we
+ * must stop any Todo auto-refresh loop, otherwise its next 5s tick would
+ * resurrect the Todo card on top of the Status panel. */
+async function openStatusPanel(chatId: number): Promise<void> {
+  stopTodoCardRefresh(chatId);
+  activeCardRenderers.delete(chatId);
+  const t = requireTransport();
+  await ephemeral.open(chatId, uiOps(t));
+  await statusPanel.refresh(chatId, uiOps(t), renderStatus(chatId), true);
 }
 
 function boundAgentId(chatId?: number): string | undefined {
@@ -2334,9 +2363,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "about":
       return openAboutCard(chatId);
     case "status":
-      await ephemeral.open(chatId, uiOps(requireTransport()));
-      await statusPanel.refresh(chatId, uiOps(requireTransport()), renderStatus(chatId), true);
-      return;
+      return openStatusPanel(chatId);
     case "new": {
       const { result: res, agentId } = await createSessionForChat(chatId);
       const bound = bindCreatedSession(chatId, agentId);
@@ -2500,9 +2527,7 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
     case SESSIONS_BTN:
       return openSessionsCard(chatId, lastProjectKey(chatId));
     case STATUS_BTN:
-      await ephemeral.open(chatId, uiOps(requireTransport()));
-      await statusPanel.refresh(chatId, uiOps(requireTransport()), renderStatus(chatId), true);
-      return;
+      return openStatusPanel(chatId);
     case QUEUE_BTN:
       return openQueueCard(chatId);
     case TODO_BTN:
@@ -2624,9 +2649,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
     case "models":
       return openModelsCard(chatId);
     case "status":
-      await ephemeral.open(chatId, uiOps(t));
-      await statusPanel.refresh(chatId, uiOps(t), renderStatus(chatId), true);
-      return;
+      return openStatusPanel(chatId);
     case "abort": {
       const agentId = boundAgentId(chatId);
       if (agentId === undefined) {

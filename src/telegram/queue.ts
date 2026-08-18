@@ -47,6 +47,14 @@ function isRetryable(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith("telegram api timeout after ");
 }
 
+function positiveNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function nonNegativeNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
 export class SendQueue {
   private maxPerWindow: number;
   private windowMs: number;
@@ -61,20 +69,23 @@ export class SendQueue {
   private active = 0;
 
   constructor(options: QueueOptions = {}) {
-    this.maxPerWindow = options.maxPerWindow ?? 20;
-    this.windowMs = options.windowMs ?? 1000;
-    this.retryAttempts = options.retry?.attempts ?? 3;
-    this.retryBaseDelayMs = options.retry?.baseDelayMs ?? 500;
+    // `takeSlot` spins until `stamps.length < maxPerWindow`; a non-positive
+    // window/budget would make that condition mathematically unreachable.
+    // Clamp here so a misconfigured queue degrades instead of hanging forever.
+    this.maxPerWindow = positiveNumber(options.maxPerWindow, 20);
+    this.windowMs = positiveNumber(options.windowMs, 1000);
+    this.retryAttempts = nonNegativeNumber(options.retry?.attempts, 3);
+    this.retryBaseDelayMs = nonNegativeNumber(options.retry?.baseDelayMs, 500);
     this.sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = options.now ?? Date.now;
   }
 
   /** Hot-update the limiter while in-flight sends keep flowing. */
   configure(options: QueueOptions): void {
-    if (options.maxPerWindow !== undefined) this.maxPerWindow = options.maxPerWindow;
-    if (options.windowMs !== undefined) this.windowMs = options.windowMs;
-    if (options.retry?.attempts !== undefined) this.retryAttempts = options.retry.attempts;
-    if (options.retry?.baseDelayMs !== undefined) this.retryBaseDelayMs = options.retry.baseDelayMs;
+    if (options.maxPerWindow !== undefined) this.maxPerWindow = positiveNumber(options.maxPerWindow, this.maxPerWindow);
+    if (options.windowMs !== undefined) this.windowMs = positiveNumber(options.windowMs, this.windowMs);
+    if (options.retry?.attempts !== undefined) this.retryAttempts = nonNegativeNumber(options.retry.attempts, this.retryAttempts);
+    if (options.retry?.baseDelayMs !== undefined) this.retryBaseDelayMs = nonNegativeNumber(options.retry.baseDelayMs, this.retryBaseDelayMs);
   }
 
   /** Wait until the global sliding window admits one more send. */

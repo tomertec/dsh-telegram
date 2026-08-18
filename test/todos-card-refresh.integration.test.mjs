@@ -8,7 +8,7 @@ import { TelegramTransport } from '../dist/telegram/transport.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('Todos card opens on the control lane, auto-refreshes every 5s, and stops on close (#14)', async () => {
+test('Todos card opens on the control lane, auto-refreshes every 5s, and stops when Status replaces it (#14)', async () => {
   const base = mkdtempSync(join(tmpdir(), 'dsh-telegram-todo-card-'));
   const oldCwd = process.cwd();
   const oldToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -113,9 +113,13 @@ test('Todos card opens on the control lane, auto-refreshes every 5s, and stops o
     assert.match(editTextControlCalls.at(-1).text, /📋 Todos · 1 pending · 2 total/);
 
     const editsAfterRefresh = editTextControlCalls.length;
-    await handlers.onCallback(7, 'm:close');
+    // Opening the Status panel replaces the card without going through
+    // openCard; the Todo refresh loop must be stopped explicitly, otherwise
+    // its next tick resurrects the Todo card on top of the Status panel.
+    await handlers.onCallback(7, 'm:status');
+    assert.ok(sendTextControlCalls.length >= 2, 'status panel opens as a fresh transient card');
     await sleep(5100);
-    assert.equal(editTextControlCalls.length, editsAfterRefresh, 'closing the card stops the refresh loop');
+    assert.equal(editTextControlCalls.length, editsAfterRefresh, 'status panel stops the Todo refresh loop');
   } finally {
     try {
       ctx.cleanup?.();
