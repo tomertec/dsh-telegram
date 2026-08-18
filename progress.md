@@ -170,3 +170,19 @@
 - 修复 issue 11-13：transport 全通道成功/失败日志 + `sendTextFallback` 原始 API 兜底、`safeWrap` 消灭 `void X.catch(()=>{})`、dispatch 失败通知用户、openclaw turn/start 即发占位并在流失败时给用户兜底提示。
 - `npm run check`：**305/305 pass**（新增 safe/todos/compaction/media/goal-progress/transport lanes 测试）。
 - 待办：实机冒烟 + 用户确认后提交/发布。
+
+## Round 27（本轮）
+
+- 修复 GitHub issue #15（openclaw placeholder storm）：
+  - 编辑帧 diff 检查（相同 HTML 直接跳过，避免 400 "message is not modified"）。
+  - 节流 120ms → 1000ms（每 chat ~1 edit/s）。
+  - 编辑失败保留 `messageId`，同消息指数退避重试（1.5s→30s cap）；连续 5 次失败才放弃并换一个新占位。
+  - 占位消息从单字符「…」改为完整标题 `⚙️ Working…`；占位发送失败只发一次 fallback，本回合不再重试。
+  - turn receipt 新增 `🎯 OpenClaw: N 次 editText · 命中 X%`。
+- 修复 GitHub issue #14（Todos 卡死 + 执行中实时查看）：
+  - `listTodos` 按 agent 增量缓存（WeakMap + scannedEnd），只扫新增事件尾部，空结果也缓存，数组缩短时全量重扫。
+  - Todos 卡打开即走 control lane，入口/耗时/错误日志 + 失败兜底消息。
+  - 卡片每 5s 原地 auto-refresh；Back/Close/换卡/teardown 自动停表；`turn/end` 立即刷新活跃卡片。
+  - 全部完成时卡片头变为 `✅ Todos complete · X/Y done`（新增 `telegram/todos-card.ts` 纯渲染模块）。
+- `npm run check`：**317/317 pass**（新增 openclaw 4 例、todos 缓存 4 例、todos-card 渲染 3 例、Todo 卡 5s 刷新集成测试 1 例）。
+- 待办：用户确认后 commit/push，并关闭 issues #14/#15。

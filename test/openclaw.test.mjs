@@ -88,15 +88,15 @@ test('openclaw streams reasoning and tool lines then collapses to a summary', as
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: ' check' } }));
   ctx.emit('agent-1', ev('tool/call', { callId: 'call_1', name: 'bash', arguments: 'ls -la' }));
   ctx.emit('agent-1', ev('tool/result', { message: { source: { kind: 'tool', callId: 'call_1' }, content: [{ type: 'tool-result', isError: false }] } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
   assert.equal(host.sends.length, 1);
-  assert.equal(host.sends[0].text, '\u2026');
+  assert.equal(host.sends[0].text, '\u2699\uFE0F Working\u2026');
   assert.equal(host.sends[0].options.parse_mode, 'HTML');
 
-  const messageId = host.sends[0].text === '\u2026' ? 100 : undefined;
+  const messageId = host.sends[0].text === '\u2699\uFE0F Working\u2026' ? 100 : undefined;
   const edits = host.edits.filter((e) => e.messageId === messageId);
   assert.ok(edits.length >= 2, `expected streaming edit + summary edit, got ${edits.length}`);
   const lastStream = edits[edits.length - 2];
@@ -110,6 +110,7 @@ test('openclaw streams reasoning and tool lines then collapses to a summary', as
     '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s',
     '\u2500'.repeat(9),
     '\u{1F9E0} 1 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177',
+    '\u{1F3AF} OpenClaw: 1 \u6B21 editText \u00B7 \u547D\u4E2D 100%',
   ].join('\n'));
   assert.equal(host.deletes.length, 0);
 });
@@ -120,7 +121,7 @@ test('turn summary adds input/output tokens and cache hit rate', async () => {
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'think' } }));
   ctx.emit('agent-1', ev('tool/call', { callId: 'call_tok', name: 'bash', arguments: 'ls' }));
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'usage', usage: { inputTokens: 500, outputTokens: 120, cacheReadTokens: 400, cacheWriteTokens: 0 } } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -147,7 +148,7 @@ test('turn summary appends the session stats line', async () => {
   });
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'think' } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -161,11 +162,11 @@ test('tool result swaps the icon to ✓ and drops the running status', async () 
   const { host, ctx } = await setup();
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
   ctx.emit('agent-1', ev('tool/call', { callId: 'call_done', name: 'bash', arguments: 'ls' }));
-  await sleep(220);
+  await sleep(1100);
   const runningEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
   assert.ok(runningEdit.text.includes('<b>\u{1F6E0}\uFE0F bash</b> <code>ls</code> <i>running</i>'), 'running state: emoji + bold label + code detail + italic status');
   ctx.emit('agent-1', ev('tool/result', { message: { source: { kind: 'tool', callId: 'call_done' }, content: [{ type: 'tool-result', isError: false }] } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -180,7 +181,7 @@ test('tool line commits the reasoning burst and the next burst starts a new line
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'first burst' } }));
   ctx.emit('agent-1', ev('tool/call', { callId: 'call_a', name: 'read', arguments: 'src/a.ts' }));
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'second burst' } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -196,6 +197,7 @@ test('tool line commits the reasoning burst and the next burst starts a new line
     '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s',
     '\u2500'.repeat(9),
     '\u{1F9E0} 2 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177',
+    '\u{1F3AF} OpenClaw: 1 \u6B21 editText \u00B7 \u547D\u4E2D 100%',
   ].join('\n'));
 });
 
@@ -203,7 +205,7 @@ test('reasoning text is HTML-escaped and whitespace folds to one line', async ()
   const { host, ctx } = await setup();
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: '<b>bold</b> & "quote"\nsecond line' } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -217,7 +219,7 @@ test('thinking line strips markdown noise and head-truncates at a word boundary'
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
   const long = `**bold** \`code\` # Heading ${'word '.repeat(40)}`;
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: long } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -235,7 +237,7 @@ test('block-end text snapshot replaces partial deltas of the same block', async 
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'I' } }));
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: ' need' } }));
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'block-end', index: 0, block: { type: 'text', text: 'I need to check this' } } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -249,7 +251,7 @@ test('tool result with isError marks the line failed', async () => {
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
   ctx.emit('agent-1', ev('tool/call', { callId: 'call_err', name: 'edit', arguments: 'x' }));
   ctx.emit('agent-1', ev('tool/result', { message: { source: { kind: 'tool', callId: 'call_err' }, content: [{ type: 'tool-result', isError: true }] } }));
-  await sleep(220);
+  await sleep(1100);
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
 
@@ -274,7 +276,7 @@ test('telegram_reply tool detail shows the message body, not the JSON wrapper', 
   const { host, ctx } = await setup();
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
   ctx.emit('agent-1', ev('tool/call', { callId: 'call_r', name: 'telegram_reply', arguments: '{"text":"hello world"}' }));
-  await sleep(220);
+  await sleep(1100);
   const streamEdit = host.edits.find((e) => e.text.includes('Working\u2026'));
   assert.ok(streamEdit.text.includes('<code>hello world</code>'));
   assert.ok(streamEdit.text.includes('{&quot;text&quot;') === false);
@@ -364,7 +366,7 @@ test('a new turn cancels the previous draft throttle timer', async () => {
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'stale' } }));
   assert.equal(host.sends.length, 1, 'placeholder for the first turn is created');
   ctx.emit('agent-1', ev('turn/start', { turn: 2 }));
-  await sleep(200);
+  await sleep(1100);
   assert.equal(host.edits.length, 0, 'the old throttled edit must not fire into the new turn');
 });
 
@@ -374,7 +376,7 @@ test('outbound.liveFeed=false disables the draft without unmounting', async () =
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
   ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'silent' } }));
   ctx.emit('agent-1', ev('tool/call', { callId: 'call_silent', name: 'bash', arguments: 'ls' }));
-  await sleep(220);
+  await sleep(1100);
   assert.equal(host.sends.length, 0);
   assert.equal(host.edits.length, 0);
   host.inboundPending = true;
@@ -382,4 +384,78 @@ test('outbound.liveFeed=false disables the draft without unmounting', async () =
   await sleep(20);
   assert.equal(host.sends.length, 0, 'disabled renderer must not deliver the turn-end answer');
   host.liveFeed = true;
+});
+
+test('identical re-renders are skipped so Telegram never gets a 400 not-modified (#15)', async () => {
+  const { host, ctx } = await setup();
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'same frame' } }));
+  await sleep(1100);
+  assert.equal(host.edits.length, 1, 'first frame is edited into the placeholder');
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'same frame' } }));
+  await sleep(1100);
+  assert.equal(host.edits.length, 1, 'identical re-render is a no-op');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+});
+
+test('failed edits keep the same message instead of spawning new placeholders (#15)', async () => {
+  const { host, ctx } = await setup();
+  host.editMessage = async (chatId, messageId, text, options) => {
+    host.edits.push({ chatId, messageId, text, options });
+    return false;
+  };
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'first' } }));
+  await sleep(1100);
+  assert.equal(host.sends.length, 1, 'one placeholder only');
+  assert.equal(host.edits.length, 1);
+  assert.equal(host.edits[0].messageId, 100);
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: ' second' } }));
+  await sleep(1100);
+  assert.equal(host.sends.length, 1, 'failure must not clear messageId and send a second placeholder');
+  assert.ok(host.edits.length >= 2);
+  assert.ok(host.edits.every((edit) => edit.messageId === 100), 'every retry targets the same message');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+});
+
+test('a failed edit is retried on the same message after backoff (#15)', async () => {
+  const { host, ctx } = await setup();
+  let failures = 1;
+  host.editMessage = async (chatId, messageId, text, options) => {
+    host.edits.push({ chatId, messageId, text, options });
+    if (failures > 0) {
+      failures -= 1;
+      return false;
+    }
+    return true;
+  };
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'retry me' } }));
+  await sleep(1100);
+  assert.equal(host.edits.length, 1, 'first edit failed');
+  await sleep(1700);
+  assert.equal(host.edits.length, 2, 'backoff retried the same frame');
+  assert.deepEqual(host.edits.map((edit) => edit.messageId), [100, 100]);
+  assert.match(host.edits[1].text, /retry me/);
+  assert.equal(host.sends.length, 1, 'no second placeholder was created');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
+});
+
+test('a failed placeholder sends one fallback and never spawns more placeholders (#15)', async () => {
+  const { host, ctx } = await setup();
+  host.send = async (chatId, text, options) => {
+    host.sends.push({ chatId, text, options });
+    return undefined;
+  };
+  ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  await sleep(20);
+  assert.equal(host.sends.length, 2, 'placeholder attempt + one fallback notice');
+  ctx.emit('agent-1', ev('assistant/chunk', { chunk: { type: 'text-delta', index: 0, text: 'more stream' } }));
+  await sleep(1100);
+  assert.equal(host.sends.length, 2, 'later chunks must not create placeholder after placeholder');
+  ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
+  await sleep(20);
 });

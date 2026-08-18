@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diffTodos, listTodos, pendingTodoCount, renderTodos, todoIcon, todoPriority } from '../dist/harness/adapters/todos.js';
+import { diffTodos, listTodos, normalizeTodos, pendingTodoCount, renderTodos, todoIcon, todoPriority } from '../dist/harness/adapters/todos.js';
 
 const todo = (content, status = 'pending') => ({ content, status });
 
@@ -46,4 +46,44 @@ test('renderTodos keeps the card one readable line per todo', () => {
   const text = renderTodos([todo('a', 'completed'), todo('b')]);
   assert.match(text, /✅ a .* \[completed\]/);
   assert.match(text, /b .* \[pending\]/);
+});
+
+test('listTodos caches the scanned end and only walks newly appended events', () => {
+  const events = [
+    { type: 'user/message', data: {} },
+    { type: 'todo/write', data: { todos: [todo('cached item', 'pending')] } },
+  ];
+  const agent = { session: { events } };
+  const ctx = { agents: { get: () => agent } };
+  assert.deepEqual(listTodos(ctx, 'a'), [todo('cached item', 'pending')]);
+  events.push({ type: 'todo/write', data: { todos: [todo('new item', 'in_progress')] } });
+  assert.deepEqual(listTodos(ctx, 'a'), [todo('new item', 'in_progress')]);
+});
+
+test('listTodos caches an empty scan and still notices a later first write', () => {
+  const events = [{ type: 'user/message', data: {} }];
+  const agent = { session: { events } };
+  const ctx = { agents: { get: () => agent } };
+  assert.deepEqual(listTodos(ctx, 'a'), []);
+  events.push({ type: 'todo/write', data: { todos: [todo('first write', 'completed')] } });
+  assert.deepEqual(listTodos(ctx, 'a'), [todo('first write', 'completed')]);
+});
+
+test('listTodos rescans when the event array shrank', () => {
+  const events = [
+    { type: 'todo/write', data: { todos: [todo('first', 'completed')] } },
+    { type: 'todo/write', data: { todos: [todo('second', 'pending')] } },
+  ];
+  const agent = { session: { events } };
+  const ctx = { agents: { get: () => agent } };
+  assert.deepEqual(listTodos(ctx, 'a'), [todo('second', 'pending')]);
+  events.pop();
+  assert.deepEqual(listTodos(ctx, 'a'), [todo('first', 'completed')]);
+});
+
+test('normalizeTodos coerces malformed entries into display-safe views', () => {
+  assert.deepEqual(normalizeTodos([
+    { content: 'ok', status: 'completed' },
+    { content: 42, status: 'nope' },
+  ]), [todo('ok', 'completed'), todo('42', 'pending')]);
 });

@@ -30,7 +30,18 @@ const MAX_LINES = 8;
 const REASONING_MAX_CHARS = 120;
 const REASONING_KEEP_CHARS = 600;
 const TOOL_DETAIL_CHARS = 90;
-const EDIT_THROTTLE_MS = 120;
+/**
+ * Streaming edits are throttled to one per second per chat. Telegram allows
+ * ~1 edit/s on a chat; 120ms let fast chunk streams pile N edits onto one
+ * message and trigger 429 (issue #15).
+ */
+const EDIT_THROTTLE_MS = 1000;
+/** After a failed edit, retry the SAME message with exponential backoff
+ * instead of clearing `messageId` and spawning another "…" placeholder. */
+const EDIT_RETRY_BASE_MS = 1500;
+const EDIT_RETRY_MAX_MS = 30_000;
+/** Only abandon a message after this many consecutive edit failures. */
+const MAX_EDIT_FAILURES = 5;
 const NO_REPLY_REMINDER = "\u231B The turn ended without a telegram_reply \u2014 use the telegram_reply tool or reply yourself.";
 /** openclaw progress-draft-status-text: strip <think>-style tags. */
 const THINKING_TAG_RE =
@@ -140,9 +151,22 @@ interface Draft {
   startedAt: number;
   dirty: boolean;
   timer?: ReturnType<typeof setTimeout>;
+  /** Last HTML confirmed on Telegram (or at least accepted as the current
+   * message content). Identical re-renders are skipped (#15). */
+  lastHtml?: string;
+  /** Backoff timer that re-attempts the last failed edit on the SAME message. */
+  retryTimer?: ReturnType<typeof setTimeout>;
+  /** Consecutive edit failures on the current message. */
+  editFails: number;
+  /** Edits attempted / succeeded for this turn (receipt hit-rate line). */
+  editAttempts: number;
+  editSucceeded: number;
   sending?: Promise<number | undefined>;
   /** One fallback notice per turn when streaming delivery fails (#12). */
   fallbackSent?: boolean;
+  /** After a placeholder send failed we stop trying for this turn — the
+   * fallback notice already told the user; retrying here only re-spams. */
+  placeholderFailed?: boolean;
   /** Per-turn token meter folds (same vocabulary as the web status strip). */
   uncachedInputTokens: number;
   outputTokens: number;
@@ -273,6 +297,8 @@ function buildSummary(draft: Draft, sessionStats?: StatusStats): string {
     toolCalls: draft.toolCalls,
     tokens: draft,
     sessionStats,
+    editAttempts: draft.editAttempts,
+    editSucceeded: draft.editSucceeded,
   });
 }
 
@@ -332,18 +358,6 @@ export function apply(ctx: Context, _config?: unknown): void {
     answers.clear();
   });
 
-  const flush = (chatId: number, draft: Draft, title: string): void => {
-    if (!draft.dirty || draft.messageId === undefined) return;
-    draft.dirty = false;
-    const text = render(draft, title);
-    void safeWrap("openclaw-edit", () => host.editMessage(chatId, draft.messageId!, text, { parse_mode: "HTML" })).then((edited) => {
-      if (edited !== true) {
-        console.error("[dsh-telegram] openclaw-edit FAILED", `chatId=${chatId} messageId=${draft.messageId}`);
-        draft.messageId = undefined;
-      }
-    });
-  };
-
   /** Goal-aware draft title (issue #7): goal turns show the objective and
    * step count; ordinary turns keep the openclaw working header. */
   const titleFor = (chatId: number, draft: Draft): string => {
@@ -351,8 +365,79 @@ export function apply(ctx: Context, _config?: unknown): void {
     return goal === undefined ? "\u2699\uFE0F Working\u2026" : `\u{1F4CA} ${goal.objective.slice(0, 60)} \u00B7 step ${draft.step}`;
   };
 
+  const clearTimers = (draft: Draft): void => {
+    if (draft.timer !== undefined) {
+      clearTimeout(draft.timer);
+      draft.timer = undefined;
+    }
+    if (draft.retryTimer !== undefined) {
+      clearTimeout(draft.retryTimer);
+      draft.retryTimer = undefined;
+    }
+  };
+
+  const flush = (chatId: number, draft: Draft, title: string, force = false): void => {
+    // A turn boundary or hot teardown may have replaced this draft while a
+    // timer was still armed; stale drafts must never edit anything.
+    if (chats.get(chatId) !== draft) return;
+    if (draft.messageId === undefined) return;
+    if (!draft.dirty && !force) return;
+    draft.dirty = false;
+    const text = render(draft, title);
+    // Diff check (#15): Telegram rejects "message is not modified" edits.
+    // The forced retry path re-attempts after a failed edit, so it bypasses
+    // the diff — `lastHtml` is only updated once an edit is confirmed.
+    if (!force && text === draft.lastHtml) return;
+    const messageId = draft.messageId;
+    draft.editAttempts += 1;
+    void safeWrap("openclaw-edit", () => host.editMessage(chatId, messageId, text, { parse_mode: "HTML" })).then((edited) => {
+      // A turn boundary or hot teardown may have replaced this draft while
+      // the edit was in flight; never mutate or retry a stale draft.
+      if (chats.get(chatId) !== draft) return;
+      if (edited === true) {
+        draft.lastHtml = text;
+        draft.editFails = 0;
+        draft.editSucceeded += 1;
+        if (draft.retryTimer !== undefined) {
+          clearTimeout(draft.retryTimer);
+          draft.retryTimer = undefined;
+        }
+        return;
+      }
+      console.error("[dsh-telegram] openclaw-edit FAILED", `chatId=${chatId} messageId=${messageId} editFails=${draft.editFails + 1}`);
+      draft.editFails += 1;
+      if (draft.editFails > MAX_EDIT_FAILURES) {
+        // The message is gone beyond recovery (deleted, or permanently
+        // rejected). One fresh placeholder may replace it; the throttle and
+        // failure cap keep that from becoming another storm.
+        console.error("[dsh-telegram] openclaw-edit abandoned", `chatId=${chatId} messageId=${messageId}`);
+        draft.messageId = undefined;
+        draft.lastHtml = undefined;
+        draft.editFails = 0;
+        ensureMessage(chatId, draft);
+        return;
+      }
+      // 429/network errors were already retried by the transport queue; if it
+      // still failed, keep the SAME messageId and retry with backoff instead
+      // of clearing it and sending a new "…" placeholder on the next chunk.
+      if (draft.retryTimer === undefined) {
+        const delay = Math.min(EDIT_RETRY_MAX_MS, EDIT_RETRY_BASE_MS * 2 ** (draft.editFails - 1));
+        draft.retryTimer = setTimeout(() => {
+          draft.retryTimer = undefined;
+          if (draft.messageId !== undefined) flush(chatId, draft, titleFor(chatId, draft), true);
+        }, delay);
+      }
+    });
+  };
+
   const schedule = (chatId: number, draft: Draft): void => {
     draft.dirty = true;
+    // Fresh content supersedes the retry of an older frame: one throttle
+    // timer fires the latest state instead of racing the backoff timer.
+    if (draft.retryTimer !== undefined) {
+      clearTimeout(draft.retryTimer);
+      draft.retryTimer = undefined;
+    }
     if (draft.timer !== undefined) return;
     draft.timer = setTimeout(() => {
       draft.timer = undefined;
@@ -361,20 +446,30 @@ export function apply(ctx: Context, _config?: unknown): void {
   };
 
   const ensureMessage = (chatId: number, draft: Draft): void => {
-    if (draft.messageId !== undefined || draft.sending !== undefined) return;
-    const pending = host.send(chatId, "\u2026", { parse_mode: "HTML" });
+    if (draft.messageId !== undefined || draft.sending !== undefined || draft.placeholderFailed === true) return;
+    // Issue #15: the placeholder is the full card title, never a lone "…".
+    const text = titleFor(chatId, draft);
+    const pending = host.send(chatId, text, { parse_mode: "HTML" });
     draft.sending = pending;
     void safeWrap("openclaw-placeholder", () =>
       pending.then((id) => {
-        if (id !== undefined) draft.messageId = id;
+        if (chats.get(chatId) === draft && id !== undefined) {
+          draft.messageId = id;
+          draft.lastHtml = text;
+        }
         return id !== undefined;
       }),
     ).then((sent) => {
-      if (sent !== true && draft.fallbackSent !== true) {
-        draft.fallbackSent = true;
-        void safeWrap("openclaw-progress-fallback", () =>
-          host.send(chatId, "\u26A0\uFE0F Agent is running, but live progress cannot be delivered right now \u2014 check /status or /history.", { parse_mode: "HTML" }),
-        );
+      if (sent !== true && chats.get(chatId) === draft) {
+        if (draft.fallbackSent !== true) {
+          draft.fallbackSent = true;
+          void safeWrap("openclaw-progress-fallback", () =>
+            host.send(chatId, "\u26A0\uFE0F Agent is running, but live progress cannot be delivered right now \u2014 check /status or /history.", { parse_mode: "HTML" }),
+          );
+        }
+        // Do not retry the placeholder for the rest of this turn: the next
+        // chunk would otherwise spawn message after message (#15).
+        draft.placeholderFailed = true;
       }
     }).finally(() => {
       draft.sending = undefined;
@@ -398,9 +493,8 @@ export function apply(ctx: Context, _config?: unknown): void {
       // Drop only this chat's stale draft; another chat's live draft stays.
       // A previous draft's throttled edit must not fire into the new turn.
       const previous = chats.get(chatId);
-      if (previous?.timer !== undefined) {
-        clearTimeout(previous.timer);
-        previous.timer = undefined;
+      if (previous !== undefined) {
+        clearTimers(previous);
         previous.dirty = false;
       }
       chats.delete(chatId);
@@ -413,6 +507,9 @@ export function apply(ctx: Context, _config?: unknown): void {
         step: 0,
         startedAt: Date.now(),
         dirty: false,
+        editFails: 0,
+        editAttempts: 0,
+        editSucceeded: 0,
         uncachedInputTokens: 0,
         outputTokens: 0,
         cacheReadTokens: 0,
@@ -431,10 +528,7 @@ export function apply(ctx: Context, _config?: unknown): void {
     if (type === "turn/end") {
       const draft = chats.get(chatId);
       if (draft !== undefined) {
-        if (draft.timer !== undefined) {
-          clearTimeout(draft.timer);
-          draft.timer = undefined;
-        }
+        clearTimers(draft);
         commitReasoning(draft);
         const sessionStats = host.statusStats() as StatusStats | undefined;
         const hasContent = draft.reasoningSteps > 0 || draft.toolCalls > 0;

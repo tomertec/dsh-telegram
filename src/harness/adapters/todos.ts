@@ -22,6 +22,23 @@ interface EventLike {
   data?: { todos?: readonly TodoView[] };
 }
 
+/** Normalize the durable whole-list payload into stable TodoView objects. */
+export function normalizeTodos(todos: readonly TodoView[]): TodoView[] {
+  return todos.map((todo) => ({
+    content: typeof todo.content === "string" ? todo.content : String(todo.content ?? ""),
+    status: todo.status === "completed" || todo.status === "in_progress" ? todo.status : "pending",
+  }));
+}
+
+/**
+ * Incremental cache for `listTodos` (issue #14): session event lists are
+ * append-only and can reach thousands of entries, so the common case must not
+ * re-scan the whole array for every bar sync / 5-second card refresh. The
+ * first call scans once and records the scanned end index; later calls only
+ * inspect newly appended events.
+ */
+const todoListCache = new WeakMap<object, { scannedEnd: number; todos: TodoView[] }>();
+
 /** Latest whole-list snapshot for one live agent (last write wins). */
 export function listTodos(ctx: Context, agentId: string): TodoView[] {
   const agent = ctx.agents?.get(agentId as never) as unknown as
@@ -29,15 +46,34 @@ export function listTodos(ctx: Context, agentId: string): TodoView[] {
     | undefined;
   const events = agent?.session?.events;
   if (!events) return [];
-  for (let index = events.length - 1; index >= 0; index -= 1) {
+  const end = events.length - 1;
+  const cached = todoListCache.get(agent as object);
+  if (cached !== undefined && cached.scannedEnd === end) return cached.todos;
+
+  if (cached !== undefined && cached.scannedEnd < end) {
+    // Only the newly appended tail can contain a newer todo/write event.
+    for (let index = end; index > cached.scannedEnd; index -= 1) {
+      const event = events[index];
+      if (event?.type === "todo/write" && Array.isArray(event.data?.todos)) {
+        const todos = normalizeTodos(event.data.todos);
+        todoListCache.set(agent as object, { scannedEnd: end, todos });
+        return todos;
+      }
+    }
+    return cached.todos;
+  }
+
+  // First scan, or the events array shrank (compaction/reset): walk the
+  // whole array once and cache the result, including the empty result.
+  for (let index = end; index >= 0; index -= 1) {
     const event = events[index];
     if (event?.type === "todo/write" && Array.isArray(event.data?.todos)) {
-      return event.data.todos.map((todo) => ({
-        content: typeof todo.content === "string" ? todo.content : String(todo.content ?? ""),
-        status: todo.status === "completed" || todo.status === "in_progress" ? todo.status : "pending",
-      }));
+      const todos = normalizeTodos(event.data.todos);
+      todoListCache.set(agent as object, { scannedEnd: end, todos });
+      return todos;
     }
   }
+  todoListCache.set(agent as object, { scannedEnd: end, todos: [] });
   return [];
 }
 

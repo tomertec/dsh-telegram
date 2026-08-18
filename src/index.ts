@@ -70,8 +70,9 @@ import { ensureOpencodeGoResponsesRoute, normalizeOpencodeGoModel, opencodeGoMod
 import { saveDocumentAttachment, transcribeVoice } from "./harness/adapters/media.js";
 import { resetStatusStats, statusSnapshot } from "./harness/adapters/status.js";
 import { CompactionWatcher, contextUsageOf } from "./harness/adapters/compaction-watch.js";
-import { diffTodos, listTodos, pendingTodoCount, renderTodos, type TodoView } from "./harness/adapters/todos.js";
+import { diffTodos, listTodos, normalizeTodos, pendingTodoCount, type TodoView } from "./harness/adapters/todos.js";
 import { GoalProgressFeed, type ProgressSnapshot } from "./telegram/goal-progress.js";
+import { renderTodosCard } from "./telegram/todos-card.js";
 import { Ephemeral } from "./telegram/ephemeral.js";
 import { plain, truncate } from "./telegram/html.js";
 import {
@@ -187,6 +188,9 @@ const HOST_EVENT_NAMES = ["session/created", "session/disposed", "agent/error", 
 
 /** Latest durable todo snapshot per chat (todo/write is whole-list). */
 const todoSnapshots = new Map<number, TodoView[]>();
+/** Per-chat 5-second refresh loops for the live Todos card (issue #14). */
+const TODO_CARD_REFRESH_MS = 5000;
+const todoCardTimers = new Map<number, ReturnType<typeof setInterval>>();
 /** Goal progress feed; constructed once the transport exists (control ops). */
 let goalProgress: GoalProgressFeed | undefined;
 /** Context-pressure compaction watcher (issue #8). */
@@ -241,6 +245,8 @@ function teardownMount(): void {
   pendingStartAfterAllow.clear();
   for (const timer of typingLoops.values()) clearInterval(timer);
   typingLoops.clear();
+  for (const timer of todoCardTimers.values()) clearInterval(timer);
+  todoCardTimers.clear();
   for (const timer of state.barTimers.values()) clearTimeout(timer);
   state.barTimers.clear();
   state.lastSessionsProject.clear();
@@ -274,6 +280,10 @@ function ejectChat(chatId: number): void {
   state.bridge?.bindAgent(chatId, undefined);
   state.chats.delete(chatId);
   stopTyping(chatId);
+  const todoTimer = todoCardTimers.get(chatId);
+  if (todoTimer !== undefined) clearInterval(todoTimer);
+  todoCardTimers.delete(chatId);
+  activeCardRenderers.delete(chatId);
   state.barCounts.delete(chatId);
   state.barTodoCounts.delete(chatId);
   const timer = state.barTimers.get(chatId);
@@ -1208,18 +1218,57 @@ async function openWorkspaceCreatePicker(chatId: number, path: string, offset = 
   ));
 }
 
-async function openTodosCard(chatId: number): Promise<void> {
+/** Refresh the open Todos card in place through the UI control lane. */
+async function refreshTodosCard(chatId: number): Promise<void> {
+  const t = requireTransport();
   const agent = currentAgent(chatId);
   const todos = agent === undefined ? [] : listTodos(requireCtx(), agent.id);
-  const pending = pendingTodoCount(todos);
-  const lines = [
-    `\u{1F4CB} Todos \u00B7 ${pending} pending \u00B7 ${todos.length} total`,
-    "",
-    ...(todos.length === 0 ? ["(no todos yet)"] : renderTodos(todos).split("\n")),
-    "",
-    agent === undefined ? "No live agent \u2014 todos are session-scoped." : "The agent updates this list via todo_write; the card refreshes automatically.",
-  ];
-  await openCard(chatId, lines.join("\n"), buildBackKeyboard(), () => openTodosCard(chatId));
+  await ephemeral.replace(chatId, uiOps(t), renderTodosCard(todos, agent !== undefined), {
+    parse_mode: "HTML",
+    reply_markup: buildBackKeyboard(),
+  });
+}
+
+/** Stop the per-chat Todos auto-refresh loop (reopen, card switch, teardown). */
+function stopTodoCardRefresh(chatId: number): void {
+  const timer = todoCardTimers.get(chatId);
+  if (timer === undefined) return;
+  clearInterval(timer);
+  todoCardTimers.delete(chatId);
+}
+
+/** Start the 5s auto-refresh. The loop checks that the SAME renderer is still
+ * the active card; Back/Close/any other card replaces it and stops the loop
+ * on the next tick, so a stale timer can never write over another card. */
+function startTodoCardRefresh(chatId: number, refresh: () => Promise<void>): void {
+  stopTodoCardRefresh(chatId);
+  const timer = setInterval(() => {
+    if (activeCardRenderers.get(chatId) !== refresh) {
+      stopTodoCardRefresh(chatId);
+      return;
+    }
+    void safeWrap(`todos-refresh(${chatId})`, () => refresh(), log);
+  }, TODO_CARD_REFRESH_MS);
+  todoCardTimers.set(chatId, timer);
+}
+
+async function openTodosCard(chatId: number): Promise<void> {
+  const t0 = Date.now();
+  log(`openTodosCard start chatId=${chatId}`);
+  stopTodoCardRefresh(chatId);
+  try {
+    const agent = currentAgent(chatId);
+    const todos = agent === undefined ? [] : listTodos(requireCtx(), agent.id);
+    log(`openTodosCard agent=${agent?.id ?? "none"} todos=${todos.length} took=${Date.now() - t0}ms`);
+    const refresh = () => refreshTodosCard(chatId);
+    await openCard(chatId, renderTodosCard(todos, agent !== undefined), buildBackKeyboard(), refresh);
+    // Start only after the card actually opened; `openCard` has already
+    // registered `refresh` as the active renderer for this chat.
+    startTodoCardRefresh(chatId, refresh);
+  } catch (err) {
+    log("openTodosCard FAILED", err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
+    await uiSend(chatId, `\u274C Todo list \u8F7D\u5165\u5931\u8D25\uff1A${plain(truncate(err instanceof Error ? err.message : String(err), 120))}`, { parse_mode: "HTML" });
+  }
 }
 
 async function openGoalsCard(chatId: number): Promise<void> {
@@ -2212,12 +2261,14 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   const payload = match[2] !== undefined ? decodeCallbackValue(match[2]) : undefined;
   switch (action) {
     case "close":
+      stopTodoCardRefresh(chatId);
       activeCardRenderers.delete(chatId);
       await ephemeral.clear(chatId, uiOps(requireTransport()));
       return;
     case "back":
       // Return to the menu page the user was last on (Back from page 2 must
       // not yank them back to page 1).
+      stopTodoCardRefresh(chatId);
       return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
     case "more":
       return openMenuAt(chatId, (menuPageIndex.get(chatId) ?? 0) + 1);
@@ -3481,17 +3532,21 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
     compactionWatcher.attach();
 
     // Incremental todo cards + live bar count (issue #10). The first durable
-    // snapshot only primes the baseline.
+    // snapshot only primes the baseline. turn/end also refreshes the open
+    // Todo card immediately instead of waiting for the next 5s tick (#14).
     refreshEventDisposers.push(
       (ctx.on.bind(ctx) as (name: string, listener: (...args: unknown[]) => void) => () => void)("session/event", (...args: unknown[]) => {
         const session = args[0] as { id: unknown };
         const event = args[1] as { type?: string; data?: { todos?: readonly TodoView[] } };
         const chatId = state.bridge?.chatIdForAgent(String(session.id));
-        if (chatId === undefined || event.type !== "todo/write" || !Array.isArray(event.data?.todos)) return;
-        const next = event.data.todos.map((todo) => ({
-          content: typeof todo.content === "string" ? todo.content : String(todo.content ?? ""),
-          status: todo.status === "completed" || todo.status === "in_progress" ? todo.status : "pending",
-        }));
+        if (chatId === undefined) return;
+        if (event.type === "turn/end") {
+          refreshActiveCards();
+          scheduleBarSync(chatId, 0);
+          return;
+        }
+        if (event.type !== "todo/write" || !Array.isArray(event.data?.todos)) return;
+        const next = normalizeTodos(event.data.todos);
         const hadBaseline = todoSnapshots.has(chatId);
         const previous = todoSnapshots.get(chatId) ?? [];
         todoSnapshots.set(chatId, next);

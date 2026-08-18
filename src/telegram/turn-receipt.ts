@@ -22,6 +22,9 @@ export interface TurnReceipt {
   sessionStats?: StatusStats;
   /** Goal title prefix: `✅ <objective>` instead of the generic header. */
   goalObjective?: string;
+  /** openclaw draft edit telemetry (issue #15): Telegram edit hit rate. */
+  editAttempts?: number;
+  editSucceeded?: number;
 }
 
 function formatTokensCompact(tokens: number): string {
@@ -59,6 +62,12 @@ export function renderTurnReceipt(receipt: TurnReceipt): string {
       tokens.push(`\u{1F4BE} \u547D\u4E2D ${hit}%`);
     }
     lines.push(tokens.join(" \u00B7 "));
+  }
+
+  const editAttempts = receipt.editAttempts ?? 0;
+  if (editAttempts > 0) {
+    const editRate = Math.round(((receipt.editSucceeded ?? 0) / editAttempts) * 100);
+    lines.push(`\u{1F3AF} OpenClaw: ${editAttempts} \u6B21 editText \u00B7 \u547D\u4E2D ${editRate}%`);
   }
 
   const performance = statsSegments.slice(1).filter((segment) => segment !== undefined).join(" \u00B7 ");

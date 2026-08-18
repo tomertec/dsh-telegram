@@ -224,3 +224,12 @@
 - issue 12 的 typing/openclaw 静默：startTyping 空 catch、openclaw send/edit 空 catch。safeWrap 统一带标签记录，openclaw turn/start 立即发占位并在流失败时发用户可见 fallback。
 - issue 8 无 `context_tokens` 服务：用权威持久事件（request/context + assistant/chunk usage）计算压力；ask 每轮压力段只问一次，compaction/summary+end 驱动完成通知。
 - issue 9 的媒体组：getUpdates 批次内按 media_group_id 聚合为一次 onPhotos，Bridge.deliverImages 生成单条多图 user message；语音/文档落盘而非伪造 web attachment。
+
+## Round 27 发现与修复（GitHub issues #14/#15）
+
+- #14 的「m: 分支不存在」假设不成立：`CALLBACK_RE` 会匹配 `m:todos` 并进入 case "todos"；真正的卡死链路是旧版本占位风暴占满 content lane（Round 26 已把 openCard 移到 control lane）。
+- `openCard` 已经走 `uiOps()`（control lane），所以 #14 的 Fix B 实际上已完成；本轮补的是实时刷新与生命周期。
+- #15 的 4 个 bug 都真实存在：无 diff、120ms 节流、失败清 messageId、单字符占位。修复后测试从 220ms sleep 全部改为 1100ms（新节流语义）。
+- Telegram 400/429 错误经 SendQueue 处理后到 openclaw 只剩 boolean，无法区分「消息没了」和「限流耗尽」；因此用「保留同消息 + 指数退避 + 5 次上限」策略兜底。
+- Todo 卡 auto-refresh 若文本未变，Ephemeral 的 lastText 去重会跳过 edit；集成测试必须推入新的 `todo/write` 事件才能断言刷新真实发生。
+- 新测试文件：`test/todos-card.test.mjs`、`test/todos-card-refresh.integration.test.mjs`；集成测试用 patched TelegramTransport 验证 5s tick 与 Close 停表。

@@ -23,6 +23,7 @@
 - [x] Round 16：Subagent activity/时区/信号对齐 web（208/208）
 - [x] Round 17：Release gate（npm publish dry-run + v0.3.0-rc.1 tag）
 - [x] Round 18：独立审计修复 + 实机冒烟（211/211）
+- [x] Round 27：修复 GitHub issues #14/#15（Todos 卡实时性 + openclaw placeholder storm）
 - [ ] Round 19+：Telegram 客户端完整 §25 checklist + 最终发布决策（见下）
 - [ ] 最终：`npm run check` + `npm pack --dry-run` + 提交
 
@@ -131,3 +132,26 @@
 
 - 独立审计 7 项修复（replied 时序、跨 chat fallback、stop/start 竞态、分片 quote、listener 异常、carrier 清理、selection 泄漏）。
 - 实机冒烟：真实 bot 长轮询 + openclaw + bar sync 投递成功。
+
+## Round 27 任务计划（GitHub issues #14/#15）
+
+### 目标
+修复 open 的 GitHub issues：
+- #14: Todos 按钮在 agent 执行中必须立即可点、每 5s 自动刷新、完成态可见。
+- #15: openclaw 编辑风暴（400/429 后不断发「…」占位消息）。
+
+### 步骤
+1. [x] #15 openclaw：编辑 diff 检查、节流 120→1000ms、失败保留 messageId + 指数退避重试、5 次失败才换占位、占位文案用完整标题。
+2. [x] #15 openclaw：turn-receipt 增加 editText 命中率行（issue 中的用户附加需求）。
+3. [x] #14 listTodos 增量缓存（WeakMap<agent, {scannedEnd, todos}>），避免每次 O(n) 反扫。
+4. [x] #14 openTodosCard：入口/耗时日志、失败兜底；卡片每 5s 自动 refresh、关卡/换卡清理定时器、全完成显示完成态；turn/end 立即刷新活跃卡片。
+5. [x] 补回归测试（openclaw 失败不换占位、diff 抑制 400、重试退避、todos 缓存、todos 卡渲染/生命周期）。
+6. [x] `npm run check` 全绿：**317/317 pass**。
+7. [x] 更新 CHANGELOG（README 无配置变化）。
+8. [ ] 用户确认后 commit/push 并关闭 issues #14/#15。
+
+### 关键约束
+- 卡片/占位继续走 control lane（openCard 已用 uiOps）。
+- 不引入新的 per-chat 编辑风暴：编辑仍经 SendQueue 全局限速 + 429 retry_after。
+- 保持现有 305 测试全绿，新增测试不依赖真实 Telegram。
+
