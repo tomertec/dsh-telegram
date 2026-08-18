@@ -7,3 +7,6 @@ coverage/
 
 # Session workspace metadata
 .jspace/
+
+# Local plugin bundles checked out alongside this repo
+dsh-plugins/
