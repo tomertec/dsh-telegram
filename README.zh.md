@@ -51,14 +51,17 @@ DeepSeek Harness 的 Web UI 是 agent 控制面的金标准：会话、模型、
 ## 特性
 
 - **🔀 多聊天隔离** — 每 chat 独立绑定 agent；每 chat FIFO 入站路由覆盖 create→bind→deliver 全链路（快速连发首条消息绝不会建两个会话）；未绑定 chat 的展示也 fail-closed
-- **⚡ 响应式 UI 通道** — bar 按钮与内联回调（收起 Bar、Goal、菜单导航、问题卡）立即执行，不排队等慢速 agent turn；跨通道的会话创建仍按 chat 串行
+- **⚡ 响应式 UI 通道** — bar 按钮与内联回调走独立 `control:<chat>` 发送队列：卡片/命令回执/Bar 载体绝不排在 assistant 流式消息后面；Goal/Todos/Queue/收起 点击即响应
 - **🎛️ 按钮式交互** — 常驻键盘栏（`☰ Menu · ✨ New · 🧩 Models` …）加临时内联卡片：会话、工作区、目标、技能、子代理、预设、设置、凭据、模型、宿主、任务、插件与动态清单
 - **🗂️ 按项目分组的会话** — Sessions 卡按工作区项目分类，标题同步 web（`session/title` → cwd 基名 → id），默认展示运行中项目的会话，`🔀 项目` 一键切换，每行直接 `归档`/`删除`，归档后隐藏并在页头显示 `🗄N`
 - **💡 Bar 开关** — Menu 第一页提供 `💡 收起 Bar / 显示 Bar`，也支持 `/bar [on|off]`；bar 上 `🗜️ 收起` 点击后不再留任何载体消息
-- **🎯 目标入口** — Goal 在 Menu 第一页（与 Capabilities 同行），卡片只做显示/编辑/暂停，`/goal <objective> [maxRounds]` 启动目标
+- **🎯 目标入口** — Goal 在 Menu 第一页（与 Capabilities 同行），卡片只做显示/编辑/暂停/`🗑 Clear goal`（或 `/goalclear`），不影响正在运行的会话；`/goal <objective> [maxRounds]` 启动目标；长目标 turn 有 step/tool 进度卡，完成后收为 openclaw 风格收据（含缓存命中率）
 - **🗂️ 工作区可直接使用** — Workspace 详情卡提供 `✅ 使用此项目`（设为当前项目）与 `🧭 会话`（打开该项目会话）
 - **🌐 Web 对齐** — 适配器按 Web ApiProxy RPC 契约实现：`session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`、subagent、host、workspace、agentPreset、skills、goals、settings、credentials、llm providers/discovery
-- **⚡ Openclaw 风格实时流** — 思考/工具进度/打字机回复分层渲染，回合总结含思考/工具/耗时、输入/输出 token、缓存命中率，以及会话轮数/步数、LLM/工具耗时与 token 速度（`outbound.liveFeed` 热切换）
+- **⚡ Openclaw 风格实时流** — 思考/工具进度/打字机回复分层渲染（goal turn 标题带目标与 step），回合总结含思考/工具/耗时、输入/输出 token、缓存命中率，以及会话轮数/步数、LLM/工具耗时与 token 速度（`outbound.liveFeed` 热切换）
+- **📈 上下文压力压缩（#8）** — 最新请求 token 达到模型窗口 `compact.threshold`（默认 0.8）时按 `compact.policy`（`ask|auto|never`）弹审批卡或自动压缩，成功后推送摘要与压缩量
+- **📎 媒体扩展（#9）** — 多图媒体组作为单个 user turn 全部投喂；语音经 OpenAI 兼容端点转写（`media.transcribe.*`）；文档/视频落盘到会话 attachments 目录并注入读取提示
+- **📋 Todo 卡片（#10）** — `/todo` 与 bar 的 `📋 Todos · N` 实时剩余计数；`todo/write` 事件产生增量新增/进行中/完成卡片
 - **📝 HTML 感知长文拆分** — 超过 4096 字符时按换行/空格边界切分，绝不切在标签或实体内部，跨切分标签逐段配平
 - **♻️ 可靠发送队列** — 每 chat FIFO + 全局滑动窗口限速；只重试 429/5xx/网络/超时，永久 4xx 只试一次；长轮询重启安全且保留 offset
 - **🔁 热更新与热插拔** — `internal/update` 热应用白名单/规则/限速/长度/watch；teardown 逆序回收全部挂载效应，重复 apply 幂等
@@ -170,9 +173,9 @@ Telegram ⇄ grammY 长轮询 ⇄ 每 chat FIFO 路由
 
 **Telegram 侧**
 
-`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /bar [on|off] /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
+`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /todo /bar [on|off] /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
 
-另有 `/history [id] [limit]`、`/rename <title>`、`/fork [atSeq]`、`/use <id>`、`/archive <id>`、`/queue`、`/steer <text>`、`/cancel`、`/goal <objective> [maxRounds]`、`/goalcreate <objective> [maxRounds]`、`/goaledit <text>`、`/workspacecreate <path> [title]`、`/workspacepin <workspaceId> <sessionId> [before]`、`/pluginenable|plugindisable <name>`、`/settingsdescribe [ns]`、`/settingsupdate <ns> <json>`、`/settingsreplace <ns> <json>`、`/settingsmutate <ns> <json-ops>`、`/credential|credentialset|credentialunset <REF> [value]`、`/ls [path]`、`/mkdir <path>`、`/openpath [path]`、`/pickdir [path]`、`/discover <settingsNs> [baseURL]`、`/subagentprompt <text>`、`/sessionlog [id]`、`/commands`、`/capabilities`。
+另有 `/history [id] [limit]`、`/rename <title>`、`/fork [atSeq]`、`/use <id>`、`/archive <id>`、`/queue`、`/todo`、`/steer <text>`、`/cancel`、`/goal <objective> [maxRounds]`、`/goalcreate <objective> [maxRounds]`、`/goaledit <text>`、`/goalclear`、`/workspacecreate <path> [title]`、`/workspacepin <workspaceId> <sessionId> [before]`、`/pluginenable|plugindisable <name>`、`/settingsdescribe [ns]`、`/settingsupdate <ns> <json>`、`/settingsreplace <ns> <json>`、`/settingsmutate <ns> <json-ops>`、`/credential|credentialset|credentialunset <REF> [value]`、`/ls [path]`、`/mkdir <path>`、`/openpath [path]`、`/pickdir [path]`、`/discover <settingsNs> [baseURL]`、`/subagentprompt <text>`、`/sessionlog [id]`、`/commands`、`/capabilities`。
 
 ## 工作原理
 

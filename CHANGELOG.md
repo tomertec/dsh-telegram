@@ -3,6 +3,17 @@
 All notable changes to dsh-telegram are documented here.
 Versioning follows the npm package version in `package.json`.
 
+## Unreleased
+
+Issues #7-#13.
+
+- **Responsive bar/control lane**: TelegramTransport now runs every UI surface (cards, menus, status panels, command acks, bar swaps, typing, approval edits) on a dedicated `control:<chat>` queue, so bar buttons — Goal, Todos, Queue, 收起 — react immediately even while assistant streaming occupies the content queue.
+- **Goal UX**: Goal card gains `🗑 Clear goal` and `/goalclear`; Goal stays display-only on tap and never touches the running session. Progress cards for autonomous `/goal` turns update per step/tool and collapse at turn end into the openclaw-style receipt (cache hit rate included).
+- **#8 auto compaction**: new `compact.threshold` (default 0.8), `compact.policy` (`ask|auto|never`), and `compact.cooldownMs`. Pressure watcher reads durable request usage/context, asks once with an inline approval card, and announces successful compactions with the summary and shadowed token count.
+- **#9 media**: multi-photo media groups become ONE inbound turn; voice messages transcribe via an OpenAI-compatible endpoint (`media.transcribe.*`, `OPENAI_API_KEY`); documents/videos download into `~/.dsh/sessions/<id>/attachments` and are injected as a read prompt.
+- **#10 todos**: `/todo` command + `📋 Todos` bar/menu entry with live remaining count; `todo/write` events produce incremental add/start/complete cards.
+- **#11/#12/#13 observability**: `safeWrap` labels every fire-and-forget failure; transport logs every send/edit/delete/chat-action success and failure; critical command acks fall back to one raw Bot API send; dispatch failures notify the chat; openclaw sends an immediate placeholder on turn/start and a visible fallback when streaming cannot deliver.
+
 ## 0.3.9
 
 - Approval cards gain `🟢 Allow for this goal`: one tap auto-allows every later approval under the same goal.

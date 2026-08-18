@@ -22,6 +22,8 @@ export const STATUS_BTN = "\u{1F4CA} Status";
 export const QUEUE_BTN = "\u231B Queue";
 export const QUEUE_BTN_PREFIX = `${QUEUE_BTN} \u00B7 `;
 export const GOAL_BTN = "\u{1F3AF} Goal";
+export const TODO_BTN = "\u{1F4CB} Todos";
+export const TODO_BTN_PREFIX = `${TODO_BTN} \u00B7 `;
 /** Kept so clients with stale bars still dispatch; no longer rendered on the bar. */
 export const PRESETS_BTN = "\u{1F3AD} Presets";
 export const THINKING_BTN = "\u{1F9E0} Thinking";
@@ -51,6 +53,7 @@ export const BAR_LABELS: readonly string[] = [
   STATUS_BTN,
   QUEUE_BTN,
   GOAL_BTN,
+  TODO_BTN,
   REASONING_BTN,
   THINKING_BTN,
   PRESETS_BTN,
@@ -65,6 +68,11 @@ export const BAR_LABELS: readonly string[] = [
 /** Queue button label with a live count embedded (`⌛ Queue · 3`). */
 export function queueBarLabel(queueCount: number): string {
   return `${QUEUE_BTN_PREFIX}${queueCount}`;
+}
+
+/** Todo button label with the remaining count embedded (`📋 Todos · 3`). */
+export function todoBarLabel(todoCount: number): string {
+  return `${TODO_BTN_PREFIX}${todoCount}`;
 }
 
 const callbackBytes = (value: string): number => new TextEncoder().encode(value).length;
@@ -93,9 +101,9 @@ export function decodeCallbackValue(value: string): string {
 
 /** Always-visible bar grouped by frequency:
  * `Menu · New · Models` / `Sessions · Plugins · Status` /
- * `Goal · Queue · Compact` / `Stop · 收起`. `🧠 Reasoning` stays reachable from
- * the menu P1. Pass `queueCount` to embed the live inbox count. */
-export function buildBarKeyboard(queueCount?: number): Keyboard {
+ * `Goal · Queue · Compact` / `Todos · Abort · 收起`. `🧠 Reasoning` stays
+ * reachable from the menu P1. Pass `queueCount`/`todoCount` for live counts. */
+export function buildBarKeyboard(queueCount?: number, todoCount?: number): Keyboard {
   return new Keyboard()
     .text(MENU_BTN)
     .text(NEW_BTN)
@@ -109,6 +117,7 @@ export function buildBarKeyboard(queueCount?: number): Keyboard {
     .text(queueCount === undefined ? QUEUE_BTN : queueBarLabel(queueCount))
     .text(COMPACT_BTN)
     .row()
+    .text(todoCount === undefined ? TODO_BTN : todoBarLabel(todoCount))
     .text(ABORT_BTN)
     .text(COLLAPSE_BTN)
     .resized()
@@ -129,6 +138,7 @@ export function normalizeBarLabel(text: string): string | undefined {
   if (text === STOP_BTN) return ABORT_BTN;
   if ((BAR_LABELS as readonly string[]).includes(text)) return text;
   if (text.startsWith(QUEUE_BTN_PREFIX)) return QUEUE_BTN;
+  if (text.startsWith(TODO_BTN_PREFIX)) return TODO_BTN;
   return undefined;
 }
 
@@ -511,7 +521,7 @@ export function buildThinkingKeyboard(options: readonly { id: string; name: stri
 
 export function buildGoalsKeyboard(
   hasGoal: boolean,
-  callbacks: { edit?: string; toggle?: string },
+  callbacks: { edit?: string; toggle?: string; clear?: string },
   paused = false,
 ): InlineKeyboard {
   const kb = new InlineKeyboard();
@@ -522,6 +532,7 @@ export function buildGoalsKeyboard(
       actions.push({ text: paused ? "\u25B6 Resume" : "\u23F8 Pause", callback_data: callbacks.toggle });
     }
     if (actions.length > 0) kb.row(...actions.slice(0, 2));
+    if (callbacks.clear !== undefined) kb.row().text("\u{1F5D1} Clear goal", callbacks.clear);
   }
   // No goal = display-only: starting a goal is the `/goal <objective>` command.
   return kb.row().text("\u2190 Back", "m:back");

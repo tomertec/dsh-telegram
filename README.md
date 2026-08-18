@@ -51,11 +51,15 @@ DeepSeek Harness's web UI is the gold standard for controlling an agent: session
 ## Features
 
 - **🔀 Multi-chat isolation** — per-chat agent bindings, per-chat FIFO inbound router that spans the whole create→bind→deliver path (two rapid first messages can never create two sessions), unbound chats fail closed for display too
+- **⚡ Responsive UI lane** — bar buttons and inline callbacks now also ride a dedicated `control:<chat>` outbound queue, so Goal/Todos/Queue/收起 react instantly while assistant streaming occupies the content queue
+- **📈 Context-pressure compaction (#8)** — `compact.threshold`/`compact.policy`/`compact.cooldownMs` trigger an approval card or auto compaction near the model window, then announce the summary and shadowed tokens
+- **📎 Media (#9)** — multi-photo media groups become one user turn, voice transcribes via `media.transcribe.*`, documents/videos land in the session attachments directory
+- **📋 Todos (#10)** — `/todo`, a `📋 Todos · N` bar entry, and incremental todo cards from durable `todo/write` events
 - **⚡ Responsive UI lane** — bar buttons and inline callbacks (collapse bar, Goal, menu navigation, question cards) run immediately instead of waiting behind a slow inbound turn; session creation stays serialized per chat across lanes
 - **🎛️ Button-first UX** — persistent reply bar (`☰ Menu · ✨ New · 🧩 Models` …) plus ephemeral inline cards for sessions, workspaces, goals, skills, subagents, presets, settings, credentials, llm/models, host, jobs, plugins and dynamic inventory
 - **🗂️ Project-grouped sessions** — the Sessions card mirrors the web display-title chain (`session/title` → cwd basename → id), groups sessions by workspace project, opens the running project first, offers a `🔀 项目` switcher, per-row Chinese `归档`/`删除` actions, and hides archived sessions with a live `🗄N` count
 - **💡 Bar control** — Menu page 1 has a `💡 收起 Bar / 显示 Bar` switch and `/bar [on|off]` toggles the keyboard; the bar's `🗜️ 收起` hides it without leaving any carrier message behind
-- **🎯 Goal in menu** — Goal lives in the first menu page (shares a row with Capabilities); the card is display/edit/pause only, and `/goal <objective> [maxRounds]` starts a goal
+- **🎯 Goal in menu** — Goal lives in the first menu page (shares a row with Capabilities); the card is display/edit/pause/`🗑 Clear goal` (or `/goalclear`) only and never disturbs the running session; `/goal <objective> [maxRounds]` starts a goal, long goal turns get a step/tool progress card that collapses into the openclaw receipt with the cache hit rate
 - **🗂️ Workspaces are usable** — a Workspace detail card has `✅ 使用此项目` (set active project for new sessions) and `🧭 会话` (open its sessions)
 - **🌐 Web-parity surface** — adapters mirror the web ApiProxy RPC contract: `session.list/search/create/history/models/selectModel/prompt/attachment/updateQueue/cancel`, subagents, host, workspace, agent presets, skills, goals, settings, credentials, llm providers/discovery
 - **⚡ Openclaw-style live feed** — separate thinking lane, live tool progress, typewriter answer draft, and a turn summary with thoughts/tool calls/duration, input/output tokens, cache hit rate, plus session turns/steps, LLM/tool time and token speeds (`outbound.liveFeed`, hot-toggleable)
@@ -170,9 +174,9 @@ Telegram ⇄ grammY long polling ⇄ per-chat FIFO router
 
 **Telegram side**
 
-`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /bar [on|off] /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
+`/start /menu /new /compact /stop /models /sessions /workspaces /project [path] /goals /todo /bar [on|off] /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /help /menucheck /answer /config get|set <path> [json]`
 
-Plus `/history [id] [limit]`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/steer <text>`, `/cancel`, `/goal <objective> [maxRounds]`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/workspacecreate <path> [title]`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/settingsreplace <ns> <json>`, `/settingsmutate <ns> <json-ops>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/openpath [path]`, `/pickdir [path]`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
+Plus `/history [id] [limit]`, `/rename <title>`, `/fork [atSeq]`, `/use <id>`, `/archive <id>`, `/queue`, `/todo`, `/steer <text>`, `/cancel`, `/goal <objective> [maxRounds]`, `/goalcreate <objective> [maxRounds]`, `/goaledit <text>`, `/goalclear`, `/workspacecreate <path> [title]`, `/workspacepin <workspaceId> <sessionId> [before]`, `/pluginenable|plugindisable <name>`, `/settingsdescribe [ns]`, `/settingsupdate <ns> <json>`, `/settingsreplace <ns> <json>`, `/settingsmutate <ns> <json-ops>`, `/credential|credentialset|credentialunset <REF> [value]`, `/ls [path]`, `/mkdir <path>`, `/openpath [path]`, `/pickdir [path]`, `/discover <settingsNs> [baseURL]`, `/subagentprompt <text>`, `/sessionlog [id]`, `/commands`, `/capabilities`.
 
 ## How It Works
 

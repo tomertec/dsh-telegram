@@ -8,6 +8,9 @@ export type InboundMode = 'auto-handle' | 'queue-only' | 'muted';
 /** Which channel owns `ask_user_question` when more than one UI is mounted. */
 export type QuestionOwnership = 'telegram' | 'web' | 'auto';
 
+/** Context-pressure compaction policy (issue #8). */
+export type CompactionPolicy = 'auto' | 'ask' | 'never';
+
 /** Ordered inbound rule; the first matching rule wins, otherwise `inbound.defaultMode`. */
 export interface InboundRule {
   /** Optional numeric Telegram chat id. */
@@ -45,6 +48,15 @@ export interface TelegramConfig {
      * streams (web-style thinking + tool-call visibility). */
     liveFeed?: boolean;
   };
+  /** Context-pressure auto compaction: when the latest request uses more than
+   * `threshold` of the model context window, the bridge compacts automatically
+   * (`auto`), asks first (`ask`), or stays quiet (`never`). */
+  compact: {
+    threshold: number;
+    policy: CompactionPolicy;
+    /** Minimum interval between two triggers for one session, ms. */
+    cooldownMs: number;
+  };
   /** Active project folder (Codex-style); new sessions are created under it. */
   workspace: {
     /** Absolute folder picked via /project; absent = boot directory. */
@@ -64,6 +76,15 @@ export interface TelegramConfig {
    * prepended to inbound messages. Absent = medium. */
   reasoning?: {
     effort?: "minimal" | "low" | "medium" | "high" | "max";
+  };
+  /** Telegram media handling (issue #9): OpenAI-compatible voice
+   * transcription. Missing apiKey = transcription disabled with guidance. */
+  media?: {
+    transcribe?: {
+      baseUrl?: string;
+      apiKey?: string;
+      model?: string;
+    };
   };
   /** Interactive question/approval channel routing. */
   interactive?: {
@@ -94,10 +115,16 @@ export const DEFAULT_CONFIG: TelegramConfig = Object.freeze({
     maxMessageLength: 4096,
     liveFeed: true,
   },
+  compact: {
+    threshold: 0.8,
+    policy: 'ask' as CompactionPolicy,
+    cooldownMs: 5 * 60_000,
+  },
   workspace: {},
   mode: { name: '' },
   reasoning: { effort: 'medium' as const },
   model: {},
+  media: { transcribe: { model: 'whisper-1' } },
   interactive: { userQuestions: 'telegram' as const },
 });
 
@@ -240,6 +267,26 @@ export function normalizeConfig(raw: unknown): TelegramConfig {
     }
   }
 
+  const compact = raw['compact'];
+  if (compact !== undefined) {
+    if (!isRecord(compact)) throw new ConfigError('compact', 'must be an object');
+    const threshold = readNumber(compact, 'threshold', 'compact');
+    if (threshold !== undefined) {
+      if (!(threshold > 0 && threshold < 1)) throw new ConfigError('compact.threshold', 'must be between 0 and 1 (exclusive)');
+      base.compact.threshold = threshold;
+    }
+    const policy = readString(compact, 'policy', 'compact');
+    if (policy !== undefined) {
+      if (!['auto', 'ask', 'never'].includes(policy)) throw new ConfigError('compact.policy', 'must be one of auto | ask | never');
+      base.compact.policy = policy as CompactionPolicy;
+    }
+    const cooldownMs = readNumber(compact, 'cooldownMs', 'compact');
+    if (cooldownMs !== undefined) {
+      if (!Number.isInteger(cooldownMs) || cooldownMs < 0) throw new ConfigError('compact.cooldownMs', 'must be a non-negative integer (ms)');
+      base.compact.cooldownMs = cooldownMs;
+    }
+  }
+
   const workspace = raw['workspace'];
   if (workspace !== undefined) {
     if (!isRecord(workspace)) throw new ConfigError('workspace', 'must be an object');
@@ -277,6 +324,25 @@ export function normalizeConfig(raw: unknown): TelegramConfig {
     };
   }
 
+  const media = raw['media'];
+  if (media !== undefined) {
+    if (!isRecord(media)) throw new ConfigError('media', 'must be an object');
+    const transcribe = media['transcribe'];
+    if (transcribe !== undefined) {
+      if (!isRecord(transcribe)) throw new ConfigError('media.transcribe', 'must be an object');
+      const baseUrl = readString(transcribe, 'baseUrl', 'media.transcribe');
+      const apiKey = readString(transcribe, 'apiKey', 'media.transcribe');
+      const model = readString(transcribe, 'model', 'media.transcribe');
+      base.media = {
+        transcribe: {
+          ...(baseUrl === undefined ? {} : { baseUrl }),
+          ...(apiKey === undefined ? {} : { apiKey }),
+          ...(model === undefined ? {} : { model }),
+        },
+      };
+    }
+  }
+
   const interactive = raw['interactive'];
   if (interactive !== undefined) {
     if (!isRecord(interactive)) throw new ConfigError('interactive', 'must be an object');
@@ -301,10 +367,12 @@ function cloneDefault(): TelegramConfig {
       rules: [...DEFAULT_CONFIG.inbound.rules],
     },
     outbound: { ...DEFAULT_CONFIG.outbound },
+    compact: { ...DEFAULT_CONFIG.compact },
     workspace: { ...DEFAULT_CONFIG.workspace },
     mode: { ...DEFAULT_CONFIG.mode },
     reasoning: { ...DEFAULT_CONFIG.reasoning },
     model: { ...DEFAULT_CONFIG.model },
+    media: { transcribe: { ...DEFAULT_CONFIG.media!.transcribe } },
     interactive: { ...DEFAULT_CONFIG.interactive },
   };
 }
@@ -363,8 +431,8 @@ export function writeConfig(workspaceRoot: string, config: TelegramConfig): stri
   return file;
 }
 
-export type ConfigSection = "security" | "watch" | "inbound" | "outbound" | "mode" | "workspace" | "reasoning" | "model" | "interactive";
-const CONFIG_SECTIONS: readonly ConfigSection[] = ["security", "watch", "inbound", "outbound", "mode", "workspace", "reasoning", "model", "interactive"];
+export type ConfigSection = "security" | "watch" | "inbound" | "outbound" | "compact" | "mode" | "workspace" | "reasoning" | "model" | "media" | "interactive";
+const CONFIG_SECTIONS: readonly ConfigSection[] = ["security", "watch", "inbound", "outbound", "compact", "mode", "workspace", "reasoning", "model", "media", "interactive"];
 
 /**
  * Overlay a raw loader-provided config (from `ctx.config` / `internal/update`)

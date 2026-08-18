@@ -241,3 +241,66 @@ test('stop requested while start is awaiting the old generation wins', async () 
   assert.equal(calls.length, 1, 'the start in flight must not launch a second generation');
   assert.equal(transport.polling, false);
 });
+
+test('UI control lane is a separate SendQueue key from assistant content (#11/#12)', async () => {
+  const keys = [];
+  const transport = new TelegramTransport({
+    token: '123456:lanes',
+    log: () => {},
+    queue: {
+      push: async (key, fn) => {
+        keys.push(key);
+        return fn();
+      },
+      pendingCount: () => 0,
+      configure: () => {},
+    },
+  });
+  transport.api.sendMessage = async () => ({ message_id: 1 });
+  transport.api.editMessageText = async () => ({ message_id: 1 });
+  transport.api.deleteMessage = async () => true;
+  await transport.sendText(7, 'assistant content');
+  await transport.sendTextControl(7, 'ui card');
+  await transport.editTextControl(7, 5, 'card');
+  await transport.deleteMessageControl(7, 5);
+  assert.deepEqual(keys, [7, 'control:7', 'control:7', 'control:7']);
+});
+
+test('sendText logs ok and FAILED attempts instead of swallowing (#11)', async () => {
+  const logs = [];
+  const transport = new TelegramTransport({
+    token: '123456:logs',
+    log: (message) => logs.push(message),
+    queue: { push: async (_key, fn) => fn(), pendingCount: () => 0, configure: () => {} },
+  });
+  transport.api.sendMessage = async () => ({ message_id: 11 });
+  await transport.sendText(7, 'ok');
+  assert.ok(logs.some((line) => line.includes('sendText ok') && line.includes('reply_markup=null')));
+
+  const err = new Error('bad request');
+  err.error_code = 400;
+  transport.api.sendMessage = async () => {
+    throw err;
+  };
+  await assert.rejects(transport.sendText(7, 'bad'), /bad request/);
+  assert.ok(logs.some((line) => line.startsWith('sendText FAILED') && line.includes('text.len=3')));
+});
+
+test('handlePhotos batches media groups through onPhotos', async () => {
+  const transport = makeTransport();
+  const batches = [];
+  transport.setHandlers({
+    onText: () => {},
+    onPhoto: () => {},
+    onCallback: () => {},
+    onPhotos: (chatId, photos, groupId) => batches.push({ chatId, photos, groupId }),
+  });
+  await transport.handlePhotos(9, [
+    { fileId: 'a', caption: '', messageId: 1 },
+    { fileId: 'b', caption: 'two', messageId: 2 },
+  ], 'grp');
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].chatId, 9);
+  assert.equal(batches[0].groupId, 'grp');
+  assert.deepEqual(batches[0].photos.map((p) => p.fileId), ['a', 'b']);
+});

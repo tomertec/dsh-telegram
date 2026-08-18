@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAR_LABELS, ABORT_BTN, buildBackKeyboard, buildBarKeyboard, buildCollapsedBarKeyboard, buildConfirmKeyboard, buildGoalsKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSessionProjectsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, buildWorkspaceKeyboard, buildWorkspaceDetailKeyboard, CALLBACK_RE, COLLAPSE_BTN, decodeCallbackValue, encodedCallback, GOAL_BTN, inputPromptKeyboard, LEGACY_COLLAPSE_BTN, LEGACY_RETURN_BTN, normalizeBarLabel, PRESETS_BTN, queueBarLabel, RETURN_BTN, STOP_BTN } from '../dist/telegram/keyboard.js';
+import { BAR_LABELS, ABORT_BTN, buildBackKeyboard, buildBarKeyboard, buildCollapsedBarKeyboard, buildConfirmKeyboard, buildGoalsKeyboard, buildHistoryKeyboard, buildMenuPage, buildModelsKeyboard, buildPagingKeyboard, buildProjectKeyboard, buildQueueKeyboard, buildSearchKeyboard, buildSessionsKeyboard, buildSessionProjectsKeyboard, buildSettingsKeyboard, buildSubagentDetailKeyboard, buildThinkingKeyboard, buildModelDetailKeyboard, buildWorkspaceKeyboard, buildWorkspaceDetailKeyboard, CALLBACK_RE, COLLAPSE_BTN, decodeCallbackValue, encodedCallback, GOAL_BTN, inputPromptKeyboard, LEGACY_COLLAPSE_BTN, LEGACY_RETURN_BTN, normalizeBarLabel, PRESETS_BTN, queueBarLabel, RETURN_BTN, STOP_BTN, TODO_BTN, todoBarLabel } from '../dist/telegram/keyboard.js';
 
-test('reply bar layout is Menu/New/Models, Sessions/Plugins/Status, Goal/Queue/Compact, Abort/收起', () => {
+test('reply bar layout is Menu/New/Models, Sessions/Plugins/Status, Goal/Queue/Compact, Todos/Abort/收起', () => {
   const bar = buildBarKeyboard();
   assert.equal(bar.keyboard.length, 4);
   assert.deepEqual(
@@ -11,7 +11,7 @@ test('reply bar layout is Menu/New/Models, Sessions/Plugins/Status, Goal/Queue/C
       ['\u2630 Menu', '\u2728 New', '\u{1F9E9} Models'],
       ['\u{1F9ED} Sessions', '\u{1F50C} Plugins', '\u{1F4CA} Status'],
       ['\u{1F3AF} Goal', '\u231B Queue', '\u{1F9F9} Compact'],
-      ['\u23F9 Abort', '\u{1F5DC}\uFE0F \u6536\u8D77'],
+      ['\u{1F4CB} Todos', '\u23F9 Abort', '\u{1F5DC}\uFE0F \u6536\u8D77'],
     ],
   );
   assert.equal(bar.is_persistent, true);
@@ -59,13 +59,15 @@ test('BAR_LABELS keeps the old New label for stale persisted bars', () => {
   assert.ok(BAR_LABELS.includes('\u2728 New'));
 });
 
-test('bar embeds the live queue count without changing the rest of the layout', () => {
-  const bar = buildBarKeyboard(7);
+test('bar embeds the live queue and todo counts without changing the layout', () => {
+  const bar = buildBarKeyboard(7, 3);
   assert.equal(bar.keyboard.length, 4);
-  assert.deepEqual(bar.keyboard.map((row) => row.length), [3, 3, 3, 2]);
+  assert.deepEqual(bar.keyboard.map((row) => row.length), [3, 3, 3, 3]);
   const texts = bar.keyboard.flat().map((b) => b.text);
   assert.ok(texts.includes(queueBarLabel(7)));
+  assert.ok(texts.includes(todoBarLabel(3)));
   assert.ok(texts.includes('\u231B Queue') === false);
+  assert.ok(texts.includes('\u{1F4CB} Todos') === false);
   for (const label of ['\u2630 Menu', '\u2728 New', '\u{1F9E9} Models', '\u{1F9ED} Sessions', '\u{1F50C} Plugins', '\u{1F4CA} Status', '\u{1F3AF} Goal', '\u{1F9F9} Compact', '\u23F9 Abort', '\u{1F5DC}\uFE0F \u6536\u8D77']) {
     assert.ok(texts.includes(label), `bar missing ${label}`);
   }

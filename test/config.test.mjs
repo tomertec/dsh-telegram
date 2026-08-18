@@ -173,3 +173,27 @@ test('overlayConfig applies the interactive section live', () => {
   assert.ok(changed.includes('interactive'));
   assert.equal(config.interactive.userQuestions, 'web');
 });
+
+test('normalizeConfig validates and overlays the compact section (#8)', () => {
+  const config = normalizeConfig({ compact: { threshold: 0.85, policy: 'auto', cooldownMs: 120000 } });
+  assert.equal(config.compact.threshold, 0.85);
+  assert.equal(config.compact.policy, 'auto');
+  assert.equal(config.compact.cooldownMs, 120000);
+  assert.throws(() => normalizeConfig({ compact: { threshold: 1 } }), /compact\.threshold/);
+  assert.throws(() => normalizeConfig({ compact: { policy: 'sometimes' } }), /compact\.policy/);
+  assert.throws(() => normalizeConfig({ compact: { cooldownMs: -1 } }), /compact\.cooldownMs/);
+  const live = overlayConfig(normalizeConfig(undefined), { compact: { policy: 'never' } });
+  assert.ok(live.changed.includes('compact'));
+  assert.equal(live.config.compact.policy, 'never');
+  assert.equal(live.config.compact.threshold, 0.8, 'partial overlay keeps the rest of the section');
+});
+
+test('normalizeConfig validates the media transcription section (#9)', () => {
+  const config = normalizeConfig({ media: { transcribe: { baseUrl: 'https://x/v1', apiKey: 'k', model: 'whisper-1' } } });
+  assert.equal(config.media.transcribe.baseUrl, 'https://x/v1');
+  assert.equal(config.media.transcribe.apiKey, 'k');
+  assert.throws(() => normalizeConfig({ media: { transcribe: 'nope' } }), /media\.transcribe/);
+  const live = overlayConfig(normalizeConfig(undefined), { media: { transcribe: { model: 'whisper-2' } } });
+  assert.ok(live.changed.includes('media'));
+  assert.equal(live.config.media.transcribe.model, 'whisper-2');
+});

@@ -259,13 +259,15 @@ test('tool result with isError marks the line failed', async () => {
   assert.ok(streamEdit.text.includes('\u2713') === false);
 });
 
-test('empty turn sends nothing', async () => {
+test('empty turn sends an immediate placeholder, then cleans it up (#12)', async () => {
   const { host, ctx } = await setup();
   ctx.emit('agent-1', ev('turn/start', { turn: 1 }));
+  assert.equal(host.sends.length, 1, 'feedback starts with turn/start, not the first stream event');
   ctx.emit('agent-1', ev('turn/end', { turn: 1, reason: { kind: 'completed' } }));
   await sleep(20);
-  assert.equal(host.sends.length, 0);
+  assert.equal(host.sends.length, 1);
   assert.equal(host.edits.length, 0);
+  assert.equal(host.deletes.length, 1);
 });
 
 test('telegram_reply tool detail shows the message body, not the JSON wrapper', async () => {

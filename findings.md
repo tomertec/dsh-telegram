@@ -215,3 +215,12 @@
 - 修复：`displayTitleFor` 三级回退；冷 cwd 透传；running 用 `agent.status`；
   `groupSessionsByProject/orderProjectGroups/sortProjectSessions` 分组与排序；
   Sessions 卡默认活跃项目 + `🔀 项目` 切换 + `🌐 全部会话` 兼容；详情返回原项目。
+
+## Round 26 发现与修复（issues 7-13）
+
+- bar 收起慢的真凶不只是 router 通道：卡片/Bar 载体的发送仍走 assistant 同一条 per-chat SendQueue，流式编辑会把 UI 排到后面。修复为 transport 增加 `control:<chat>` 独立 lane，openCard/statusPanel/command ack/bar/typing 全走控制 lane；收起改 fire-and-forget。
+- Goal 删除能力缺失：goals adapter 已有 clearGoal 但 UI 从未接线；补齐卡片按钮 + `/goalclear` + 确认卡，并明确 Goal 点击只读、绝不触碰 session。
+- issue 11 的“kind=ok 但无消息”：sendText 只在 reply_markup 存在时打日志、失败路径缺 log 与用户兜底。修复为所有 send/edit/delete/chatAction 成功/失败全日志，关键命令 ack 失败后 raw Bot API 兜底一次，dispatch 异常向用户发可见失败。
+- issue 12 的 typing/openclaw 静默：startTyping 空 catch、openclaw send/edit 空 catch。safeWrap 统一带标签记录，openclaw turn/start 立即发占位并在流失败时发用户可见 fallback。
+- issue 8 无 `context_tokens` 服务：用权威持久事件（request/context + assistant/chunk usage）计算压力；ask 每轮压力段只问一次，compaction/summary+end 驱动完成通知。
+- issue 9 的媒体组：getUpdates 批次内按 media_group_id 聚合为一次 onPhotos，Bridge.deliverImages 生成单条多图 user message；语音/文档落盘而非伪造 web attachment。

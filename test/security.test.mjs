@@ -45,8 +45,14 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
     sent.push({ chatId, text, options });
     return sent.length;
   };
+  TelegramTransport.prototype.sendTextControl = TelegramTransport.prototype.sendText;
+  TelegramTransport.prototype.sendTextFallback = TelegramTransport.prototype.sendText;
   TelegramTransport.prototype.editText = async () => true;
+  TelegramTransport.prototype.editTextControl = async () => true;
   TelegramTransport.prototype.deleteMessage = async () => {};
+  TelegramTransport.prototype.deleteMessageControl = async () => {};
+  TelegramTransport.prototype.sendChatAction = async () => {};
+  TelegramTransport.prototype.sendChatActionControl = async () => {};
   TelegramTransport.prototype.setCommands = async () => {};
   TelegramTransport.prototype.setMenuButtonToCommands = async () => {};
 

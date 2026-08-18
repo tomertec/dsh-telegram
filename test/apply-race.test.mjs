@@ -64,8 +64,14 @@ test('two rapid first messages create exactly one session (handler awaits create
     return originalSetHandlers.call(this, value);
   };
   TelegramTransport.prototype.sendText = async () => 71;
+  TelegramTransport.prototype.sendTextControl = async () => 71;
+  TelegramTransport.prototype.sendTextFallback = async () => 71;
   TelegramTransport.prototype.editText = async () => true;
+  TelegramTransport.prototype.editTextControl = async () => true;
   TelegramTransport.prototype.deleteMessage = async () => {};
+  TelegramTransport.prototype.deleteMessageControl = async () => {};
+  TelegramTransport.prototype.sendChatAction = async () => {};
+  TelegramTransport.prototype.sendChatActionControl = async () => {};
 
   try {
     mkdirSync(join(base, '.pi'));

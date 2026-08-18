@@ -63,6 +63,8 @@ export interface ExtensionHost {
   /** Mark a chat's inbound as answered (suppresses the core turn/end
    * reminder when a renderer plugin owns final delivery). */
   markInboundReplied(chatId?: number): void;
+  /** Current goal for a chat, if any (goal-aware streaming titles). */
+  goalForChat?(chatId: number): { objective: string } | undefined;
 }
 
 /** One card/reasoning domain mounted on the bridge. */

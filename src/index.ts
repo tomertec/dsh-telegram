@@ -48,7 +48,7 @@ import {
   releaseAllModelSelections,
 } from "./harness/adapters/sessions.js";
 import { listWorkspaces, createWorkspace, renameWorkspace, deleteWorkspace, insertWorkspaceBefore, insertSessionBefore, archiveSession } from "./harness/adapters/workspace.js";
-import { getGoal, createGoal, editGoal, pauseGoal, resumeGoal } from "./harness/adapters/goals.js";
+import { getGoal, createGoal, editGoal, pauseGoal, resumeGoal, clearGoal } from "./harness/adapters/goals.js";
 import { listFeedback, putFeedback, deleteFeedback } from "./harness/adapters/feedback.js";
 import { listSkills } from "./harness/adapters/skills.js";
 import { listSubagents, promptSubagent, interruptSubagent, subagentHistory } from "./harness/adapters/subagents.js";
@@ -67,7 +67,11 @@ import { listDynamicCordis } from "./harness/adapters/dynamicCordis.js";
 import { probeCapabilities, missingServices } from "./harness/adapters/capabilities.js";
 import { attachInteractive, type Interactive, questionIdAt } from "./harness/adapters/interactive.js";
 import { ensureOpencodeGoResponsesRoute, normalizeOpencodeGoModel, opencodeGoModelUsesResponses } from "./harness/adapters/opencodeGo.js";
+import { saveDocumentAttachment, transcribeVoice } from "./harness/adapters/media.js";
 import { resetStatusStats, statusSnapshot } from "./harness/adapters/status.js";
+import { CompactionWatcher, contextUsageOf } from "./harness/adapters/compaction-watch.js";
+import { diffTodos, listTodos, pendingTodoCount, renderTodos, type TodoView } from "./harness/adapters/todos.js";
+import { GoalProgressFeed, type ProgressSnapshot } from "./telegram/goal-progress.js";
 import { Ephemeral } from "./telegram/ephemeral.js";
 import { plain, truncate } from "./telegram/html.js";
 import {
@@ -80,6 +84,7 @@ import {
   buildPagingKeyboard,
   buildProjectKeyboard,
   queueBarLabel,
+  todoBarLabel,
   type MenuItem,
   buildSessionsKeyboard,
   buildSearchKeyboard,
@@ -119,11 +124,13 @@ import {
   REASONING_BTN,
   QUEUE_BTN,
   SESSIONS_BTN,
+  TODO_BTN,
   STATUS_BTN,
   ABORT_BTN,
   STOP_BTN,
 } from "./telegram/keyboard.js";
 import { SendQueue } from "./telegram/queue.js";
+import { safeWrap } from "./telegram/safe.js";
 import { TokenRegistry } from "./telegram/tokens.js";
 import { attachRouter } from "./telegram/router.js";
 import { StatusPanel } from "./telegram/status-panel.js";
@@ -148,6 +155,8 @@ interface State {
   chats: Set<number>;
   /** Last queue count embedded in a bar per chat (live-count sync). */
   barCounts: Map<number, number>;
+  /** Last todo count embedded in a bar per chat. */
+  barTodoCounts: Map<number, number>;
   /** Dedicated carrier message carrying the live bar, deletable on refresh. */
   barCarriers: Map<number, number>;
   /** Per-chat debounce timers for bar refreshes. */
@@ -176,6 +185,13 @@ const FORWARDED_EVENT_NAMES = [
 /** Underlying cordis events that the web projects into `events.host` frames. */
 const HOST_EVENT_NAMES = ["session/created", "session/disposed", "agent/error", "domain/changed"] as const;
 
+/** Latest durable todo snapshot per chat (todo/write is whole-list). */
+const todoSnapshots = new Map<number, TodoView[]>();
+/** Goal progress feed; constructed once the transport exists (control ops). */
+let goalProgress: GoalProgressFeed | undefined;
+/** Context-pressure compaction watcher (issue #8). */
+let compactionWatcher: CompactionWatcher | undefined;
+
 const state: State = {
   context: null,
   workspaceRoot: findWorkspaceRoot(process.cwd()) ?? process.cwd(),
@@ -187,6 +203,7 @@ const state: State = {
   watching: false,
   chats: new Set(),
   barCounts: new Map(),
+  barTodoCounts: new Map(),
   barCarriers: new Map(),
   barTimers: new Map(),
   lastSessionsProject: new Map(),
@@ -204,12 +221,12 @@ function teardownMount(): void {
   state.bridge?.detach();
   state.bridge = undefined;
   const teardownTransport = state.transport;
-  void state.transport?.stop().catch(() => {});
+  if (teardownTransport) void safeWrap("transport-stop", () => teardownTransport.stop(), log);
   state.transport = undefined;
   // Remove dedicated bar-carrier messages so a hot reload never leaves a
   // stale reply keyboard button behind.
   for (const [carrierChat, carrierId] of state.barCarriers) {
-    void teardownTransport?.deleteMessage(carrierChat, carrierId).catch(() => {});
+    if (teardownTransport) void safeWrap(`bar-carrier-cleanup(${carrierChat})`, () => teardownTransport.deleteMessageControl(carrierChat, carrierId), log);
   }
   state.watching = false;
   state.chats.clear();
@@ -229,15 +246,21 @@ function teardownMount(): void {
   state.lastSessionsProject.clear();
   state.barCollapsed.clear();
   state.barCounts.clear();
+  state.barTodoCounts.clear();
   state.barCarriers.clear();
   releaseAllModelSelections();
   releaseSavedAttachments();
   tokens.reset();
   statusSubagentCounts.clear();
   statusSubagentSync = undefined;
+  todoSnapshots.clear();
+  goalProgress?.detach();
+  goalProgress = undefined;
+  compactionWatcher?.detach();
+  compactionWatcher = undefined;
   activeCardRenderers.clear();
   menuPageIndex.clear();
-  void sessionLifecycle.dispose().catch(() => {});
+  void safeWrap("session-lifecycle-dispose", () => sessionLifecycle.dispose(), log);
   ephemeral.reset();
   statusPanel.reset();
   resetStatusStats();
@@ -252,6 +275,7 @@ function ejectChat(chatId: number): void {
   state.chats.delete(chatId);
   stopTyping(chatId);
   state.barCounts.delete(chatId);
+  state.barTodoCounts.delete(chatId);
   const timer = state.barTimers.get(chatId);
   if (timer !== undefined) clearTimeout(timer);
   state.barTimers.delete(chatId);
@@ -351,6 +375,7 @@ function buildExtensionHost(): ExtensionHost {
     },
     pendingInbound: (chatId) => state.bridge?.hasPendingInbound(chatId) ?? false,
     inboundMessageId: (chatId) => state.bridge?.inboundMessageIdValue(chatId),
+    goalForChat,
     markInboundReplied: (chatId) => {
       state.bridge?.markInboundReplied(chatId);
     },
@@ -362,7 +387,7 @@ function buildExtensionHost(): ExtensionHost {
 function refreshExtensionUi(): void {
   refreshAllPanels();
   for (const [chatId, page] of [...menuPageIndex]) {
-    void openMenuAt(chatId, page).catch(() => {});
+    void safeWrap(`menu-refresh(${chatId})`, () => openMenuAt(chatId, page), log);
   }
 }
 
@@ -409,6 +434,35 @@ function requireTransport(): TelegramTransport {
   return state.transport;
 }
 
+/** ChatOps adapter on the UI control lane: cards, menus and status panels
+ * never wait behind assistant streaming edits, so every bar button reacts
+ * immediately even while the agent is running. */
+function uiOps(t: TelegramTransport) {
+  return {
+    sendText: (chatId: number, text: string, options?: Record<string, unknown>) => t.sendTextControl(chatId, text, options as never),
+    editText: (chatId: number, messageId: number, text: string, options?: Record<string, unknown>) => t.editTextControl(chatId, messageId, text, options as never),
+    deleteMessage: (chatId: number, messageId: number) => t.deleteMessageControl(chatId, messageId),
+  };
+}
+
+/** Critical UI ack: control lane first, one raw Bot API attempt as fallback.
+ * Command results (including /goal) must always reach the user (#11). */
+async function uiSend(chatId: number, text: string, options: Parameters<TelegramTransport["sendText"]>[2] = {}): Promise<number | undefined> {
+  const t = requireTransport();
+  try {
+    return await t.sendTextControl(chatId, text, options);
+  } catch (err) {
+    log(`uiSend control lane FAILED chatId=${chatId} err=${err instanceof Error ? err.message : String(err)}`, err);
+    return t.sendTextFallback(chatId, text, options);
+  }
+}
+
+/** A dispatch handler that throws must still tell the user it failed (#13). */
+function notifyDispatchFailure(chatId: number, label: string, err: unknown): void {
+  log(`${label} failed`, err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
+  void uiSend(chatId, `\u274C ${label} failed \u2014 please retry.`, { parse_mode: "HTML" });
+}
+
 /** Per-chat typing refreshers: Telegram's "typing" action expires after ~5s,
  * so long agent turns re-assert it every 4s until turn/end stops it. A hard
  * cap clears a leaked loop when an agent is disposed without turn/end. */
@@ -419,9 +473,10 @@ function startTyping(chatId: number): void {
   stopTyping(chatId);
   const transport = state.transport;
   if (!transport) return;
-  void transport.sendChatAction(chatId, "typing").catch(() => {});
+  const fire = () => safeWrap(`typing(${chatId})`, () => transport.sendChatActionControl(chatId, "typing"), log);
+  void fire();
   const timer = setInterval(() => {
-    void transport.sendChatAction(chatId, "typing").catch(() => {});
+    void fire();
   }, 4000);
   typingLoops.set(chatId, timer);
   // Self-arming one-shot guard: even if the turn/end event is lost, the loop
@@ -483,7 +538,10 @@ function renderStatus(chatId?: number): string {
     `\u{1F9E9} Model: ${snapshot.provider ? `${plain(snapshot.provider)}/` : ""}${snapshot.model ? plain(snapshot.model) : "default"}`,
     `\u{1F916} Agent: ${snapshot.agentId ? plain(truncate(snapshot.agentId, 28)) : "none"} \u00B7 Subagents: ${subagents}`,
     "",
-    `\u{1F4CA} Queue: ${snapshot.queue} \u00B7 Sessions: ${snapshot.sessions}`,
+    `\u{1F4CA} Queue: ${snapshot.queue} \u00B7 \u{1F4CB} Todos: ${chatId === undefined ? "n/a" : currentTodoCount(chatId)} \u00B7 Sessions: ${snapshot.sessions}`,
+    ...(chatId !== undefined && progressFor(chatId) !== undefined
+      ? [`\u{1F3AF} Goal: ${plain(truncate(progressFor(chatId)!.objective, 40))} \u00B7 step ${progressFor(chatId)!.step} \u00B7 tools ${progressFor(chatId)!.tools}`]
+      : []),
     `\u{1F4CB} Background jobs running: ${runningJobs}`,
     `\u{1F4E1} Bot: ${state.watching ? "polling" : state.transport ? "standby" : "offline"} \u00B7 Pending: ${state.transport?.pending() ?? 0}`,
   ];
@@ -603,7 +661,7 @@ async function openCard(chatId: number, text: string, keyboard: unknown, refresh
   const t = requireTransport();
   if (refresh === undefined) activeCardRenderers.delete(chatId);
   else activeCardRenderers.set(chatId, refresh);
-  await ephemeral.replace(chatId, t, text, {
+  await ephemeral.replace(chatId, uiOps(t), text, {
     parse_mode: "HTML",
     reply_markup: keyboard,
   });
@@ -652,6 +710,7 @@ async function openMenuAt(chatId: number, page: number): Promise<void> {
       { label: "\u269B\uFE0F Dynamic", cb: "m:dynamic" },
       { label: "\u{1F4BB} Host", cb: "m:host" },
       // Goals and Capabilities share one half-width row, as requested.
+      { label: `\u{1F4CB} Todos \u00B7 ${currentTodoCount(chatId)}`, cb: "m:todos" },
       { label: "\u{1F3AF} Goals", cb: "m:goals" },
       { label: "\u{1F9EC} Capabilities", cb: "m:capabilities" },
     ],
@@ -890,7 +949,7 @@ async function openSessionDetailCard(chatId: number, sessionId: string): Promise
   const details = await listSessionDetails(ctx);
   const session = details.find((candidate) => candidate.id === sessionId);
   if (!session) {
-    await requireTransport().sendText(chatId, `\u274C Session ${plain(truncate(sessionId, 32))} not found.`, { parse_mode: "HTML" });
+    await uiSend(chatId, `\u274C Session ${plain(truncate(sessionId, 32))} not found.`, { parse_mode: "HTML" });
     return openSessionsCard(chatId, lastProjectKey(chatId));
   }
   const title = displayTitleFor(session.title, session.cwd, session.id);
@@ -946,7 +1005,16 @@ async function openQueueCard(chatId: number): Promise<void> {
   const agent = currentAgent(chatId);
   const snapshot = statusSnapshot(ctx, boundAgentId(chatId), false);
   const items = agent ? listQueue(ctx, agent.id) : [];
-  const lines = [`\u231B Queue`, "", `Agent inbox: ${snapshot.queue} \u00B7 Outbound sends pending: ${state.transport?.pending() ?? 0}`, ""];
+  const progress = progressFor(chatId);
+  const lines = [`\u231B Queue`, "", `Agent inbox: ${snapshot.queue} \u00B7 Outbound sends pending: ${state.transport?.pending() ?? 0}`];
+  if (progress !== undefined) {
+    const seconds = Math.max(1, Math.round(progress.elapsedMs / 1000));
+    const eta = progress.todosDone > 0 && progress.todosTotal > progress.todosDone
+      ? ` \u00B7 ETA ~${Math.max(1, Math.round((progress.elapsedMs / progress.todosDone) * (progress.todosTotal - progress.todosDone) / 1000))}s`
+      : "";
+    lines.push(`\u{1F3AF} ${plain(truncate(progress.objective, 40))} \u00B7 step ${progress.step} \u00B7 tools ${progress.tools}${progress.currentTool ? ` \u00B7 now: ${plain(truncate(progress.currentTool, 24))}` : ""} \u00B7 \u23F1\uFE0F ${seconds}s${eta}`);
+  }
+  lines.push("");
   items.slice(0, 12).forEach((item, index) => {
     const kind = item.target === "next-turn" ? "turn" : "step";
     const preview = item.text.trim().replace(/\s+/g, " ") || "(no text)";
@@ -1091,7 +1159,7 @@ async function applyProjectPath(chatId: number, raw: string): Promise<void> {
   const target = tilde === "" ? state.workspaceRoot : resolve(tilde.startsWith("/") ? tilde : joinPath(state.workspaceRoot, tilde));
   const path = target;
   if (!(await isDirectory(path))) {
-    await requireTransport().sendText(chatId, `\u274C Not a directory: ${plain(truncate(path, 60))}`, { parse_mode: "HTML" });
+    await uiSend(chatId, `\u274C Not a directory: ${plain(truncate(path, 60))}`, { parse_mode: "HTML" });
     return openProjectCard(chatId, path);
   }
   state.workspaceRoot = path;
@@ -1105,7 +1173,7 @@ async function applyProjectPath(chatId: number, raw: string): Promise<void> {
       await anyRegistry.create(path, basename(path) || path).catch((err) => log("project register failed", err));
     }
   }
-  await requireTransport().sendText(chatId, `\u{1F4C1} Project set: ${plain(path)}\n\u2728 New sessions will be created here.`, { parse_mode: "HTML" });
+  await uiSend(chatId, `\u{1F4C1} Project set: ${plain(path)}\n\u2728 New sessions will be created here.`, { parse_mode: "HTML" });
   return openMenuAt(chatId, 0);
 }
 
@@ -1116,7 +1184,7 @@ const WORKSPACE_PICK_PAGE_SIZE = 12;
 async function openWorkspaceCreatePicker(chatId: number, path: string, offset = 0): Promise<void> {
   const target = path || state.workspaceRoot;
   if (!(await isDirectory(target))) {
-    await requireTransport().sendText(chatId, `\u274C Not a directory: ${plain(truncate(target, 60))}`, { parse_mode: "HTML" });
+    await uiSend(chatId, `\u274C Not a directory: ${plain(truncate(target, 60))}`, { parse_mode: "HTML" });
     return openWorkspaceCreatePicker(chatId, parentOf(target));
   }
   const listing = await listDirectory(target);
@@ -1138,6 +1206,20 @@ async function openWorkspaceCreatePicker(chatId: number, path: string, offset = 
       close: "m:workspaces",
     },
   ));
+}
+
+async function openTodosCard(chatId: number): Promise<void> {
+  const agent = currentAgent(chatId);
+  const todos = agent === undefined ? [] : listTodos(requireCtx(), agent.id);
+  const pending = pendingTodoCount(todos);
+  const lines = [
+    `\u{1F4CB} Todos \u00B7 ${pending} pending \u00B7 ${todos.length} total`,
+    "",
+    ...(todos.length === 0 ? ["(no todos yet)"] : renderTodos(todos).split("\n")),
+    "",
+    agent === undefined ? "No live agent \u2014 todos are session-scoped." : "The agent updates this list via todo_write; the card refreshes automatically.",
+  ];
+  await openCard(chatId, lines.join("\n"), buildBackKeyboard(), () => openTodosCard(chatId));
 }
 
 async function openGoalsCard(chatId: number): Promise<void> {
@@ -1164,10 +1246,11 @@ async function openGoalsCard(chatId: number): Promise<void> {
     ...(hasGoal ? {
       edit: token({ ...goalPayload, op: "edit" }),
       toggle: token({ ...goalPayload, op: paused ? "resume" : "pause" }),
+      clear: token({ ...goalPayload, op: "clear" }),
     } : {}),
   };
   lines.push("", "Start: /goal &lt;objective&gt; [maxRounds]");
-  if (hasGoal) lines.push("Edit: /goaledit &lt;objective&gt; [maxRounds]");
+  if (hasGoal) lines.push("Edit: /goaledit &lt;objective&gt; [maxRounds] \u00B7 Clear: /goalclear");
   await openCard(chatId, lines.join("\n"), buildGoalsKeyboard(hasGoal, callbacks, paused));
 }
 
@@ -1524,7 +1607,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "ws-create-here": {
       const path = payload["path"] ?? state.workspaceRoot;
       const res = await createWorkspace(requireCtx(), path, basename(path) || undefined);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openWorkspacesCard(chatId);
     }
     case "host-open":
@@ -1532,7 +1615,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "host-mkdir-prompt": {
       const path = payload["path"] ?? state.workspaceRoot;
       pendingMkdir = { chatId, path };
-      await requireTransport().sendText(chatId, `\u{1F4C1} Reply with the new folder name under ${plain(truncate(path, 48))} (or /cancel):`, {
+      await uiSend(chatId, `\u{1F4C1} Reply with the new folder name under ${plain(truncate(path, 48))} (or /cancel):`, {
         parse_mode: "HTML",
         reply_markup: inputPromptKeyboard("New folder name\u2026"),
       });
@@ -1558,14 +1641,14 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
           writeConfig(state.configRoot, state.config);
         }
         log(`model-select (no agent) provider=${provider} model=${model} -> ${res.ok ? "ok" : res.text}${selected.provider === provider ? "" : ` (routed via ${selected.provider})`}`);
-        await requireTransport().sendText(chatId, res.ok ? `\u2728 ${plain(res.text)} \u00B7 model ${plain(selected.provider)}/${plain(selected.model)}` : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        await uiSend(chatId, res.ok ? `\u2728 ${plain(res.text)} \u00B7 model ${plain(selected.provider)}/${plain(selected.model)}` : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
         refreshAllPanels();
         scheduleBarSync(chatId, 0);
         return openModelsCard(chatId);
       }
       const res = await selectSessionModel(requireCtx(), agent.id, provider, model);
       log(`model-select agent=${agent.id} provider=${provider} model=${model} -> ${res.ok ? "ok" : res.text}`);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       refreshAllPanels();
       return openModelsCard(chatId);
     }
@@ -1581,7 +1664,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const effort = payload["effort"] ?? "";
       if (!agent || !isReasoningEffort(effort)) return openProviderModelsCard(chatId, provider);
       const res = await selectSessionModel(requireCtx(), agent.id, provider, model, effort);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       refreshAllPanels();
       return openProviderModelsCard(chatId, provider);
     }
@@ -1589,19 +1672,41 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       if (!agent) return openGoalsCard(chatId);
       const op = payload["op"] ?? "";
       const goal = getGoal(requireCtx(), agent.id);
-      const t = requireTransport();
       if (!goal) {
-        await t.sendText(chatId, "\u274C No current goal \u2014 start one with /goal &lt;objective&gt; [maxRounds].", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C No current goal \u2014 start one with /goal &lt;objective&gt; [maxRounds].", { parse_mode: "HTML" });
         return openGoalsCard(chatId);
       }
       if (op === "edit") {
-        await t.sendText(chatId, "/goaledit &lt;new objective&gt; [maxRounds]", { parse_mode: "HTML" });
+        await uiSend(chatId, "/goaledit &lt;new objective&gt; [maxRounds]", { parse_mode: "HTML" });
         return;
+      }
+      if (op === "clear") {
+        return askConfirm(
+          chatId,
+          `\u{1F5D1} Clear the current goal?\n${plain(truncate(goal.objective, 120))}`,
+          { action: "goal-clear-confirm", agentId: agent.id },
+          { action: "goal-clear-cancel", agentId: agent.id },
+        );
       }
       const res = op === "resume"
         ? await resumeGoal(requireCtx(), agent.id, goal.id, goal.revision)
         : await pauseGoal(requireCtx(), agent.id, goal.id, goal.revision);
-      await t.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      return openGoalsCard(chatId);
+    }
+    case "goal-clear-confirm": {
+      const goal = agent ? getGoal(requireCtx(), agent.id) : undefined;
+      if (!agent || !goal) {
+        await uiSend(chatId, "\u274C No current goal to clear.", { parse_mode: "HTML" });
+        return openGoalsCard(chatId);
+      }
+      const res = await clearGoal(requireCtx(), agent.id, goal.id, goal.revision);
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      refreshAllPanels();
+      return openGoalsCard(chatId);
+    }
+    case "goal-clear-cancel": {
+      await uiSend(chatId, "\u2716 Goal clear cancelled.", { parse_mode: "HTML" });
       return openGoalsCard(chatId);
     }
     case "subagent":
@@ -1610,11 +1715,10 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const parentId = payload["parentId"] ?? "";
       const childId = payload["childId"] ?? "";
       if (!(await isContinuableSubagent(parentId, childId))) {
-        await requireTransport().sendText(chatId, "\u274C That subagent is not continuable.", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C That subagent is not continuable.", { parse_mode: "HTML" });
         return openSubagentDetailCard(chatId, parentId, childId);
       }
-      const t = requireTransport();
-      await t.sendText(chatId, "Reply with the prompt text:", {
+      await uiSend(chatId, "Reply with the prompt text:", {
         parse_mode: "HTML",
         reply_markup: inputPromptKeyboard("Prompt for subagent\u2026"),
       });
@@ -1625,7 +1729,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const parentId = payload["parentId"] ?? "";
       const childId = payload["childId"] ?? "";
       if (!(await isContinuableSubagent(parentId, childId))) {
-        await requireTransport().sendText(chatId, "\u274C That subagent is not continuable.", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C That subagent is not continuable.", { parse_mode: "HTML" });
         return openSubagentDetailCard(chatId, parentId, childId);
       }
       return askConfirm(
@@ -1637,11 +1741,11 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     }
     case "subagent-interrupt-confirm": {
       const res = interruptSubagent(requireCtx(), payload["parentId"] ?? "", payload["childId"] ?? "");
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openSubagentsCard(chatId);
     }
     case "subagent-interrupt-cancel": {
-      await requireTransport().sendText(chatId, "\u2716 Interrupt cancelled.", { parse_mode: "HTML" });
+      await uiSend(chatId, "\u2716 Interrupt cancelled.", { parse_mode: "HTML" });
       return openSubagentsCard(chatId);
     }
     case "subagent-history": {
@@ -1658,7 +1762,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const created = await createSessionForChat(chatId, state.config.model, presetId);
       bindCreatedSession(chatId, created.agentId);
       const suffix = created.agentPreset !== undefined ? ` \u00B7 preset ${plain(created.agentPreset)}` : "";
-      await requireTransport().sendText(chatId, created.result.ok ? `${plain(created.result.text)}${suffix}` : `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, created.result.ok ? `${plain(created.result.text)}${suffix}` : `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
       if (created.result.ok) {
         refreshAllPanels();
         scheduleBarSync(chatId, 0);
@@ -1668,13 +1772,13 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "preset-select": {
       const sessionId = payload["sessionId"] ?? "";
       if (!sessionId) {
-        await requireTransport().sendText(chatId, "\u274C No live session \u2014 presets select onto a session.", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C No live session \u2014 presets select onto a session.", { parse_mode: "HTML" });
         return openPresetsCard(chatId);
       }
       const presetId = payload["presetId"] ?? "";
       if (!sessionHasStarted(requireCtx(), sessionId)) {
         const res = await selectAgentPreset(requireCtx(), sessionId, presetId);
-        await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
         return openPresetsCard(chatId);
       }
       // Mid-session switch: fork through the last completed turn, apply the
@@ -1686,23 +1790,23 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
         state.bridge?.bindAgent(chatId, res.childId);
         const closed = await sessionLifecycle.close(sessionId);
         const text = `${plain(res.text)} \u00B7 ${closed.ok ? plain(closed.text) : `\u26A0\uFE0F ${plain(closed.text)}`}`;
-        await requireTransport().sendText(chatId, text, { parse_mode: "HTML" });
+        await uiSend(chatId, text, { parse_mode: "HTML" });
         refreshAllPanels();
         scheduleBarSync(chatId, 0);
       } else {
-        await requireTransport().sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        await uiSend(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       }
       return openPresetsCard(chatId);
     }
     case "preset-default": {
       const res = await setDefaultAgentPreset(requireCtx(), payload["presetId"] ?? "");
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openPresetsCard(chatId);
     }
     case "session-archive": {
       const sessionId = payload["sessionId"] ?? "";
       const res = await archiveSession(requireCtx(), sessionId);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "session-delete": {
@@ -1717,11 +1821,11 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     case "session-delete-confirm": {
       const sessionId = payload["sessionId"] ?? "";
       const res = await deleteSession(requireCtx(), sessionId);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "session-delete-cancel": {
-      await requireTransport().sendText(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
+      await uiSend(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
       return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "sessions-page": {
@@ -1763,18 +1867,17 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     }
     case "preset-read": {
       const res = await readAgentPreset(requireCtx(), payload["presetId"] ?? "");
-      const t = requireTransport();
       if (res.ok) {
-        await t.sendText(chatId, plain((res.content ?? "").slice(0, 3800)) || "(empty composition)", { parse_mode: "HTML" });
+        await uiSend(chatId, plain((res.content ?? "").slice(0, 3800)) || "(empty composition)", { parse_mode: "HTML" });
       } else {
-        await t.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        await uiSend(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       }
       return;
     }
     case "preset-copy": {
       const sourceId = payload["presetId"] ?? "";
       pendingPresetCopy = { chatId, sourceId };
-      await requireTransport().sendText(chatId, `\u{1F4CB} Reply with the new preset id for a copy of ${plain(truncate(sourceId, 32))} (or /cancel):`, {
+      await uiSend(chatId, `\u{1F4CB} Reply with the new preset id for a copy of ${plain(truncate(sourceId, 32))} (or /cancel):`, {
         parse_mode: "HTML",
         reply_markup: inputPromptKeyboard("New preset id\u2026"),
       });
@@ -1791,41 +1894,56 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
     }
     case "preset-remove-confirm": {
       const res = await removeAgentPreset(requireCtx(), payload["presetId"] ?? "");
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openPresetsCard(chatId);
     }
     case "preset-remove-cancel": {
-      await requireTransport().sendText(chatId, "\u2716 Remove cancelled.", { parse_mode: "HTML" });
+      await uiSend(chatId, "\u2716 Remove cancelled.", { parse_mode: "HTML" });
       return openPresetsCard(chatId);
     }
     case "preset-open": {
       const res = openAgentPresetDocument(requireCtx(), payload["presetId"] ?? "");
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
     }
     case "workspace-use": {
       const workspace = listWorkspaces(requireCtx()).items.find((candidate) => candidate.workspaceId === payload["workspaceId"]);
       if (!workspace) {
-        await requireTransport().sendText(chatId, "\u274C Workspace not found \u2014 reopen the Workspaces card.", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C Workspace not found \u2014 reopen the Workspaces card.", { parse_mode: "HTML" });
         return openWorkspacesCard(chatId);
       }
       return applyProjectPath(chatId, workspace.path);
     }
     case "workspace-delete-confirm": {
       const res = await deleteWorkspace(requireCtx(), payload["id"] ?? "");
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openWorkspacesCard(chatId);
     }
     case "workspace-delete-cancel": {
-      await requireTransport().sendText(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
+      await uiSend(chatId, "\u2716 Delete cancelled.", { parse_mode: "HTML" });
       return openWorkspacesCard(chatId);
+    }
+    case "compact-auto": {
+      compactionWatcher?.approve(payload["sessionId"] ?? boundAgentId(chatId) ?? "");
+      await uiSend(chatId, "\u2705 Compaction queued \u2014 it runs at the next safe boundary.", { parse_mode: "HTML" });
+      return;
+    }
+    case "compact-manual": {
+      compactionWatcher?.snooze(payload["sessionId"] ?? boundAgentId(chatId) ?? "");
+      await uiSend(chatId, "Send /compact when the agent is idle (or press Abort first).", { parse_mode: "HTML" });
+      return;
+    }
+    case "compact-skip": {
+      compactionWatcher?.snooze(payload["sessionId"] ?? boundAgentId(chatId) ?? "");
+      await uiSend(chatId, "\u2716 Compaction skipped \u2014 I will ask again later if pressure stays high.", { parse_mode: "HTML" });
+      return;
     }
     case "feedback": {
       const sessionId = payload["sessionId"] ?? "";
       const messageId = payload["messageId"] ?? "";
       const rating = payload["rating"] === "positive" ? "positive" : "negative";
       const res = await putFeedback(requireCtx(), sessionId, messageId, rating);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
     }
     case "feedback-list":
@@ -1835,7 +1953,7 @@ async function dispatchToken(chatId: number, payload: Record<string, string>): P
       const messageId = payload["messageId"] ?? "";
       const ifVersion = payload["ifVersion"] ?? "";
       const res = await deleteFeedback(requireCtx(), sessionId, messageId, ifVersion);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openFeedbackListCard(chatId, sessionId);
     }
     default:
@@ -1872,7 +1990,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     }
     const used = tokens.wasUsed(data);
     log(`token miss ${data} (${used ? "already handled" : "bot restarted since the card rendered"})`);
-    await requireTransport().sendText(
+    await uiSend(
       chatId,
       used
         ? "\u26A0\uFE0F That button already ran \u2014 the result is in the chat above."
@@ -1886,7 +2004,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     const answer = parts[2];
     const outcome = answer === "y" ? "allowed-once" : answer === "g" ? "allowed-goal" : "rejected";
     const accepted = state.interactive?.answerApproval(Number(parts[1]), outcome);
-    if (!accepted) await requireTransport().sendText(chatId, "\u274C That approval is already settled.", { parse_mode: "HTML" });
+    if (!accepted) await uiSend(chatId, "\u274C That approval is already settled.", { parse_mode: "HTML" });
     return;
   }
   if (data.startsWith("qu:")) {
@@ -1918,17 +2036,16 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
         targetId = id;
       }
       if (targetId === undefined) {
-        await requireTransport().sendText(chatId, `\u274C Session ${plain(truncate(id, 32))} is not live.`, { parse_mode: "HTML" });
+        await uiSend(chatId, `\u274C Session ${plain(truncate(id, 32))} is not live.`, { parse_mode: "HTML" });
       } else {
         state.bridge?.bindAgent(chatId, targetId);
-        await requireTransport().sendText(chatId, `\u{1F3AF} Switched to session ${plain(truncate(targetId, 32))}.`, { parse_mode: "HTML" });
+        await uiSend(chatId, `\u{1F3AF} Switched to session ${plain(truncate(targetId, 32))}.`, { parse_mode: "HTML" });
       }
       return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     if (sub === "history") return openHistoryCard(chatId, id);
     if (sub === "rename") {
-      const t = requireTransport();
-      await t.sendText(chatId, `/rename <title> \u2014 reply with just the title to rename ${plain(truncate(id, 24))}:`, {
+      await uiSend(chatId, `/rename <title> \u2014 reply with just the title to rename ${plain(truncate(id, 24))}:`, {
         parse_mode: "HTML",
         reply_markup: inputPromptKeyboard("New session title\u2026"),
       });
@@ -1937,19 +2054,19 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     }
     if (sub === "fork") {
       const res = forkSession(requireCtx(), id);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     if (sub === "archive") {
       const res = await archiveSession(requireCtx(), id);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       // Return to the DETAIL card so the archive state is immediately visible.
       return openSessionDetailCard(chatId, id);
     }
     if (sub === "model") return openProviderModelsCard(chatId, currentSessionModel(requireCtx(), id).provider ?? "deepseek");
     if (sub === "stop") {
       const res = sessionLifecycle.stop(requireCtx(), id);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openSessionDetailCard(chatId, id);
     }
     if (sub === "delete") {
@@ -1962,7 +2079,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     }
     if (sub === "steer") {
       pendingSteer = { chatId, sessionId: id };
-      await requireTransport().sendText(chatId, `\u{1F3AF} Steer ${plain(truncate(id, 24))} \u2014 send the steer text:`, {
+      await uiSend(chatId, `\u{1F3AF} Steer ${plain(truncate(id, 24))} \u2014 send the steer text:`, {
         parse_mode: "HTML",
         reply_markup: inputPromptKeyboard("Steer text\u2026"),
       });
@@ -1972,16 +2089,16 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       const exported = await exportSessionLog(requireCtx(), id, false).catch(() => ({ result: { ok: false, text: "session log export failed" }, buffer: undefined }));
       if (exported.result.ok && exported.buffer !== undefined) {
         const fileId = await requireTransport().sendDocument(chatId, exported.buffer, `session-${id.slice(0, 16)}.zip`, `\u{1F4E6} Session log \u00B7 ${plain(truncate(id, 24))}`);
-        if (fileId === undefined) await requireTransport().sendText(chatId, "\u274C Log sent but the document upload was not confirmed.", { parse_mode: "HTML" });
+        if (fileId === undefined) await uiSend(chatId, "\u274C Log sent but the document upload was not confirmed.", { parse_mode: "HTML" });
       } else {
-        await requireTransport().sendText(chatId, `\u274C ${plain(exported.result.text)}`, { parse_mode: "HTML" });
+        await uiSend(chatId, `\u274C ${plain(exported.result.text)}`, { parse_mode: "HTML" });
       }
       return;
     }
     if (sub === "queue") {
       const agent = sessionLifecycle.find(requireCtx(), id);
       if (!agent) {
-        await requireTransport().sendText(chatId, "\u274C Session is not live \u2014 the queue is agent-owned.", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C Session is not live \u2014 the queue is agent-owned.", { parse_mode: "HTML" });
         return openSessionsCard(chatId, lastProjectKey(chatId));
       }
       const items = listQueue(requireCtx(), id);
@@ -1999,7 +2116,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openWorkspaceCreatePicker(chatId, state.workspaceRoot);
     }
     if (sub === "rename") {
-      await requireTransport().sendText(chatId, `/workspacerename ${id} &lt;title&gt;`, { parse_mode: "HTML" });
+      await uiSend(chatId, `/workspacerename ${id} &lt;title&gt;`, { parse_mode: "HTML" });
       return;
     }
     if (sub === "delete") {
@@ -2016,12 +2133,12 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       if (index !== -1) {
         const anchor = sub === "up" ? items[index - 1]?.workspaceId : items[index + 2]?.workspaceId;
         const res = await insertWorkspaceBefore(requireCtx(), id, anchor);
-        await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       }
       return openWorkspacesCard(chatId);
     }
     if (sub === "pin") {
-      await requireTransport().sendText(chatId, "/workspacepin &lt;workspaceId&gt; &lt;sessionId&gt; [beforeSessionId]", { parse_mode: "HTML" });
+      await uiSend(chatId, "/workspacepin &lt;workspaceId&gt; &lt;sessionId&gt; [beforeSessionId]", { parse_mode: "HTML" });
       return;
     }
     return openWorkspaceDetailCard(chatId, id);
@@ -2032,13 +2149,13 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     const kind = parts[2] ?? "";
     const agent = currentAgent(chatId);
     if (!agent) {
-      await requireTransport().sendText(chatId, "\u274C No live agent owns the queue.", { parse_mode: "HTML" });
+      await uiSend(chatId, "\u274C No live agent owns the queue.", { parse_mode: "HTML" });
       return openQueueCard(chatId);
     }
     if (kind === "e") {
       // Legacy edit button from an older card: the edit flow is gone. Point
       // the user at the delete-and-resend path instead of half-editing text.
-      await requireTransport().sendText(
+      await uiSend(
         chatId,
         "\u270F Inline queue editing was removed \u2014 use \u{1F5D1} Delete, then send your message again.",
         { parse_mode: "HTML" },
@@ -2050,9 +2167,9 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       const position = queued.findIndex((entry) => entry.itemId === itemId);
       const label = position >= 0 ? `#${position + 1}` : itemId.slice(0, 8);
       const res = updateQueueItem(requireCtx(), agent.id, itemId, { kind: "remove" });
-      await requireTransport().sendText(chatId, res.ok ? `${plain(res.text)} \u00B7 ${label}` : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? `${plain(res.text)} \u00B7 ${label}` : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       if (res.ok) {
-        await requireTransport().sendText(chatId, `\u{1F5D1} ${label} removed \u2014 send your corrected message again to re-queue it.`, {
+        await uiSend(chatId, `\u{1F5D1} ${label} removed \u2014 send your corrected message again to re-queue it.`, {
           parse_mode: "HTML",
           reply_markup: inputPromptKeyboard("Send the corrected message\u2026"),
         });
@@ -2063,12 +2180,12 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     }
     if (kind === "s") {
       const res = updateQueueItem(requireCtx(), agent.id, itemId, { kind: "steer" });
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       refreshAllPanels();
       scheduleBarSync(chatId, 0);
       return openQueueCard(chatId);
     }
-    await requireTransport().sendText(chatId, "\u274C Unknown queue action \u2014 reopen the Queue card.", { parse_mode: "HTML" });
+    await uiSend(chatId, "\u274C Unknown queue action \u2014 reopen the Queue card.", { parse_mode: "HTML" });
     return openQueueCard(chatId);
   }
   if (data.startsWith("mo:")) {
@@ -2084,7 +2201,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openHostDirectoryCard(chatId, state.workspaceRoot);
     }
     if (sub === "mkdir") {
-      await requireTransport().sendText(chatId, "/mkdir &lt;path&gt;", { parse_mode: "HTML" });
+      await uiSend(chatId, "/mkdir &lt;path&gt;", { parse_mode: "HTML" });
       return;
     }
     return;
@@ -2096,7 +2213,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
   switch (action) {
     case "close":
       activeCardRenderers.delete(chatId);
-      await ephemeral.clear(chatId, requireTransport());
+      await ephemeral.clear(chatId, uiOps(requireTransport()));
       return;
     case "back":
       // Return to the menu page the user was last on (Back from page 2 must
@@ -2112,11 +2229,11 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "stop": {
       const agentId = boundAgentId(chatId);
       if (agentId === undefined) {
-        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 Abort only stops this chat's current turn.", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C No live agent in this session \u2014 Abort only stops this chat's current turn.", { parse_mode: "HTML" });
         return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
       }
       const res = sessionLifecycle.stop(requireCtx(), agentId);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return openMenuAt(chatId, menuPageIndex.get(chatId) ?? 0);
     }
     case "collapsebar":
@@ -2136,7 +2253,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openSessionsCard(chatId, lastProjectKey(chatId));
     case "search": {
       pendingSearch = { chatId };
-      await requireTransport().sendText(chatId, "\u{1F50D} Reply with the search query:", {
+      await uiSend(chatId, "\u{1F50D} Reply with the search query:", {
         parse_mode: "HTML",
         reply_markup: inputPromptKeyboard("Search query\u2026"),
       });
@@ -2146,11 +2263,11 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "use": {
       const id = payload ?? "";
       if (id === "" || !sessionLifecycle.find(requireCtx(), id)) {
-        await requireTransport().sendText(chatId, `\u274C Session ${plain(truncate(id, 32))} is not live.`, { parse_mode: "HTML" });
+        await uiSend(chatId, `\u274C Session ${plain(truncate(id, 32))} is not live.`, { parse_mode: "HTML" });
         return;
       }
       state.bridge?.bindAgent(chatId, id);
-      await requireTransport().sendText(chatId, `\u{1F3AF} Switched to session ${plain(truncate(id, 32))}.`, { parse_mode: "HTML" });
+      await uiSend(chatId, `\u{1F3AF} Switched to session ${plain(truncate(id, 32))}.`, { parse_mode: "HTML" });
       return openSessionsCard(chatId, lastProjectKey(chatId));
     }
     case "mode":
@@ -2166,8 +2283,8 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "about":
       return openAboutCard(chatId);
     case "status":
-      await ephemeral.open(chatId, requireTransport());
-      await statusPanel.refresh(chatId, requireTransport(), renderStatus(chatId), true);
+      await ephemeral.open(chatId, uiOps(requireTransport()));
+      await statusPanel.refresh(chatId, uiOps(requireTransport()), renderStatus(chatId), true);
       return;
     case "new": {
       const { result: res, agentId } = await createSessionForChat(chatId);
@@ -2179,7 +2296,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     }
     case "compact": {
       const res = await compactCurrent(requireCtx(), boundAgentId(chatId));
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
     }
     case "allowthis": {
@@ -2197,7 +2314,7 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "watchtoggle":
       if (state.watching) await stopWatching();
       else await startWatching();
-      await requireTransport().sendText(
+      await uiSend(
         chatId,
         state.watching
           ? "\u{1F4E1} Polling resumed."
@@ -2209,6 +2326,8 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       return openWorkspacesCard(chatId);
     case "goals":
       return openGoalsCard(chatId);
+    case "todos":
+      return openTodosCard(chatId);
     case "skills":
       return openSkillsCard(chatId);
     case "subagents":
@@ -2228,10 +2347,10 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
     case "capabilities":
       return openCapabilitiesCard(chatId);
     case "discover":
-      await requireTransport().sendText(chatId, "/discover &lt;settingsNs&gt; [baseURL]", { parse_mode: "HTML" });
+      await uiSend(chatId, "/discover &lt;settingsNs&gt; [baseURL]", { parse_mode: "HTML" });
       return;
     case "cred-describe":
-      await requireTransport().sendText(chatId, "/credential &lt;REF&gt; [REF...]", { parse_mode: "HTML" });
+      await uiSend(chatId, "/credential &lt;REF&gt; [REF...]", { parse_mode: "HTML" });
       return;
     default:
       return;
@@ -2260,6 +2379,7 @@ const TELEGRAM_COMMANDS = [
   { command: "models", description: "Browse providers and models" },
   { command: "status", description: "Live status card" },
   { command: "queue", description: "Inspect or edit the agent inbox" },
+  { command: "todo", description: "Show the current session todo list" },
   { command: "sessions", description: "Sessions list" },
   { command: "history", description: "Read session history" },
   { command: "rename", description: "Rename the current session" },
@@ -2273,6 +2393,7 @@ const TELEGRAM_COMMANDS = [
   { command: "bar", description: "Show or hide the button bar" },
   { command: "goal", description: "Start a goal: /goal <objective> [maxRounds]" },
   { command: "goalcreate", description: "Create a goal" },
+  { command: "goalclear", description: "Clear the current goal" },
   { command: "skills", description: "Skills list" },
   { command: "subagents", description: "Subagents list" },
   { command: "presets", description: "Agent presets" },
@@ -2316,7 +2437,7 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
     }
     case COMPACT_BTN: {
       const res = await compactCurrent(requireCtx(), boundAgentId(chatId));
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
     }
     case MODELS_BTN:
@@ -2328,11 +2449,13 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
     case SESSIONS_BTN:
       return openSessionsCard(chatId, lastProjectKey(chatId));
     case STATUS_BTN:
-      await ephemeral.open(chatId, requireTransport());
-      await statusPanel.refresh(chatId, requireTransport(), renderStatus(chatId), true);
+      await ephemeral.open(chatId, uiOps(requireTransport()));
+      await statusPanel.refresh(chatId, uiOps(requireTransport()), renderStatus(chatId), true);
       return;
     case QUEUE_BTN:
       return openQueueCard(chatId);
+    case TODO_BTN:
+      return openTodosCard(chatId);
     case GOAL_BTN:
       return openGoalsCard(chatId);
     case PRESETS_BTN:
@@ -2347,11 +2470,11 @@ async function dispatchBarButton(chatId: number, label: string): Promise<void> {
     case STOP_BTN: {
       const agentId = boundAgentId(chatId);
       if (agentId === undefined) {
-        await requireTransport().sendText(chatId, "\u274C No live agent in this session \u2014 Abort only stops this chat's current turn.", { parse_mode: "HTML" });
+        await uiSend(chatId, "\u274C No live agent in this session \u2014 Abort only stops this chat's current turn.", { parse_mode: "HTML" });
         return;
       }
       const res = sessionLifecycle.stop(requireCtx(), agentId);
-      await requireTransport().sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+      await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
     }
     default:
@@ -2372,7 +2495,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
   const agent = currentAgent(chatId);
   const send = async (text: string, okResult = true) => {
     log(`command reply chatId=${chatId} command=${command} kind=${okResult ? "ok" : "error"}`);
-    await t.sendText(chatId, okResult ? plain(text) : `\u274C ${plain(text)}`, { parse_mode: "HTML" });
+    await uiSend(chatId, okResult ? plain(text) : `\u274C ${plain(text)}`, { parse_mode: "HTML" });
   };
   switch (command) {
     case "start":
@@ -2390,7 +2513,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
           "Commands:",
           "/new /compact /abort /stop /models /sessions /workspaces /project [path] /goals /skills /subagents /presets /plugins /hostsettings /credentials /host /jobs /status /menu",
           "/history [sessionId] [limit] \u00B7 /rename <title> \u00B7 /fork [atSeq] \u00B7 /use <sessionId> \u00B7 /archive <sessionId>",
-          "/queue \u00B7 /steer <text> \u00B7 /cancel",
+          "/queue \u00B7 /todo \u00B7 /steer <text> \u00B7 /cancel",
           "/goalcreate <objective> [maxRounds] \u00B7 /goaledit <text>",
           "/workspacecreate <path> [title] \u00B7 /workspacepin <workspaceId> <sessionId> [beforeSessionId]",
           "/pluginenable <name> \u00B7 /plugindisable <name> \u00B7 /settingsdescribe [ns] \u00B7 /settingsupdate <ns> <json> \u00B7 /settingsreplace <ns> <json> \u00B7 /settingsmutate <ns> <json ops>",
@@ -2450,8 +2573,8 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
     case "models":
       return openModelsCard(chatId);
     case "status":
-      await ephemeral.open(chatId, t);
-      await statusPanel.refresh(chatId, t, renderStatus(chatId), true);
+      await ephemeral.open(chatId, uiOps(t));
+      await statusPanel.refresh(chatId, uiOps(t), renderStatus(chatId), true);
       return;
     case "abort": {
       const agentId = boundAgentId(chatId);
@@ -2494,6 +2617,8 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       return openProjectCard(chatId);
     case "goals":
       return openGoalsCard(chatId);
+    case "todos":
+      return openTodosCard(chatId);
     case "skills":
       return openSkillsCard(chatId);
     case "subagents":
@@ -2524,6 +2649,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
         ["queue", () => (checkAgent ? listQueue(checkCtx, checkAgent.id) : [])],
         ["workspaces", () => listWorkspaces(checkCtx)],
         ["goals", () => getGoal(checkCtx, checkAgent?.id ?? "")],
+        ["todos", () => (checkAgent ? listTodos(checkCtx, checkAgent.id) : [])],
         ["skills", () => listSkills(checkCtx)],
         ["subagents", () => listSubagents(checkCtx, checkAgent?.id ?? "")],
         ["presets", () => listAgentPresets(checkCtx)],
@@ -2715,6 +2841,17 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       await send(res.text, res.ok);
       return;
     }
+    case "goalclear": {
+      const goal = agent ? getGoal(ctx, agent.id) : undefined;
+      if (!agent || !goal) {
+        await send("No current goal to clear.", false);
+        return;
+      }
+      const res = await clearGoal(ctx, agent.id, goal.id, goal.revision);
+      await send(res.text, res.ok);
+      refreshAllPanels();
+      return;
+    }
     case "workspacecreate": {
       const parts = args.trim().split(/\s+/);
       const path = parts[0] ?? "";
@@ -2841,7 +2978,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
       // follow-up so the same per-chat queue guarantees the secret is removed
       // before the bot's own result arrives — no timer race, no restart gap.
       if (messageId !== undefined) {
-        void t.deleteMessage(chatId, messageId).catch((err) => log("credential command delete failed", err));
+        void t.deleteMessageControl(chatId, messageId).catch((err) => log("credential command delete failed", err));
       }
       const res = await setCredential(ctx, ref, value);
       await send(res.text, res.ok);
@@ -2950,40 +3087,86 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
   }
 }
 
-async function dispatchPhoto(chatId: number, fileId: string, caption: string, messageId?: number): Promise<void> {
-  const t = requireTransport();
-  const ctx = requireCtx();
+/** Ensure this chat has a live agent for media delivery; first media starts
+ * its own session, same as first text. */
+async function ensureChatAgent(chatId: number): Promise<Agent | undefined> {
   let agent = currentAgent(chatId);
-  if (!agent) {
-    // First image starts this chat's own session, same as first text.
-    const created = await createSessionForChat(chatId, state.config.model, undefined, true);
-    if (!created.result.ok || created.agentId === undefined) {
-      await t.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
+  if (agent) return agent;
+  const created = await createSessionForChat(chatId, state.config.model, undefined, true);
+  if (!created.result.ok || created.agentId === undefined) {
+    await uiSend(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
+    return undefined;
+  }
+  bindCreatedSession(chatId, created.agentId);
+  agent = currentAgent(chatId);
+  if (!agent) await uiSend(chatId, "\u274C No live agent in this session.", { parse_mode: "HTML" });
+  return agent;
+}
+
+async function dispatchPhoto(chatId: number, fileId: string, caption: string, messageId?: number): Promise<void> {
+  return dispatchPhotos(chatId, [{ fileId, caption, messageId }]);
+}
+
+/** Media-group batch: N images become ONE user turn (issue #9). */
+async function dispatchPhotos(chatId: number, photos: readonly { fileId: string; caption: string; messageId?: number }[]): Promise<void> {
+  const t = requireTransport();
+  const agent = await ensureChatAgent(chatId);
+  if (!agent) return;
+  const downloads = await Promise.all(photos.slice(0, 10).map(async (photo) => ({ ...photo, data: await t.downloadFile(photo.fileId) })));
+  if (downloads.some((photo) => !photo.data)) {
+    await uiSend(chatId, "\u274C One or more photo downloads failed \u2014 nothing was delivered.", { parse_mode: "HTML" });
+    return;
+  }
+  const attachments: NonNullable<Awaited<ReturnType<typeof saveImageAttachment>>["attachment"]>[] = [];
+  for (const photo of downloads) {
+    const saved = await saveImageAttachment(requireCtx(), photo.data!, "image/jpeg", `telegram-${photo.fileId}.jpg`);
+    if (!saved.ok || !saved.attachment) {
+      await uiSend(chatId, `\u274C ${plain(saved.text)}`, { parse_mode: "HTML" });
       return;
     }
-    bindCreatedSession(chatId, created.agentId);
-    agent = currentAgent(chatId);
+    attachments.push(saved.attachment);
   }
-  if (!agent) {
-    await t.sendText(chatId, "\u274C No live agent in this session.", { parse_mode: "HTML" });
-    return;
-  }
-  const data = await t.downloadFile(fileId);
-  if (!data) {
-    await t.sendText(chatId, "\u274C Photo download failed.", { parse_mode: "HTML" });
-    return;
-  }
-  const saved = await saveImageAttachment(ctx, data, "image/jpeg", `telegram-${fileId}.jpg`);
-  if (!saved.ok || !saved.attachment) {
-    await t.sendText(chatId, `\u274C ${plain(saved.text)}`, { parse_mode: "HTML" });
-    return;
-  }
-  const res = state.bridge?.deliverImage(chatId, saved.attachment, caption, messageId);
-  if (res && !res.ok) await t.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+  const caption = photos.map((photo) => photo.caption).find((entry) => entry.trim() !== "") ?? "";
+  const firstId = photos[0]?.messageId;
+  const res = state.bridge?.deliverImages(chatId, attachments, caption, firstId);
+  if (res && !res.ok) await uiSend(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
   else {
-    await t.sendText(chatId, `${plain(res?.text ?? "Image delivered.")} \u00B7 ${plain(saved.text)} \u00B7 /attachment ${plain(saved.attachment.attachmentId)}`, { parse_mode: "HTML" });
+    await uiSend(chatId, `\u{1F4F7} ${plain(res?.text ?? "Images delivered.")} \u00B7 ${attachments.length} images \u00B7 /attachment ${plain(attachments.map((entry) => entry.attachmentId).join(" "))}`, { parse_mode: "HTML" });
     scheduleBarSync(chatId, 0);
   }
+}
+
+async function dispatchDocument(chatId: number, kind: "document" | "voice" | "video", fileId: string, name: string, mimeType: string, messageId?: number): Promise<void> {
+  const t = requireTransport();
+  const agent = await ensureChatAgent(chatId);
+  if (!agent) return;
+  const data = await t.downloadFile(fileId);
+  if (!data) {
+    await uiSend(chatId, `\u274C ${plain(kind)} download failed.`, { parse_mode: "HTML" });
+    return;
+  }
+  if (kind === "voice") {
+    const transcribed = await transcribeVoice(data, "voice.ogg", state.config.media?.transcribe);
+    if (!transcribed.ok || transcribed.transcript === undefined) {
+      await uiSend(chatId, `\u274C ${plain(transcribed.text)}`, { parse_mode: "HTML" });
+      return;
+    }
+    await uiSend(chatId, `\u{1F399}\uFE0F \u8F6C\u5199: ${plain(transcribed.transcript)}`, { parse_mode: "HTML" });
+    const delivered = state.bridge!.deliver(chatId, transcribed.transcript, messageId);
+    if (!delivered.ok) await uiSend(chatId, `\u274C ${plain(delivered.text)}`, { parse_mode: "HTML" });
+    else scheduleBarSync(chatId, 0);
+    return;
+  }
+  const saved = await saveDocumentAttachment(agent.id, data, name || `${kind}.bin`);
+  if (!saved.ok || saved.path === undefined) {
+    await uiSend(chatId, `\u274C ${plain(saved.text)}`, { parse_mode: "HTML" });
+    return;
+  }
+  await uiSend(chatId, plain(saved.text), { parse_mode: "HTML" });
+  const prompt = `\u{1F4CE} Telegram ${kind} saved to ${saved.path} (${data.byteLength} bytes, ${mimeType || "unknown type"}) \u2014 read and process it.`;
+  const delivered = state.bridge!.deliver(chatId, prompt, messageId);
+  if (!delivered.ok) await uiSend(chatId, `\u274C ${plain(delivered.text)}`, { parse_mode: "HTML" });
+  else scheduleBarSync(chatId, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -3003,6 +3186,19 @@ async function stopWatching(): Promise<void> {
   state.watching = false;
 }
 
+/** Send one compact incremental todo card (issue #10). First observation is
+ * a baseline, never a notification burst. */
+function notifyTodoChange(chatId: number, previous: readonly TodoView[], next: readonly TodoView[]): void {
+  const diff = diffTodos(previous, next);
+  const lines: string[] = [];
+  for (const todo of diff.added.slice(0, 5)) lines.push(`\u{1F4CB} \u65B0\u589E\u4EFB\u52A1\uff1A${todo.content.slice(0, 80)}`);
+  for (const todo of diff.started.slice(0, 5)) lines.push(`\u23F3 \u8FDB\u884C\u4E2D\uff1A${todo.content.slice(0, 80)}`);
+  for (const todo of diff.completed.slice(0, 5)) lines.push(`\u2705 \u5DF2\u5B8C\u6210\uff1A${todo.content.slice(0, 80)}`);
+  if (diff.completed.length > 0) lines.push(`\u{1F4CB} \u5269 ${diff.remaining} \u9879\u5F85\u529E`);
+  if (lines.length === 0) return;
+  void uiSend(chatId, lines.join("\n"), { parse_mode: "HTML" });
+}
+
 function refreshAllPanels(): void {
   if (!state.transport) return;
   const transport = state.transport;
@@ -3017,7 +3213,7 @@ function refreshAllPanels(): void {
   }
   void statusSubagentSync.then(() => {
     for (const chatId of state.chats) {
-      void statusPanel.refresh(chatId, transport, renderStatus(chatId));
+      void statusPanel.refresh(chatId, uiOps(transport), renderStatus(chatId));
       scheduleBarSync(chatId);
     }
   });
@@ -3032,12 +3228,32 @@ function currentQueueCount(chatId: number): number {
   }
 }
 
+function currentTodos(chatId: number): TodoView[] {
+  const agent = currentAgent(chatId);
+  return agent === undefined ? [] : listTodos(requireCtx(), agent.id);
+}
+
+function currentTodoCount(chatId: number): number {
+  return pendingTodoCount(currentTodos(chatId));
+}
+
+function goalForChat(chatId: number): { objective: string } | undefined {
+  const agent = currentAgent(chatId);
+  if (!agent) return undefined;
+  const goal = getGoal(requireCtx(), agent.id);
+  return goal === undefined ? undefined : { objective: goal.objective };
+}
+
+function progressFor(chatId: number): ProgressSnapshot | undefined {
+  return goalProgress?.snapshot(chatId);
+}
+
 /** Remove the previous dedicated bar carrier so history never accumulates them. */
 async function dropBarCarrier(chatId: number, t: TelegramTransport): Promise<void> {
   const carrier = state.barCarriers.get(chatId);
   if (carrier === undefined) return;
   state.barCarriers.delete(chatId);
-  await t.deleteMessage(chatId, carrier).catch(() => {});
+  await t.deleteMessageControl(chatId, carrier);
 }
 
 /** Send a normal message that carries the live bar (count embedded). */
@@ -3046,11 +3262,12 @@ async function sendWithLiveBar(chatId: number, text: string, options: Parameters
   if (!t) return undefined;
   const count = currentQueueCount(chatId);
   state.barCounts.set(chatId, count);
+  state.barTodoCounts.set(chatId, currentTodoCount(chatId));
   // Collapsed means no bar at all: the Menu first-page switch or `/bar`
   // restores it. Normal replies stay keyboard-free instead of re-asserting.
   if (state.barCollapsed.get(chatId) === true) return t.sendText(chatId, text, options);
   await dropBarCarrier(chatId, t);
-  return t.sendText(chatId, text, { ...options, reply_markup: buildBarKeyboard(count) });
+  return t.sendText(chatId, text, { ...options, reply_markup: buildBarKeyboard(count, currentTodoCount(chatId)) });
 }
 
 /** Telegram reply keyboards cannot be edited in place, so the live count is
@@ -3062,7 +3279,7 @@ function scheduleBarSync(chatId: number, delayMs = 1500): void {
   if (existing !== undefined) clearTimeout(existing);
   const timer = setTimeout(() => {
     state.barTimers.delete(chatId);
-    void syncBar(chatId).catch((err) => log("bar sync failed", err));
+    void safeWrap(`bar-sync(${chatId})`, () => syncBar(chatId), log);
   }, delayMs);
   state.barTimers.set(chatId, timer);
 }
@@ -3070,40 +3287,44 @@ function scheduleBarSync(chatId: number, delayMs = 1500): void {
 /** Delete the current carrier and pin one fresh native bar message. */
 async function replaceBarCarrier(chatId: number, t: TelegramTransport, count: number): Promise<void> {
   await dropBarCarrier(chatId, t);
-  const id = await t.sendText(chatId, queueBarLabel(count), {
+  const id = await t.sendTextControl(chatId, queueBarLabel(count), {
     parse_mode: "HTML",
     disable_notification: true,
-    reply_markup: buildBarKeyboard(count),
+    reply_markup: buildBarKeyboard(count, currentTodoCount(chatId)),
   });
   if (id !== undefined) state.barCarriers.set(chatId, id);
 }
 
-/** Collapse the bar: delete its carrier and leave NO replacement. Restoring
- * is explicit through Menu's first-page Bar switch or `/bar`. */
-async function setBarCollapsed(chatId: number, collapsed: boolean): Promise<void> {
+/** Collapse/restore the bar. The state flips synchronously and the carrier
+ * swap is fire-and-forget on the UI control lane: the tap acknowledges
+ * immediately even while a turn is streaming (bar latency report). */
+function setBarCollapsed(chatId: number, collapsed: boolean): void {
   const t = state.transport;
   if (!t) return;
   if (collapsed) {
     state.barCollapsed.set(chatId, true);
-    await dropBarCarrier(chatId, t);
+    void safeWrap(`bar-collapse(${chatId})`, () => dropBarCarrier(chatId, t), log);
     return;
   }
   const count = currentQueueCount(chatId);
   state.barCounts.set(chatId, count);
+  state.barTodoCounts.set(chatId, currentTodoCount(chatId));
   state.barCollapsed.delete(chatId);
-  await replaceBarCarrier(chatId, t, count);
+  void safeWrap(`bar-restore(${chatId})`, () => replaceBarCarrier(chatId, t, count), log);
 }
 
-/** Swap the dedicated bar carrier in place when the queue count changed. */
+/** Swap the dedicated bar carrier in place when the queue/todo count changed. */
 async function syncBar(chatId: number): Promise<void> {
   const t = state.transport;
   if (!t) return;
   const count = currentQueueCount(chatId);
-  log(`bar sync chatId=${chatId} count=${count} last=${state.barCounts.get(chatId)}`);
+  const todoCount = currentTodoCount(chatId);
+  log(`bar sync chatId=${chatId} count=${count} todo=${todoCount} last=${state.barCounts.get(chatId)}`);
   // A collapsed bar stays gone until explicitly restored.
   if (state.barCollapsed.get(chatId) === true) return;
-  if (count === state.barCounts.get(chatId)) return;
+  if (count === state.barCounts.get(chatId) && todoCount === state.barTodoCounts.get(chatId)) return;
   state.barCounts.set(chatId, count);
+  state.barTodoCounts.set(chatId, todoCount);
   await replaceBarCarrier(chatId, t, count);
 }
 
@@ -3192,10 +3413,10 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
     }
   });
 
-  const token = resolveToken();
-  if (token) {
+  const botToken = resolveToken();
+  if (botToken) {
     state.transport = new TelegramTransport({
-      token,
+      token: botToken,
       log,
       queue: new SendQueue({
         maxPerWindow: state.config.outbound.sendRatePerSecond,
@@ -3212,6 +3433,73 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       log,
     });
     state.bridge.attach();
+
+    // Goal progress cards (issue #7): only when no streaming renderer owns
+    // presentation. Completion collapses the card into the openclaw receipt,
+    // hit-rate included.
+    goalProgress = new GoalProgressFeed({
+      ops: {
+        send: uiOps(state.transport).sendText,
+        edit: uiOps(state.transport).editText,
+      },
+      log,
+      chatIdForAgent: (agentId) => state.bridge?.chatIdForAgent(agentId),
+      goalFor: (chatId) => goalForChat(chatId),
+      todosFor: (chatId) => currentTodos(chatId),
+      statusStats: (chatId) => statusSnapshot(requireCtx(), boundAgentId(chatId), false).stats,
+      liveRendererActive: () => state.bridge?.hasAssistantConsumer() ?? false,
+      pendingInbound: (chatId) => state.bridge?.hasPendingInbound(chatId) ?? false,
+    });
+    goalProgress.attach(ctx);
+
+    // Context-pressure watcher (issue #8). Approval cards are minted through
+    // the single-use token registry and answered in dispatchToken.
+    compactionWatcher = new CompactionWatcher({
+      ctx,
+      log,
+      chatIdForAgent: (agentId) => state.bridge?.chatIdForAgent(agentId),
+      threshold: () => state.config.compact.threshold,
+      policy: () => state.config.compact.policy,
+      cooldownMs: () => state.config.compact.cooldownMs,
+      askApproval: (chatId, sessionId, usage) => {
+        const pct = Math.round((usage.ratio ?? 0) * 100);
+        void uiSend(chatId, `\u{1F4C8} Context ${pct}% of ${usage.window ?? "?"} tokens \u2014 compact before it overflows?`, {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "\u2705 \u81EA\u52A8\u538B\u7F29", callback_data: token({ action: "compact-auto", sessionId }) },
+              { text: "\u{1F4DD} \u6211\u6765\u624B\u52A8", callback_data: token({ action: "compact-manual", sessionId }) },
+              { text: "\u{1F7E2} \u538B\u7F29\u5E76\u7EE7\u7EED", callback_data: token({ action: "compact-auto", sessionId }) },
+            ]],
+          },
+        });
+      },
+      notify: (chatId, text) => {
+        void uiSend(chatId, text, { parse_mode: "HTML" });
+      },
+    });
+    compactionWatcher.attach();
+
+    // Incremental todo cards + live bar count (issue #10). The first durable
+    // snapshot only primes the baseline.
+    refreshEventDisposers.push(
+      (ctx.on.bind(ctx) as (name: string, listener: (...args: unknown[]) => void) => () => void)("session/event", (...args: unknown[]) => {
+        const session = args[0] as { id: unknown };
+        const event = args[1] as { type?: string; data?: { todos?: readonly TodoView[] } };
+        const chatId = state.bridge?.chatIdForAgent(String(session.id));
+        if (chatId === undefined || event.type !== "todo/write" || !Array.isArray(event.data?.todos)) return;
+        const next = event.data.todos.map((todo) => ({
+          content: typeof todo.content === "string" ? todo.content : String(todo.content ?? ""),
+          status: todo.status === "completed" || todo.status === "in_progress" ? todo.status : "pending",
+        }));
+        const hadBaseline = todoSnapshots.has(chatId);
+        const previous = todoSnapshots.get(chatId) ?? [];
+        todoSnapshots.set(chatId, next);
+        if (hadBaseline) notifyTodoChange(chatId, previous, next);
+        refreshActiveCards();
+        scheduleBarSync(chatId, 0);
+      }),
+    );
 
     // Refresh-only subscribers for the events the web forwards over
     // events.mux/events.host: open panels re-read their data source, closed
@@ -3241,7 +3529,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           const delivered: { chatId: number; messageId: number }[] = [];
           const targets = chatId === undefined ? [...state.chats] : state.chats.has(chatId) ? [chatId] : [];
           for (const target of targets) {
-            const id = await state.transport?.sendText(target, plain(text), {
+            const id = await uiSend(target, plain(text), {
               parse_mode: "HTML",
               ...(keyboard === undefined ? {} : { reply_markup: keyboard as never }),
             });
@@ -3253,7 +3541,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         edit: async (chatId, messageId, text, keyboard) => {
           const t = state.transport;
           if (!t) return false;
-          const edited = await t.editText(chatId, messageId, plain(text), {
+          const edited = await t.editTextControl(chatId, messageId, plain(text), {
             parse_mode: "HTML",
             // `undefined` means "settle this card": edit the text and remove
             // its inline keyboard in place instead of leaving dead buttons.
@@ -3291,27 +3579,23 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
         if (allowed) state.chats.add(chatId);
         return allowed;
       },
-      onCommand: (chatId, command, args, messageId) => dispatchCommand(chatId, command, args, messageId).catch((err) => log("command failed", err)),
-      onBarButton: (chatId, label) => dispatchBarButton(chatId, label).catch((err) => log("bar button failed", err)),
-      onCallback: (chatId, data) => dispatchCallback(chatId, data).catch((err) => log("callback failed", err)),
-      onPhoto: (chatId, fileId, caption, messageId) => dispatchPhoto(chatId, fileId, caption, messageId).catch((err) => log("photo failed", err)),
-      onDocument: (chatId, kind, _fileId, name, _mimeType) => {
-        void state.transport?.sendText(
-          chatId,
-          `\u{1F4CE} Received ${plain(kind)}${name ? ` "${plain(truncate(name, 48))}"` : ""}. The dsh web seam only attaches images \u2014 send the content as text or a photo.`,
-          { parse_mode: "HTML" },
-        );
-      },
+      onCommand: (chatId, command, args, messageId) => dispatchCommand(chatId, command, args, messageId).catch((err) => notifyDispatchFailure(chatId, `command /${command}`, err)),
+      onBarButton: (chatId, label) => dispatchBarButton(chatId, label).catch((err) => notifyDispatchFailure(chatId, "Bar action", err)),
+      onCallback: (chatId, data) => dispatchCallback(chatId, data).catch((err) => notifyDispatchFailure(chatId, "Button action", err)),
+      onPhoto: (chatId, fileId, caption, messageId) => dispatchPhoto(chatId, fileId, caption, messageId).catch((err) => notifyDispatchFailure(chatId, "Photo upload", err)),
+      onPhotos: (chatId, photos) => dispatchPhotos(chatId, photos).catch((err) => notifyDispatchFailure(chatId, "Photo batch upload", err)),
+      onDocument: (chatId, kind, fileId, name, mimeType, messageId) =>
+        dispatchDocument(chatId, kind, fileId, name, mimeType, messageId).catch((err) => notifyDispatchFailure(chatId, "Attachment upload", err)),
       onUnauthorized: (chatId, reason) => {
         if (reason === "command:start") pendingStartAfterAllow.add(chatId);
         log(`unauthorized prompt -> chatId ${chatId}${reason === undefined ? "" : ` (${reason})`}`);
-        void state.transport?.sendText(chatId, "\u{1F6AB} This chat is not allowed yet. Tap below to grant access:", {
+        void uiSend(chatId, "\u{1F6AB} This chat is not allowed yet. Tap below to grant access:", {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [[{ text: "\u2795 Allow this chat", callback_data: "m:allowthis" }]] },
-        }).catch(() => {});
+        });
       },
       onUserText: async (chatId, text, messageId) => {
-        void state.transport?.sendChatAction(chatId, "typing").catch(() => {});
+        if (state.transport) void safeWrap(`typing(${chatId})`, () => state.transport!.sendChatActionControl(chatId, "typing"), log);
         if (pendingSearch && pendingSearch.chatId === chatId) {
           pendingSearch = undefined;
           void openSearchCard(chatId, text);
@@ -3322,12 +3606,12 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           pendingMkdir = undefined;
           const name = text.trim();
           if (!name || name.includes("/") || name.includes("\\")) {
-            void state.transport?.sendText(chatId, "\u274C Folder name must be a single path segment (no / or \\).", { parse_mode: "HTML" });
+            void uiSend(chatId, "\u274C Folder name must be a single path segment (no / or \\).", { parse_mode: "HTML" });
             return openHostDirectoryCard(chatId, path);
           }
           void (async () => {
             const res = await createDirectory(join(path, name));
-            void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+            void uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
             return openHostDirectoryCard(chatId, path);
           })().catch((err) => log("new folder failed", err));
           return;
@@ -3336,14 +3620,14 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           const { sessionId } = pendingSteer;
           pendingSteer = undefined;
           const res = promptSession(requireCtx(), sessionId, text, "steer");
-          void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+          void uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
           return;
         }
         if (pendingWorkspaceCreate && pendingWorkspaceCreate.chatId === chatId) {
           pendingWorkspaceCreate = undefined;
           const trimmed = text.trim();
           if (!trimmed) {
-            void state.transport?.sendText(chatId, "\u274C Workspace path must not be blank.", { parse_mode: "HTML" });
+            void uiSend(chatId, "\u274C Workspace path must not be blank.", { parse_mode: "HTML" });
             return openWorkspacesCard(chatId);
           }
           const space = trimmed.indexOf(" ");
@@ -3351,7 +3635,7 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           const title = space === -1 ? undefined : trimmed.slice(space + 1).trim();
           void (async () => {
             const res = await createWorkspace(requireCtx(), path, title === "" ? undefined : title);
-            void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+            void uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
             return openWorkspacesCard(chatId);
           })().catch((err) => log("workspace create failed", err));
           return;
@@ -3360,15 +3644,19 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           const sessionId = pendingRename.sessionId;
           pendingRename = undefined;
           const res = renameSession(requireCtx(), sessionId, text);
-          void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+          void uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
           return;
         }
         if (pendingSubagentPrompt && pendingSubagentPrompt.chatId === chatId) {
           const { parentId, childId } = pendingSubagentPrompt;
           pendingSubagentPrompt = undefined;
-          void promptSubagent(requireCtx(), parentId, childId, text)
-            .then((res) => state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" }))
-            .catch(() => {});
+          void safeWrap("subagent-prompt", () =>
+            promptSubagent(requireCtx(), parentId, childId, text).then((res) =>
+              uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" }),
+            ),
+          log).then((sent) => {
+            if (sent === undefined) void uiSend(chatId, "\u274C Subagent prompt failed.", { parse_mode: "HTML" });
+          });
           return;
         }
         if (pendingPresetCopy && pendingPresetCopy.chatId === chatId) {
@@ -3376,15 +3664,17 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           pendingPresetCopy = undefined;
           const newId = text.trim();
           if (!newId) {
-            void state.transport?.sendText(chatId, "\u274C Preset id must not be blank.", { parse_mode: "HTML" });
+            void uiSend(chatId, "\u274C Preset id must not be blank.", { parse_mode: "HTML" });
             return;
           }
-          void copyAgentPreset(requireCtx(), sourceId, newId)
-            .then((res) => {
-              void state.transport?.sendText(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+          void safeWrap("preset-copy", () =>
+            copyAgentPreset(requireCtx(), sourceId, newId).then((res) => {
+              void uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
               if (res.ok) void openPresetsCard(chatId);
-            })
-            .catch(() => {});
+            }),
+          log).then((done) => {
+            if (done === undefined) void uiSend(chatId, "\u274C Preset copy failed.", { parse_mode: "HTML" });
+          });
           return;
         }
         // Per-chat binding: this chat's first message creates its own
@@ -3400,16 +3690,16 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           const created = await createSessionForChat(chatId, state.config.model, undefined, true);
           bindCreatedSession(chatId, created.agentId);
           if (!created.result.ok) {
-            await state.transport?.sendText(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
+            await uiSend(chatId, `\u274C ${plain(created.result.text)}`, { parse_mode: "HTML" });
             return;
           }
           const res = state.bridge!.deliver(chatId, text, messageId);
-          if (!res.ok) await state.transport?.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+          if (!res.ok) await uiSend(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
           else scheduleBarSync(chatId, 0);
           return;
         }
         const res = state.bridge!.deliver(chatId, text, messageId);
-        if (!res.ok) await state.transport?.sendText(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
+        if (!res.ok) await uiSend(chatId, `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
         else scheduleBarSync(chatId, 0);
       },
     });

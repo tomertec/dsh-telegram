@@ -159,3 +159,14 @@
 - UI：Sessions 卡项目页 + 项目切换器 + per-chat 返回记忆；键盘新增项目行与运行标记。
 - `npm run check`：**236/236 pass**；计划见 `docs/SESSION_UX_PLAN.md`。
 - 待办：实机冒烟（真实 bot `/sessions` 默认落运行项目、切换、返回同项目）。
+
+## Round 26（本轮）
+
+- 按用户实机反馈：bar 所有按钮走独立 `control:<chat>` 出站队列（卡片/命令回执/Bar 载体/typing 不再排在 assistant 流后面），收起按钮 fire-and-forget 立即响应；Goal 按钮保持 UI 通道只读展示，并新增 `🗑 Clear goal` + `/goalclear`（先确认，不影响运行中会话）。
+- 修复 issue 7：goal 长任务 step/tool 进度卡（无流式渲染器时自动启用），turn/end 收成 openclaw 风格收据并保留缓存命中率；openclaw 草稿标题在 goal turn 显示目标与 step。
+- 修复 issue 8：`compact.threshold|policy|cooldownMs` 配置 + 压力观测器（request/context + usage），ask 弹一次性审批卡，auto 直接 compactIfNeeded，成功推送摘要与压缩量。
+- 修复 issue 9：多图媒体组合并为单 turn；语音走 OpenAI 兼容转写（`media.transcribe.*`）；文档/视频落盘 `~/.dsh/sessions/<id>/attachments` 并注入读取提示。
+- 修复 issue 10：`/todo` 命令、`📋 Todos · N` bar/menu 计数、`todo/write` 增量卡片、状态/优先级展示。
+- 修复 issue 11-13：transport 全通道成功/失败日志 + `sendTextFallback` 原始 API 兜底、`safeWrap` 消灭 `void X.catch(()=>{})`、dispatch 失败通知用户、openclaw turn/start 即发占位并在流失败时给用户兜底提示。
+- `npm run check`：**305/305 pass**（新增 safe/todos/compaction/media/goal-progress/transport lanes 测试）。
+- 待办：实机冒烟 + 用户确认后提交/发布。

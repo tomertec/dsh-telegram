@@ -248,8 +248,18 @@ export class Bridge {
     return { ok: true, text: mode === "queue-only" ? "Queued." : "Delivered." };
   }
 
+  /** Deliver a media-group batch as ONE inbound turn (issue #9). */
+  deliverImages(chatId: number, attachments: readonly { attachmentId: string; mediaType: string; bytes: number; width: number; height: number; name?: string }[], caption?: string, messageId?: number): { ok: boolean; text: string } {
+    if (attachments.length === 1) return this.deliverImage(chatId, attachments[0]!, caption, messageId);
+    return this.deliverImageContent(chatId, caption, messageId, attachments.map((attachment) => ({ type: "image", attachment })));
+  }
+
   /** Deliver one promoted image as the inbound turn (session.attachment path). */
   deliverImage(chatId: number, attachment: { attachmentId: string; mediaType: string; bytes: number; width: number; height: number; name?: string }, caption?: string, messageId?: number): { ok: boolean; text: string } {
+    return this.deliverImageContent(chatId, caption, messageId, [{ type: "image", attachment }]);
+  }
+
+  private deliverImageContent(chatId: number, caption: string | undefined, messageId: number | undefined, imageBlocks: unknown[]): { ok: boolean; text: string } {
     const agent = this.resolveAgent(chatId);
     if (!agent) return { ok: false, text: "No live agent in this session." };
     const config = this.getConfig();
@@ -257,13 +267,13 @@ export class Bridge {
     if (mode === "muted") return { ok: true, text: "Muted \u2014 message ignored." };
     const content: unknown[] = [];
     if (caption && caption.trim()) content.push({ type: "text", text: withReasoningDirective(config, caption.trim()) });
-    content.push({ type: "image", attachment });
+    content.push(...imageBlocks);
     const message = createUserMessage({ content: content as never, source: { kind: "user" } });
     const target = agent as unknown as { send(message: unknown, target: string, wakeup: boolean): void; followup(message: unknown): void };
     // Same ordering contract as deliver(): the binding and inbound quote must
     // exist before the agent can emit a session event synchronously.
     const state = this.touch(chatId, agent.id);
-    const inbound = { chatId, text: caption ?? "[image]", messageId, replied: false, noReply: false };
+    const inbound = { chatId, text: caption || `[${imageBlocks.length} image${imageBlocks.length === 1 ? "" : "s"}]`, messageId, replied: false, noReply: false };
     state.inbound = inbound;
     state.reminded = false;
     this.syncLegacy(chatId, state, inbound);
@@ -348,6 +358,12 @@ export class Bridge {
    * immediate forwarding, byte-for-byte the pre-plugin behavior. */
   setAssistantConsumer(consumer: ((chatId: number, text: string, assistantMessageId?: string) => void) | undefined): void {
     this.assistantConsumer = consumer;
+  }
+
+  /** Whether a live-feed renderer currently owns presentation (goal progress
+   * cards must not duplicate openclaw's draft). */
+  hasAssistantConsumer(): boolean {
+    return this.assistantConsumer !== undefined && this.liveFeedEnabled();
   }
 
   /** Renderer plugins call this after delivering the final answer for a chat. */
@@ -470,7 +486,7 @@ export class Bridge {
                 parse_mode: "HTML",
                 ...this.replyParametersFor(chatId),
               })
-              .catch(() => {});
+              .catch((err) => this.log("no-reply reminder FAILED", err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)));
           }
           this.notifyStateChange();
         }

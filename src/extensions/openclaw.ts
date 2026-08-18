@@ -20,7 +20,9 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { escapeHtml } from "../telegram/html.js";
 import { markdownToHtml } from "../telegram/markdown.js";
-import { renderStatsLine, type StatusStats } from "../harness/adapters/status.js";
+import { type StatusStats } from "../harness/adapters/status.js";
+import { safeWrap } from "../telegram/safe.js";
+import { renderTurnReceipt } from "../telegram/turn-receipt.js";
 import type { ExtensionHost } from "./types.js";
 
 const MAX_LINES = 8;
@@ -134,10 +136,13 @@ interface Draft {
   reasoningLineIndex?: number;
   reasoningSteps: number;
   toolCalls: number;
+  step: number;
   startedAt: number;
   dirty: boolean;
   timer?: ReturnType<typeof setTimeout>;
   sending?: Promise<number | undefined>;
+  /** One fallback notice per turn when streaming delivery fails (#12). */
+  fallbackSent?: boolean;
   /** Per-turn token meter folds (same vocabulary as the web status strip). */
   uncachedInputTokens: number;
   outputTokens: number;
@@ -261,51 +266,21 @@ function render(draft: Draft, title: string): string {
   return lines.join("\n");
 }
 
-function formatTokensCompact(tokens: number): string {
-  const scaled = (value: number): string => (value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10));
-  if (tokens < 1e3) return String(tokens);
-  if (tokens < 1e6) return `${scaled(tokens / 1e3)}K`;
-  return `${scaled(tokens / 1e6)}M`;
-}
-
 function buildSummary(draft: Draft, sessionStats?: StatusStats): string {
-  const seconds = Math.max(1, Math.round((Date.now() - draft.startedAt) / 1000));
-  const lines = [
-    `\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F ${seconds}s`,
-    "\u2500".repeat(9),
-  ];
-
-  const activity: string[] = [];
-  if (draft.reasoningSteps > 0) activity.push(`\u{1F9E0} ${draft.reasoningSteps} \u6B21\u601D\u8003`);
-  if (draft.toolCalls > 0) activity.push(`\u{1F6E0}\uFE0F ${draft.toolCalls} \u6B21\u5DE5\u5177`);
-
-  const statsLine = sessionStats === undefined ? undefined : renderStatsLine(sessionStats);
-  const statsSegments = statsLine?.split(" | ") ?? [];
-  if (statsSegments[0] !== undefined) activity.push(statsSegments[0]);
-  if (activity.length > 0) lines.push(activity.join(" \u00B7 "));
-
-  const billed = draft.uncachedInputTokens + draft.cacheReadTokens + draft.cacheWriteTokens;
-  if (billed > 0 || draft.outputTokens > 0) {
-    const tokens = [
-      `\u{1F4E5} \u8F93\u5165 ${formatTokensCompact(billed)} tok`,
-      `\u{1F4E4} \u8F93\u51FA ${formatTokensCompact(draft.outputTokens)} tok`,
-    ];
-    if (billed > 0) {
-      const hit = Math.round((draft.cacheReadTokens / billed) * 100);
-      tokens.push(`\u{1F4BE} \u547D\u4E2D ${hit}%`);
-    }
-    lines.push(tokens.join(" \u00B7 "));
-  }
-
-  const performance = statsSegments.slice(1).filter((segment) => segment !== undefined).join(" \u00B7 ");
-  if (performance !== "") lines.push(performance);
-  return lines.join("\n");
+  return renderTurnReceipt({
+    durationMs: Date.now() - draft.startedAt,
+    reasoningSteps: draft.reasoningSteps,
+    toolCalls: draft.toolCalls,
+    tokens: draft,
+    sessionStats,
+  });
 }
 
 interface SessionEventLike {
   type?: string;
   data?: {
     turn?: number;
+    step?: number;
     usage?: TokenUsageLike;
     chunk?: {
       type?: string;
@@ -361,12 +336,19 @@ export function apply(ctx: Context, _config?: unknown): void {
     if (!draft.dirty || draft.messageId === undefined) return;
     draft.dirty = false;
     const text = render(draft, title);
-    void host
-      .editMessage(chatId, draft.messageId, text, { parse_mode: "HTML" })
-      .catch((err) => {
-        console.error("[openclaw] edit failed", err);
+    void safeWrap("openclaw-edit", () => host.editMessage(chatId, draft.messageId!, text, { parse_mode: "HTML" })).then((edited) => {
+      if (edited !== true) {
+        console.error("[dsh-telegram] openclaw-edit FAILED", `chatId=${chatId} messageId=${draft.messageId}`);
         draft.messageId = undefined;
-      });
+      }
+    });
+  };
+
+  /** Goal-aware draft title (issue #7): goal turns show the objective and
+   * step count; ordinary turns keep the openclaw working header. */
+  const titleFor = (chatId: number, draft: Draft): string => {
+    const goal = host.goalForChat?.(chatId);
+    return goal === undefined ? "\u2699\uFE0F Working\u2026" : `\u{1F4CA} ${goal.objective.slice(0, 60)} \u00B7 step ${draft.step}`;
   };
 
   const schedule = (chatId: number, draft: Draft): void => {
@@ -374,7 +356,7 @@ export function apply(ctx: Context, _config?: unknown): void {
     if (draft.timer !== undefined) return;
     draft.timer = setTimeout(() => {
       draft.timer = undefined;
-      flush(chatId, draft, "\u2699\uFE0F Working\u2026");
+      flush(chatId, draft, titleFor(chatId, draft));
     }, EDIT_THROTTLE_MS);
   };
 
@@ -382,16 +364,21 @@ export function apply(ctx: Context, _config?: unknown): void {
     if (draft.messageId !== undefined || draft.sending !== undefined) return;
     const pending = host.send(chatId, "\u2026", { parse_mode: "HTML" });
     draft.sending = pending;
-    void pending
-      .then((id) => {
+    void safeWrap("openclaw-placeholder", () =>
+      pending.then((id) => {
         if (id !== undefined) draft.messageId = id;
-      })
-      .catch((err) => {
-        console.error("[openclaw] send placeholder failed", err);
-      })
-      .finally(() => {
-        draft.sending = undefined;
-      });
+        return id !== undefined;
+      }),
+    ).then((sent) => {
+      if (sent !== true && draft.fallbackSent !== true) {
+        draft.fallbackSent = true;
+        void safeWrap("openclaw-progress-fallback", () =>
+          host.send(chatId, "\u26A0\uFE0F Agent is running, but live progress cannot be delivered right now \u2014 check /status or /history.", { parse_mode: "HTML" }),
+        );
+      }
+    }).finally(() => {
+      draft.sending = undefined;
+    });
   };
 
   // Official harness event stream — the same session/event feed the web UI
@@ -423,6 +410,7 @@ export function apply(ctx: Context, _config?: unknown): void {
         reasoningRaw: "",
         reasoningSteps: 0,
         toolCalls: 0,
+        step: 0,
         startedAt: Date.now(),
         dirty: false,
         uncachedInputTokens: 0,
@@ -430,6 +418,10 @@ export function apply(ctx: Context, _config?: unknown): void {
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
       });
+      // Visible feedback starts with the turn itself, not with the first
+      // tool/reasoning event (#12): the placeholder later collapses into the
+      // openclaw receipt or is deleted for an empty turn.
+      ensureMessage(chatId, chats.get(chatId)!);
       return;
     }
     // Final delivery must never depend on the live draft: a turn whose
@@ -449,11 +441,9 @@ export function apply(ctx: Context, _config?: unknown): void {
         const finalize = (messageId: number | undefined): void => {
           if (messageId === undefined) return;
           if (hasContent) {
-            void host
-              .editMessage(chatId, messageId, buildSummary(draft, sessionStats), { parse_mode: "HTML" })
-              .catch(() => {});
+            void safeWrap("openclaw-finalize", () => host.editMessage(chatId, messageId, buildSummary(draft, sessionStats), { parse_mode: "HTML" }));
           } else {
-            void host.deleteMessage(chatId, messageId).catch(() => {});
+            void safeWrap("openclaw-cleanup", () => host.deleteMessage(chatId, messageId));
           }
         };
         if (draft.messageId !== undefined) {
@@ -461,7 +451,7 @@ export function apply(ctx: Context, _config?: unknown): void {
         } else if (draft.sending !== undefined) {
           // The placeholder is still in flight: finalize it when it lands
           // instead of leaving a stray "…" message behind.
-          void draft.sending.then(finalize).catch(() => {});
+          void safeWrap("openclaw-finalize-pending", () => draft.sending!.then(finalize));
         }
         chats.delete(chatId);
       }
@@ -489,13 +479,19 @@ export function apply(ctx: Context, _config?: unknown): void {
             host.markInboundReplied(chatId);
           })
           .catch((err) => {
-            console.error("[openclaw] final answer send failed", err);
+            console.error("[dsh-telegram] openclaw-final-answer FAILED", err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
           });
       }
       return;
     }
     const draft = chats.get(chatId);
     if (!draft) return;
+
+    if (type === "step/start") {
+      draft.step = event.data?.step ?? draft.step;
+      schedule(chatId, draft);
+      return;
+    }
 
     // Thinking bursts: text/reasoning deltas flow into one 🧠 line, replaced
     // in place on every edit — the openclaw "block that flows" behavior.

@@ -46,13 +46,19 @@ async function bootGoalHarness() {
     handlers = value;
     return originalSetHandlers.call(this, value);
   };
-  TelegramTransport.prototype.sendText = async function (chatId, text, options) {
+  const recordSend = async function (chatId, text, options) {
     sends.push({ chatId, text, options });
     return sends.length;
   };
+  TelegramTransport.prototype.sendText = recordSend;
+  TelegramTransport.prototype.sendTextControl = recordSend;
+  TelegramTransport.prototype.sendTextFallback = recordSend;
   TelegramTransport.prototype.editText = async () => true;
+  TelegramTransport.prototype.editTextControl = async () => true;
   TelegramTransport.prototype.deleteMessage = async () => {};
+  TelegramTransport.prototype.deleteMessageControl = async () => {};
   TelegramTransport.prototype.sendChatAction = async () => {};
+  TelegramTransport.prototype.sendChatActionControl = async () => {};
 
   try {
     mkdirSync(join(base, '.pi'));

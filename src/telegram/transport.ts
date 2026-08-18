@@ -28,8 +28,12 @@ export type UnsupportedMediaKind = "document" | "voice" | "video";
 export interface TransportHandlers {
   onText: (chatId: number, text: string, messageId?: number) => void | Promise<void>;
   onPhoto: (chatId: number, fileId: string, caption: string, messageId?: number) => void | Promise<void>;
+  /** Media-group batches arrive as several message updates with one
+   * `media_group_id`; the router gets one ordered batch per group. */
+  onPhotos?: (chatId: number, photos: readonly { fileId: string; caption: string; messageId?: number }[], groupId?: string) => void | Promise<void>;
   onCallback: (chatId: number, data: string) => void | Promise<void>;
-  /** Media the web seam cannot attach (only images have an attachment API). */
+  /** Voice is transcribed (when configured), other documents are saved to
+   * the session attachments directory. */
   onDocument?: (chatId: number, kind: UnsupportedMediaKind, fileId: string, name: string, mimeType: string, messageId?: number) => void | Promise<void>;
 }
 
@@ -62,6 +66,11 @@ export class TelegramTransport {
   private maxMessageLength: number;
   private readonly log: (message: string, error?: unknown) => void;
   private readonly sleep: (ms: number) => Promise<void>;
+  /** UI/control lane key: navigation cards, bar swaps and command acks must
+   * never queue behind assistant streaming edits (issues #11/#12). */
+  private static controlKey(chatId: number): string {
+    return `control:${chatId}`;
+  }
   private handlers: TransportHandlers | undefined;
   private me: { id: number; username: string } | undefined;
   private polling = false;
@@ -155,7 +164,9 @@ export class TelegramTransport {
       const chatId = callbackUpdateChatId(callback);
       // Answer first: the Telegram client keeps a spinner until the callback
       // is acknowledged — without this every button feels dead.
-      await withTimeout(this.api.answerCallbackQuery(callback.id ?? ""), 15_000).catch(() => {});
+      await withTimeout(this.api.answerCallbackQuery(callback.id ?? ""), 15_000).catch((err) =>
+        this.log(`answerCallbackQuery FAILED err=${err instanceof Error ? err.message : String(err)}`, err),
+      );
       if (callback.data === undefined || chatId === undefined) {
         this.log(`callback dropped: chat=${chatId} data=${String(callback.data ?? "").slice(0, 64)}`);
         return;
@@ -163,6 +174,20 @@ export class TelegramTransport {
       this.log(`inbound callback chatId=${chatId} data=${callback.data.slice(0, 64)}`);
       await this.handlers.onCallback(chatId, callback.data);
       return;
+    }
+  }
+
+  /** Route one photo batch (single or media group). Legacy single-photo
+   * consumers keep working when no `onPhotos` handler is mounted. */
+  private async handlePhotos(chatId: number, photos: readonly { fileId: string; caption: string; messageId?: number }[], groupId?: string): Promise<void> {
+    if (!this.handlers) return;
+    const batch = photos.slice(0, 10);
+    if (this.handlers.onPhotos !== undefined) {
+      await this.handlers.onPhotos(chatId, batch, groupId);
+      return;
+    }
+    for (const photo of batch) {
+      await this.handlers.onPhoto(chatId, photo.fileId, photo.caption, photo.messageId);
     }
   }
 
@@ -198,13 +223,34 @@ export class TelegramTransport {
               this.api.getUpdates({ offset: this.pollOffset, timeout: 25, allowed_updates: ["message", "callback_query"] }, abort.signal as never),
               40_000,
             );
-            for (const update of updates) {
+            // Media groups arrive as N message updates sharing one
+            // media_group_id: route them as one ordered batch (issue #9).
+            const groups = new Map<string, { chatId: number; groupId: string; photos: { fileId: string; caption: string; messageId?: number }[] }>();
+            const batched = new Set<number>();
+            updates.forEach((update, index) => {
+              const message = (update as { message?: { media_group_id?: string; photo?: { file_id: string }[]; caption?: string; chat?: { id?: number }; message_id?: number } }).message;
+              if (message?.chat?.id === undefined || !Array.isArray(message.photo) || message.photo.length === 0 || message.media_group_id === undefined) return;
+              const key = `${message.chat.id}:${message.media_group_id}`;
+              let group = groups.get(key);
+              if (!group) {
+                group = { chatId: message.chat.id, groupId: message.media_group_id, photos: [] };
+                groups.set(key, group);
+              }
+              const largest = message.photo[message.photo.length - 1]!;
+              group.photos.push({ fileId: largest.file_id, caption: message.caption ?? "", messageId: message.message_id });
+              batched.add(index);
+            });
+            for (const group of groups.values()) {
+              void this.handlePhotos(group.chatId, group.photos, group.groupId).catch((err) => this.log("photo batch handler failed", err));
+            }
+            updates.forEach((update, index) => {
               this.pollOffset = update.update_id + 1;
+              if (batched.has(index)) return;
               // Never let a slow handler block the poll loop: an agent turn can
               // take minutes, and a serial await would freeze inbound traffic
               // (the "bot went mute" failure).
               void this.handleUpdate(update).catch((err) => this.log("update handler failed", err));
-            }
+            });
             this.conflict409 = 0;
             this.pollingErrors = 0;
           } catch (err) {
@@ -330,49 +376,126 @@ export class TelegramTransport {
     ).catch((err) => this.log("setChatMenuButton failed", err));
   }
 
-  sendText(chatId: number, text: string, options: SendOptions = {}): Promise<number | undefined> {
+  /** Send one split text payload through the requested per-chat lane, with
+   * success/failure logged on every attempt so a dropped reply can never be
+   * silent again (#11). */
+  private sendTextLane(chatId: number, text: string, options: SendOptions, lane: number | string): Promise<number | undefined> {
     const parts = splitText(text, this.maxMessageLength);
-    return this.queue.push(chatId, async () => {
-      let first: number | undefined;
-      for (let index = 0; index < parts.length; index += 1) {
-        // Reply quoting and reply keyboards are per-message Telegram state:
-        // only the FIRST part carries them; later parts must be plain text.
-        const partOptions = index === 0 ? options : { ...options, reply_markup: undefined, reply_parameters: undefined };
-        const msg = await withTimeout(this.api.sendMessage(chatId, parts[index]!, partOptions), 20_000);
-        if (index === 0 && (options as { reply_markup?: unknown }).reply_markup !== undefined) {
-          this.log(`sendText reply_markup echo -> ${JSON.stringify(msg.reply_markup ?? null)}`);
+    const markup = (options as { reply_markup?: unknown }).reply_markup;
+    return this.queue.push(lane, async () => {
+      try {
+        let first: number | undefined;
+        for (let index = 0; index < parts.length; index += 1) {
+          // Reply quoting and reply keyboards are per-message Telegram state:
+          // only the FIRST part carries them; later parts must be plain text.
+          const partOptions = index === 0 ? options : { ...options, reply_markup: undefined, reply_parameters: undefined };
+          const msg = await withTimeout(this.api.sendMessage(chatId, parts[index]!, partOptions), 20_000);
+          first ??= msg.message_id;
         }
-        first ??= msg.message_id;
+        this.log(`sendText ok chatId=${chatId} parts=${parts.length} reply_markup=${markup === undefined ? "null" : "set"}`);
+        return first;
+      } catch (err) {
+        this.log(`sendText FAILED chatId=${chatId} text.len=${text.length} err=${err instanceof Error ? err.message : String(err)}`, err);
+        throw err;
       }
-      return first;
     });
+  }
+
+  sendText(chatId: number, text: string, options: SendOptions = {}): Promise<number | undefined> {
+    return this.sendTextLane(chatId, text, options, chatId);
+  }
+
+  /** UI messages ride their own control lane so cards/acks stay responsive
+   * while assistant output streams (issues #11/#12, bar latency report). */
+  sendTextControl(chatId: number, text: string, options: SendOptions = {}): Promise<number | undefined> {
+    return this.sendTextLane(chatId, text, options, TelegramTransport.controlKey(chatId));
   }
 
   sendWithBar(chatId: number, text: string, options: SendOptions = {}): Promise<number | undefined> {
     return this.sendText(chatId, text, { ...options, reply_markup: buildBarKeyboard() });
   }
 
-  editText(chatId: number, messageId: number, text: string, options: EditOptions = {}): Promise<boolean> {
-    return this.queue.push(chatId, async () => {
+  private editTextLane(chatId: number, messageId: number, text: string, options: EditOptions, lane: number | string): Promise<boolean> {
+    return this.queue.push(lane, async () => {
       try {
         await withTimeout(this.api.editMessageText(chatId, messageId, text, options), 20_000);
+        this.log(`editText ok chatId=${chatId} messageId=${messageId}`);
         return true;
       } catch (err) {
+        this.log(`editText FAILED chatId=${chatId} messageId=${messageId} err=${err instanceof Error ? err.message : String(err)}`, err);
         if (err instanceof GrammyError) return false;
         throw err;
       }
     });
   }
 
-  deleteMessage(chatId: number, messageId: number): Promise<void> {
-    return this.queue.push(chatId, async () => {
-      await withTimeout(this.api.deleteMessage(chatId, messageId), 20_000);
+  editText(chatId: number, messageId: number, text: string, options: EditOptions = {}): Promise<boolean> {
+    return this.editTextLane(chatId, messageId, text, options, chatId);
+  }
+
+  editTextControl(chatId: number, messageId: number, text: string, options: EditOptions = {}): Promise<boolean> {
+    return this.editTextLane(chatId, messageId, text, options, TelegramTransport.controlKey(chatId));
+  }
+
+  private deleteMessageLane(chatId: number, messageId: number, lane: number | string): Promise<void> {
+    return this.queue.push(lane, async () => {
+      try {
+        await withTimeout(this.api.deleteMessage(chatId, messageId), 20_000);
+        this.log(`deleteMessage ok chatId=${chatId} messageId=${messageId}`);
+      } catch (err) {
+        this.log(`deleteMessage FAILED chatId=${chatId} messageId=${messageId} err=${err instanceof Error ? err.message : String(err)}`, err);
+        throw err;
+      }
     });
   }
 
+  deleteMessage(chatId: number, messageId: number): Promise<void> {
+    return this.deleteMessageLane(chatId, messageId, chatId);
+  }
+
+  deleteMessageControl(chatId: number, messageId: number): Promise<void> {
+    return this.deleteMessageLane(chatId, messageId, TelegramTransport.controlKey(chatId));
+  }
+
   sendChatAction(chatId: number, action: "typing"): Promise<void> {
-    return this.queue.push(chatId, async () => {
-      await withTimeout(this.api.sendChatAction(chatId, action), 20_000);
+    return this.sendChatActionLane(chatId, action, chatId);
+  }
+
+  sendChatActionControl(chatId: number, action: "typing"): Promise<void> {
+    return this.sendChatActionLane(chatId, action, TelegramTransport.controlKey(chatId));
+  }
+
+  private sendChatActionLane(chatId: number, action: "typing", lane: number | string): Promise<void> {
+    return this.queue.push(lane, async () => {
+      try {
+        await withTimeout(this.api.sendChatAction(chatId, action), 20_000);
+        this.log(`sendChatAction ok chatId=${chatId} action=${action}`);
+      } catch (err) {
+        this.log(`sendChatAction FAILED chatId=${chatId} action=${action} err=${err instanceof Error ? err.message : String(err)}`, err);
+        throw err;
+      }
     });
+  }
+
+  /** Last-resort raw Bot API send for critical command acks: if the queued
+   * grammY call exhausts retries, one direct HTTPS attempt still runs (#11). */
+  async sendTextFallback(chatId: number, text: string, options: SendOptions = {}): Promise<number | undefined> {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${this.bot.token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, ...options }),
+      });
+      const payload = (await response.json()) as { ok?: boolean; result?: { message_id?: number } };
+      if (payload.ok !== true) {
+        this.log(`sendTextFallback FAILED chatId=${chatId} response=${response.status}`, payload);
+        return undefined;
+      }
+      this.log(`sendTextFallback ok chatId=${chatId} messageId=${payload.result?.message_id ?? "unknown"}`);
+      return payload.result?.message_id;
+    } catch (err) {
+      this.log(`sendTextFallback FAILED chatId=${chatId} err=${err instanceof Error ? err.message : String(err)}`, err);
+      return undefined;
+    }
   }
 }
