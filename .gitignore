@@ -10,3 +10,4 @@ coverage/
 
 # Local plugin bundles checked out alongside this repo
 dsh-plugins/
+pack/
