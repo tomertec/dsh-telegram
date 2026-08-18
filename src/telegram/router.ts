@@ -88,7 +88,9 @@ export function attachRouter(deps: RouterDeps): void {
       }),
     onCallback: (chatId, data) =>
       enqueue(uiChains, chatId, async () => {
-        if (!deps.isAllowed(chatId) && data !== "m:allowthis") return;
+        // No callback is exempt from the whitelist. An unauthorized chat must
+        // never be able to promote itself by tapping a button the bot sent it.
+        if (!deps.isAllowed(chatId)) return;
         return deps.onCallback(chatId, data);
       }),
   });

@@ -1,5 +1,9 @@
 # dsh-telegram
 
+> **Fork notice** — this is [tomertec/dsh-telegram](https://github.com/tomertec/dsh-telegram), a security-hardened fork of
+> [xqicxx/dsh-telegram](https://github.com/xqicxx/dsh-telegram). It closes a remote-takeover hole in the upstream
+> allowlist. See [`FORK.md`](FORK.md) before installing either one.
+
 <p align="center">
   <strong>Recreate the web-app control experience for <a href="https://www.npmjs.com/package/@deepseek-ai/dsh">DeepSeek Harness</a> agents on Telegram.</strong><br/>
   🤖 Chat with dsh agents from a phone · 🗂️ Drive sessions/models/presets/workspaces with buttons · 🔧 Live status & queue counts · 🛡️ Multi-chat isolation and fail-closed routing
@@ -112,7 +116,7 @@ All fields are optional; `security.allowedChatIds` empty means **deny all inboun
 /telegram allow <id>   # whitelist your chat id
 ```
 
-Then send `/start` to the bot in Telegram. An unauthorized chat that sends `/start` first gets an Allow button — after tapping it, the welcome message is replayed automatically.
+Then send `/start` to the bot in Telegram. Chats are whitelisted on the dsh host only — an unauthorized chat gets a plain denial and the host log prints the exact `/telegram allow <chatId>` line to run.
 
 ### 5. Chat
 
@@ -210,6 +214,7 @@ The suite covers bridge routing, multi-chat isolation, transport races, queue re
 ## Safety
 
 - Only whitelisted chats are handled; an empty allowlist denies all inbound traffic
+- **No inbound path can grant access**: every callback is whitelist-checked, and an unauthorized chat is never offered a self-service allow button. Whitelisting happens on the dsh host (`/telegram allow <chatId>`) — see [`FORK.md`](FORK.md)
 - Agent tools can only target chats in the allowed roster
 - Callback payloads are percent-encoded and decode safely; tokens are single-use and bounded
 - User/agent content is always HTML-escaped before wrapping; long HTML is split without breaking tags

@@ -243,7 +243,6 @@ function teardownMount(): void {
   pendingSearch = undefined;
   pendingPresetCopy = undefined;
   pendingMkdir = undefined;
-  pendingStartAfterAllow.clear();
   for (const timer of typingLoops.values()) clearInterval(timer);
   typingLoops.clear();
   runningTurns.clear();
@@ -1734,12 +1733,8 @@ async function openAllowedCard(chatId: number): Promise<void> {
   const lines = [`\u{1F510} Allowed chats (${allowed.length})`, ""];
   for (const id of allowed) lines.push(`\u2022 ${plain(String(id))}`);
   if (allowed.length === 0) lines.push("Nobody is allowed yet \u2014 inbound messages are ignored.");
-  await openCard(chatId, lines.join("\n"), {
-    inline_keyboard: [
-      [{ text: "\u2795 Allow this chat", callback_data: "m:allowthis" }],
-      [{ text: "\u2190 Back", callback_data: "m:back" }],
-    ],
-  });
+  lines.push("", "Add or remove chats from the dsh host only: /telegram allow &lt;chatId&gt; \u00B7 /telegram disallow &lt;chatId&gt;.");
+  await openCard(chatId, lines.join("\n"), buildBackKeyboard());
 }
 
 async function openWatchCard(chatId: number): Promise<void> {
@@ -2519,18 +2514,6 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
       await uiSend(chatId, res.ok ? plain(res.text) : `\u274C ${plain(res.text)}`, { parse_mode: "HTML" });
       return;
     }
-    case "allowthis": {
-      if (!isChatAllowed(state.config, chatId)) {
-        state.config.security.allowedChatIds.push(chatId);
-        writeConfig(state.configRoot, state.config);
-      }
-      state.chats.add(chatId);
-      // A first touch of `/start` landed on the unauthorized prompt; after
-      // granting access land the user in the real welcome instead of making
-      // them resend the command.
-      if (pendingStartAfterAllow.delete(chatId)) return dispatchCommand(chatId, "start", "");
-      return openAllowedCard(chatId);
-    }
     case "watchtoggle":
       if (state.watching) await stopWatching();
       else await startWatching();
@@ -2579,9 +2562,6 @@ async function dispatchCallback(chatId: number, data: string): Promise<void> {
 
 let pendingRename: { chatId: number; sessionId: string } | undefined;
 let pendingWorkspaceCreate: { chatId: number } | undefined;
-/** Chats whose first touch was `/start` while unauthorized: once they tap
- * Allow, replay the welcome instead of making them resend the command. */
-const pendingStartAfterAllow = new Set<number>();
 
 // ---------------------------------------------------------------------------
 // Bar + command dispatch
@@ -3840,12 +3820,11 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
       onDocument: (chatId, kind, fileId, name, mimeType, messageId) =>
         dispatchDocument(chatId, kind, fileId, name, mimeType, messageId).catch((err) => notifyDispatchFailure(chatId, "Attachment upload", err)),
       onUnauthorized: (chatId, reason) => {
-        if (reason === "command:start") pendingStartAfterAllow.add(chatId);
-        log(`unauthorized prompt -> chatId ${chatId}${reason === undefined ? "" : ` (${reason})`}`);
-        void uiSend(chatId, "\u{1F6AB} This chat is not allowed yet. Tap below to grant access:", {
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [[{ text: "\u2795 Allow this chat", callback_data: "m:allowthis" }]] },
-        });
+        // Access is granted on the dsh host only (`/telegram allow <chatId>`).
+        // The bot must never offer an inbound path to self-authorize: anyone
+        // who can reach the bot could otherwise take over the agent.
+        log(`unauthorized inbound -> chatId ${chatId}${reason === undefined ? "" : ` (${reason})`} \u2014 grant with: /telegram allow ${chatId}`);
+        void uiSend(chatId, "\u{1F6AB} This chat is not allowed.", { parse_mode: "HTML" });
       },
       onUserText: async (chatId, text, messageId) => {
         if (state.transport) void safeWrap(`typing(${chatId})`, () => state.transport!.sendChatActionControl(chatId, "typing"), log);

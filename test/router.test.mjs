@@ -71,11 +71,13 @@ test('router prompts unauthorized chats and gates their traffic', async () => {
   await h.onText(7, 'hello');
   await h.onText(7, '/status');
   await h.onCallback(9, 'm:sessions');
+  // No callback data is exempt from the whitelist — an unauthorized chat can
+  // never promote itself by tapping a button.
   await h.onCallback(9, 'm:allowthis');
   await h.onPhoto(9, 'file', '');
-  assert.deepEqual(calls, ['unauthorized:9:command:start', 'unauthorized:9:text', 'text', 'command', 'callback', 'unauthorized:9:text']);
+  assert.deepEqual(calls, ['unauthorized:9:command:start', 'unauthorized:9:text', 'text', 'command', 'unauthorized:9:text']);
   await h.onPhoto(7, 'file', '');
-  assert.deepEqual(calls, ['unauthorized:9:command:start', 'unauthorized:9:text', 'text', 'command', 'callback', 'unauthorized:9:text', 'photo']);
+  assert.deepEqual(calls, ['unauthorized:9:command:start', 'unauthorized:9:text', 'text', 'command', 'unauthorized:9:text', 'photo']);
 });
 
 test('router serializes updates per chat in arrival order and isolates chats', async () => {

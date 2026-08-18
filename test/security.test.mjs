@@ -94,11 +94,21 @@ test('broadcast roster only contains whitelisted chats and reconciles on allow/d
     assert.equal(broadcast.ok, false);
     assert.match(broadcast.results[0].error, /not in the allowed roster/);
 
-    // The self-service allow button promotes the chat and replays the /start
-    // welcome the user originally asked for.
+    // Regression lock: an unauthorized chat must not be able to promote
+    // itself by tapping any button the bot sent it. No callback is exempt
+    // from the whitelist, and no denial message may carry a grant button.
     await handlers.onCallback(222, 'm:allowthis');
+    await handlers.onCallback(222, 'm:menu');
+    assert.deepEqual(telegram.chats(), []);
+    assert.deepEqual(telegram.getConfig().security.allowedChatIds, []);
+    assert.ok(
+      !sent.some((entry) => JSON.stringify(entry.options ?? {}).includes('allowthis')),
+      'a denial must never offer a self-service allow button',
+    );
+
+    // Access is granted on the dsh host only.
+    await ctx.command.handler({ rawInput: 'allow 222' });
     assert.deepEqual(telegram.chats(), [222]);
-    assert.ok(sent.some((entry) => String(entry.text).includes('ready')), 'the queued /start welcome must land after allow');
 
     // A bound session must be unbound together with the roster slot so it
     // cannot keep receiving assistant events after losing whitelist access.
