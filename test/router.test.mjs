@@ -135,7 +135,7 @@ test('bar buttons and callbacks run immediately instead of waiting behind a slow
   const h = t.handlers();
   const chatId = 71;
   const pendingTurn = h.onText(chatId, 'slow-turn');
-  const collapse = h.onText(chatId, '\u{1F5DC}\uFE0F \u6536\u8D77');
+  const collapse = h.onText(chatId, '\u{1F5DC}\uFE0F Collapse');
   const goal = h.onCallback(chatId, 'm:goals');
   await new Promise((resolve) => setImmediate(resolve));
   const snapshot = [...calls];
@@ -143,7 +143,7 @@ test('bar buttons and callbacks run immediately instead of waiting behind a slow
   await pendingTurn;
   await collapse;
   await goal;
-  assert.deepEqual(snapshot, ['text:slow-turn', 'bar:\u{1F5DC}\uFE0F \u6536\u8D77', 'callback:m:goals']);
+  assert.deepEqual(snapshot, ['text:slow-turn', 'bar:\u{1F5DC}\uFE0F Collapse', 'callback:m:goals']);
 });
 
 test('normal inbound text still stays FIFO behind a slow turn in the same chat', async () => {

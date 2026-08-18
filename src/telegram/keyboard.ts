@@ -35,12 +35,16 @@ export const ABORT_BTN = "\u23F9 Abort";
 /** Legacy bar label from older clients; still dispatches to abort. */
 export const STOP_BTN = "\u23F9 Stop";
 /** Collapses the whole bar to a single return button (more chat history visible). */
-export const COLLAPSE_BTN = "\u{1F5DC}\uFE0F \u6536\u8D77";
+export const COLLAPSE_BTN = "\u{1F5DC}\uFE0F Collapse";
 /** The one button left on a collapsed bar; tapping it restores the full bar. */
-export const RETURN_BTN = "\u8FD4\u56DE";
-/** Stale client bars from earlier builds keep these labels working. */
+export const RETURN_BTN = "Back";
+/** Stale client bars from earlier builds keep these labels working. The
+ * _ZH pair are the Chinese labels this fork replaced with English: a bar
+ * rendered before that change still sits in open chats. */
 export const LEGACY_COLLAPSE_BTN = "\u{1F648} \u6536\u8D77";
 export const LEGACY_RETURN_BTN = "\u{1F519} \u8FD4\u56DE";
+export const LEGACY_COLLAPSE_BTN_ZH = "\u{1F5DC}\uFE0F \u6536\u8D77";
+export const LEGACY_RETURN_BTN_ZH = "\u8FD4\u56DE";
 
 export const BAR_LABELS: readonly string[] = [
   MENU_BTN,
@@ -63,6 +67,8 @@ export const BAR_LABELS: readonly string[] = [
   RETURN_BTN,
   LEGACY_COLLAPSE_BTN,
   LEGACY_RETURN_BTN,
+  LEGACY_COLLAPSE_BTN_ZH,
+  LEGACY_RETURN_BTN_ZH,
 ];
 
 /** Queue button label with a live count embedded (`⌛ Queue · 3`). */
@@ -101,7 +107,7 @@ export function decodeCallbackValue(value: string): string {
 
 /** Always-visible bar grouped by frequency:
  * `Menu · New · Models` / `Sessions · Plugins · Status` /
- * `Goal · Queue · Compact` / `Todos · Abort · 收起`. `🧠 Reasoning` stays
+ * `Goal · Queue · Compact` / `Todos · Abort · Collapse`. `🧠 Reasoning` stays
  * reachable from the menu P1. Pass `queueCount`/`todoCount` for live counts. */
 export function buildBarKeyboard(queueCount?: number, todoCount?: number): Keyboard {
   return new Keyboard()
@@ -133,8 +139,8 @@ export function buildCollapsedBarKeyboard(): Keyboard {
  * button's text changes as the live count is embedded (`⌛ Queue · 7`), so
  * exact BAR_LABELS matching alone would drop those taps. */
 export function normalizeBarLabel(text: string): string | undefined {
-  if (text === LEGACY_COLLAPSE_BTN) return COLLAPSE_BTN;
-  if (text === LEGACY_RETURN_BTN) return RETURN_BTN;
+  if (text === LEGACY_COLLAPSE_BTN || text === LEGACY_COLLAPSE_BTN_ZH) return COLLAPSE_BTN;
+  if (text === LEGACY_RETURN_BTN || text === LEGACY_RETURN_BTN_ZH) return RETURN_BTN;
   if (text === STOP_BTN) return ABORT_BTN;
   if ((BAR_LABELS as readonly string[]).includes(text)) return text;
   if (text.startsWith(QUEUE_BTN_PREFIX)) return QUEUE_BTN;
@@ -336,7 +342,7 @@ export function buildSessionsKeyboard(
   const rows: { text: string; callback_data: string }[][] = [];
   const top: { text: string; callback_data: string }[] = [];
   if (options.projectsCb !== undefined) {
-    top.push({ text: `\u{1F504} \u9879\u76EE (${options.projectCount ?? 0})`, callback_data: options.projectsCb });
+    top.push({ text: `\u{1F504} Projects (${options.projectCount ?? 0})`, callback_data: options.projectsCb });
   }
   top.push({ text: "\u2728 New session", callback_data: "m:new" }, { text: "\u23F9 Stop", callback_data: "m:stop" });
   rows.push(top.slice(0, 3));
@@ -347,8 +353,8 @@ export function buildSessionsKeyboard(
     const row: { text: string; callback_data: string }[] = [
       { text: `\u{1F9ED} ${marker}${label.slice(0, 22)}${suffix}`.slice(0, 48), callback_data: `s:${item.id}`.slice(0, 64) },
     ];
-    if (item.archiveCb !== undefined) row.push({ text: "\u5F52\u6863", callback_data: item.archiveCb });
-    if (item.deleteCb !== undefined) row.push({ text: "\u5220\u9664", callback_data: item.deleteCb });
+    if (item.archiveCb !== undefined) row.push({ text: "Archive", callback_data: item.archiveCb });
+    if (item.deleteCb !== undefined) row.push({ text: "Delete", callback_data: item.deleteCb });
     rows.push(row);
   }
   const paging = options.paging;
@@ -384,11 +390,11 @@ export function buildSessionProjectsKeyboard(
 ): InlineKeyboard {
   const rows: { text: string; callback_data: string }[][] = [];
   if (options.all !== undefined) {
-    rows.push([{ text: "\u{1F310} \u5168\u90E8\u4F1A\u8BDD", callback_data: options.all }]);
+    rows.push([{ text: "\u{1F310} All sessions", callback_data: options.all }]);
   }
   for (const item of items.slice(0, 12)) {
     const status = item.running > 0 ? ` \u00B7 \u25B6${item.running}` : "";
-    rows.push([{ text: `\u{1F4C1} ${item.label.slice(0, 26)}${status} \u00B7 \u5171${item.total}`.slice(0, 64), callback_data: item.cb }]);
+    rows.push([{ text: `\u{1F4C1} ${item.label.slice(0, 26)}${status} \u00B7 total ${item.total}`.slice(0, 64), callback_data: item.cb }]);
   }
   if (options.paging !== undefined && (options.paging.previous !== undefined || options.paging.next !== undefined)) {
     const nav: { text: string; callback_data: string }[] = [];
@@ -433,8 +439,8 @@ export function buildWorkspaceDetailKeyboard(
 ): InlineKeyboard {
   const prefix = `w:${id}`.slice(0, 52);
   const kb = new InlineKeyboard();
-  if (actions?.use !== undefined) kb.row().text("\u2705 \u4F7F\u7528\u6B64\u9879\u76EE", actions.use);
-  if (actions?.sessions !== undefined) kb.row().text("\u{1F9ED} \u4F1A\u8BDD", actions.sessions);
+  if (actions?.use !== undefined) kb.row().text("\u2705 Use this project", actions.use);
+  if (actions?.sessions !== undefined) kb.row().text("\u{1F9ED} Sessions", actions.sessions);
   kb.row().text("\u270F Rename", `${prefix}:rename`.slice(0, 64)).text("\u{1F5D1} Delete", `${prefix}:delete`.slice(0, 64));
   kb.row().text("\u2B06 Move up", `${prefix}:up`.slice(0, 64)).text("\u2193 Move down", `${prefix}:down`.slice(0, 64));
   kb.row().text("\u{1F4CC} Pin session first", `${prefix}:pin`.slice(0, 64));

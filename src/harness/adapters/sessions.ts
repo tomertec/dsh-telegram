@@ -246,7 +246,7 @@ export function groupSessionsByProject(
       group = pseudo.get(key);
       if (group === undefined) {
         const base = cwd === "" ? "" : pathBasename(cwd);
-        let label = base === "" ? "\u672A\u5206\u7EC4" : base;
+        let label = base === "" ? "Ungrouped" : base;
         if (usedLabels.has(label)) {
           const parent = base === "" ? "" : parentBasename(cwd);
           label = parent === "" ? cwd : `${base} (${parent})`;

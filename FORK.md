@@ -43,6 +43,18 @@ Allowlisting is now host-only: `/telegram allow <chatId>` in dsh, or `security.a
 npmjs content (`npm ci` clean, `npm audit` 0 vulnerabilities), so the mirror was serving genuine
 tarballs — but a lockfile shipped to users should not silently redirect their installs.
 
+## 3. Mixed-language UI
+
+Upstream's English UI still rendered a scattering of Chinese labels — `收起`
+(collapse), `项目` (projects), `归档`/`删除` (archive/delete), the session-card hint, the
+queue hints, todo and compaction notices, and the whole stats/receipt strip. All of it is
+English here; only the Chinese-language test fixtures (which exist to prove non-ASCII text
+survives the pipeline) and the CJK filename character class in `media.ts` are untouched.
+
+`LEGACY_COLLAPSE_BTN_ZH` / `LEGACY_RETURN_BTN_ZH` were added so a bar rendered by the previous
+build — still sitting in an open chat — keeps working instead of sending its own label to the
+agent as a message.
+
 ## Residual risk — inherent to any of these plugins
 
 This plugin hands a tool-enabled coding agent on your machine a chat interface. That is the point of

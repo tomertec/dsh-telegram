@@ -107,7 +107,7 @@ test('openclaw streams reasoning and tool lines then collapses to a summary', as
 
   const summary = edits[edits.length - 1];
   // Issue #21: one compact line with the five user-facing metrics only.
-  assert.equal(summary.text, '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s \u00B7 \u{1F9E0} 1 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177');
+  assert.equal(summary.text, '\u2699\uFE0F done \u00B7 \u23F1\uFE0F 1s \u00B7 \u{1F9E0} 1 thoughts \u00B7 \u{1F6E0}\uFE0F 1 tool calls');
   assert.equal(summary.text.includes('\u{1F3AF} OpenClaw'), false, 'internal edit metrics stay out of the user receipt');
   assert.equal(summary.text.includes('\u2500'), false, 'no separator line');
   assert.equal(host.deletes.length, 0);
@@ -124,8 +124,8 @@ test('turn summary adds input/output tokens and cache hit rate', async () => {
   await sleep(20);
 
   const summary = host.edits.at(-1);
-  assert.match(summary.text, /🧠 1 次思考 · 🛠️ 1 次工具/);
-  assert.match(summary.text, /💾 命中 44%/);
+  assert.match(summary.text, /🧠 1 thoughts · 🛠️ 1 tool calls/);
+  assert.match(summary.text, /💾 hit 44%/);
   assert.equal(summary.text.includes('📥'), false, 'token billing stays out of the one-line receipt');
   assert.equal(summary.text.includes('📤'), false);
 });
@@ -153,7 +153,7 @@ test('turn summary appends the session stats line', async () => {
   await sleep(20);
 
   const summary = host.edits.at(-1);
-  assert.match(summary.text, /📊 4 轮 · 279 步/);
+  assert.match(summary.text, /📊 4 turns · 279 steps/);
   assert.equal(summary.text.includes('⚡'), false, 'performance segments are internal-only');
   assert.equal(summary.text.includes('tok/s'), false);
   assert.equal(summary.text.split('\n').length, 1, 'receipt is a single line');
@@ -194,7 +194,7 @@ test('tool line commits the reasoning burst and the next burst starts a new line
   assert.ok(first >= 0 && tool >= 0 && second >= 0);
   assert.ok(first < tool && tool < second, 'bursts interleave with the tool line');
   const summary = host.edits.at(-1);
-  assert.equal(summary.text, '\u2699\uFE0F \u5B8C\u6210 \u00B7 \u23F1\uFE0F 1s \u00B7 \u{1F9E0} 2 \u6B21\u601D\u8003 \u00B7 \u{1F6E0}\uFE0F 1 \u6B21\u5DE5\u5177');
+  assert.equal(summary.text, '\u2699\uFE0F done \u00B7 \u23F1\uFE0F 1s \u00B7 \u{1F9E0} 2 thoughts \u00B7 \u{1F6E0}\uFE0F 1 tool calls');
 });
 
 test('reasoning text is HTML-escaped and whitespace folds to one line', async () => {

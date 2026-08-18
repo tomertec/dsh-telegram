@@ -625,7 +625,7 @@ async function cardLoad<T>(chatId: number, label: string, load: () => Promise<T>
     return await withTimeout(Promise.resolve().then(load), CARD_LOAD_TIMEOUT_MS, label);
   } catch (err) {
     log(`${label} load failed`, err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
-    await uiSend(chatId, `\u274C ${label} \u52A0\u8F7D\u5931\u8D25\uFF1A${plain(truncate(err instanceof Error ? err.message : String(err), 120))}`, { parse_mode: "HTML" });
+    await uiSend(chatId, `\u274C ${label} failed to load: ${plain(truncate(err instanceof Error ? err.message : String(err), 120))}`, { parse_mode: "HTML" });
     return undefined;
   }
 }
@@ -856,7 +856,7 @@ async function openMenuAt(chatId: number, page: number): Promise<void> {
     [
       { label: `\u2728 New session \u00B7 ${project}`, cb: "m:new", full: true },
       { label: `\u{1F4C1} Project \u00B7 ${project}`, cb: "m:project", full: true },
-      { label: state.barCollapsed.get(chatId) === true ? "\u{1F4A1} \u663E\u793A Bar" : "\u{1F4A1} \u6536\u8D77 Bar", cb: "m:bartoggle", full: true },
+      { label: state.barCollapsed.get(chatId) === true ? "\u{1F4A1} Show Bar" : "\u{1F4A1} Collapse Bar", cb: "m:bartoggle", full: true },
       ...extensions.flatMap((extension) => extension.menuItems?.(buildExtensionHost()) ?? []),
       { label: "\u{1F5C2} Workspaces", cb: "m:workspaces" },
       { label: "\u{1F9EC} Skills", cb: "m:skills" },
@@ -1040,13 +1040,13 @@ async function openSessionsCard(chatId: number, projectKey?: string, page = 0): 
   const safe = Math.max(0, Math.min(page, totalPages - 1));
   const pageItems = sessions.slice(safe * SESSIONS_PAGE_SIZE, (safe + 1) * SESSIONS_PAGE_SIZE);
   const runningCount = sessions.filter((session) => session.running).length;
-  const label = group?.label ?? "\u5168\u90E8\u4F1A\u8BDD";
+  const label = group?.label ?? "All sessions";
   state.lastSessionsProject.set(chatId, key);
   const lines = [
     `\u{1F9ED} Sessions \u00B7 ${plain(truncate(label, 26))} \u00B7 \u25B6${runningCount}/${sessions.length}${archivedCount > 0 ? ` \u00B7 \u{1F5C4}${archivedCount}` : ""} \u00B7 page ${safe + 1}/${totalPages}`,
     "",
   ];
-  if (sessions.length === 0) lines.push("(\u8BE5\u9879\u76EE\u6682\u65E0\u4F1A\u8BDD)", "");
+  if (sessions.length === 0) lines.push("(no sessions in this project)", "");
   for (const session of pageItems) {
     const flags = [session.live ? "live" : "cold", session.running ? "running" : "idle"];
     const title = displayTitleFor(session.title, session.cwd, session.id);
@@ -1056,7 +1056,7 @@ async function openSessionsCard(chatId: number, projectKey?: string, page = 0): 
     );
     if (session.lastPromptAt !== undefined) lines.push(`   last prompt: ${plain(new Date(session.lastPromptAt).toLocaleString())}`);
   }
-  lines.push("", "\u4F1A\u8BDD\u6309\u94AE\u6253\u5F00\u8BE6\u60C5 \u00B7 \u5F52\u6863 / \u5220\u9664 \u76F4\u63A5\u64CD\u4F5C\u3002");
+  lines.push("", "Tap a session for details \u00B7 Archive / Delete act immediately.");
   await openCard(chatId, lines.join("\n"), buildSessionsKeyboard(pageItems.map((session) => ({
     id: session.id,
     title: displayTitleFor(session.title, session.cwd, session.id),
@@ -1079,11 +1079,11 @@ async function openSessionProjectsCard(chatId: number, page = 0): Promise<void> 
   const totalPages = Math.max(1, Math.ceil(groups.length / SESSION_PROJECTS_PAGE_SIZE));
   const safe = Math.max(0, Math.min(page, totalPages - 1));
   const pageGroups = groups.slice(safe * SESSION_PROJECTS_PAGE_SIZE, (safe + 1) * SESSION_PROJECTS_PAGE_SIZE);
-  const lines = [`\u{1F504} \u9879\u76EE (${groups.length}) \u00B7 page ${safe + 1}/${totalPages}`, ""];
+  const lines = [`\u{1F504} Projects (${groups.length}) \u00B7 page ${safe + 1}/${totalPages}`, ""];
   for (const group of pageGroups) {
     const current = bound !== undefined && group.sessions.some((session) => session.id === bound);
     lines.push(
-      `${current ? "\u25B8" : "\u2022"} ${plain(truncate(group.label, 30))} \u00B7 \u25B6${group.runningCount} \u00B7 \u5171${group.sessions.length}`,
+      `${current ? "\u25B8" : "\u2022"} ${plain(truncate(group.label, 30))} \u00B7 \u25B6${group.runningCount} \u00B7 total ${group.sessions.length}`,
     );
   }
   lines.push("", "Tap a project to switch its Sessions page.");
@@ -1182,9 +1182,9 @@ async function openQueueCard(chatId: number): Promise<void> {
     lines.push(`#${index + 1} \u00B7 ${kind} \u00B7 ${plain(truncate(preview, 60))}`);
   });
   if (items.length === 0) {
-    lines.push("(nothing pending)", "", "\u{1F4A1} \u8FDE\u7EED\u53D1\u4E24\u6761\u6D88\u606F\uFF0C\u7B2C\u4E8C\u6761\u4F1A\u6392\u961F\uFF0C\u6BCF\u6761\u90FD\u6709 \u270F/\u{1F5D1}/\u26A1 \u6309\u94AE\u3002");
+    lines.push("(nothing pending)", "", "\u{1F4A1} Send two in a row and the second queues; each gets \u270F/\u{1F5D1}/\u26A1 buttons.");
   } else {
-    lines.push("", "\u270F \u7F16\u8F91 \u00B7 \u{1F5D1} \u5220\u9664 \u00B7 \u26A1 \u7ACB\u5373\u6267\u884C(\u4EC5 next-turn) \u2014 \u6309\u4E0B\u65B9\u6309\u94AE\u64CD\u4F5C");
+    lines.push("", "\u270F Edit \u00B7 \u{1F5D1} Delete \u00B7 \u26A1 Run now (next-turn only) \u2014 use the buttons below");
   }
   await openCard(
     chatId,
@@ -1418,7 +1418,7 @@ async function openTodosCard(chatId: number): Promise<void> {
     startTodoCardRefresh(chatId, refresh);
   } catch (err) {
     log("openTodosCard FAILED", err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err));
-    await uiSend(chatId, `\u274C Todo list \u8F7D\u5165\u5931\u8D25\uff1A${plain(truncate(err instanceof Error ? err.message : String(err), 120))}`, { parse_mode: "HTML" });
+    await uiSend(chatId, `\u274C Todo list failed to load: ${plain(truncate(err instanceof Error ? err.message : String(err), 120))}`, { parse_mode: "HTML" });
   }
 }
 
@@ -2805,7 +2805,7 @@ async function dispatchCommand(chatId: number, command: string, args: string, me
           ? true
           : state.barCollapsed.get(chatId) !== true;
       await setBarCollapsed(chatId, collapsed);
-      await send(collapsed ? "Bar hidden \u2014 use /bar or Menu \u2192 \u{1F4A1} \u663E\u793A Bar to restore." : "Bar shown.");
+      await send(collapsed ? "Bar hidden \u2014 use /bar or Menu \u2192 \u{1F4A1} Show Bar to restore." : "Bar shown.");
       return;
     }
     case "workspaces":
@@ -3349,7 +3349,7 @@ async function dispatchDocument(chatId: number, kind: "document" | "voice" | "vi
       await uiSend(chatId, `\u274C ${plain(transcribed.text)}`, { parse_mode: "HTML" });
       return;
     }
-    await uiSend(chatId, `\u{1F399}\uFE0F \u8F6C\u5199: ${plain(transcribed.transcript)}`, { parse_mode: "HTML" });
+    await uiSend(chatId, `\u{1F399}\uFE0F Transcript: ${plain(transcribed.transcript)}`, { parse_mode: "HTML" });
     const delivered = state.bridge!.deliver(chatId, transcribed.transcript, messageId);
     if (!delivered.ok) await uiSend(chatId, `\u274C ${plain(delivered.text)}`, { parse_mode: "HTML" });
     else scheduleBarSync(chatId, 0);
@@ -3389,10 +3389,10 @@ async function stopWatching(): Promise<void> {
 function notifyTodoChange(chatId: number, previous: readonly TodoView[], next: readonly TodoView[]): void {
   const diff = diffTodos(previous, next);
   const lines: string[] = [];
-  for (const todo of diff.added.slice(0, 5)) lines.push(`\u{1F4CB} \u65B0\u589E\u4EFB\u52A1\uff1A${todo.content.slice(0, 80)}`);
-  for (const todo of diff.started.slice(0, 5)) lines.push(`\u23F3 \u8FDB\u884C\u4E2D\uff1A${todo.content.slice(0, 80)}`);
-  for (const todo of diff.completed.slice(0, 5)) lines.push(`\u2705 \u5DF2\u5B8C\u6210\uff1A${todo.content.slice(0, 80)}`);
-  if (diff.completed.length > 0) lines.push(`\u{1F4CB} \u5269 ${diff.remaining} \u9879\u5F85\u529E`);
+  for (const todo of diff.added.slice(0, 5)) lines.push(`\u{1F4CB} New task: ${todo.content.slice(0, 80)}`);
+  for (const todo of diff.started.slice(0, 5)) lines.push(`\u23F3 In progress: ${todo.content.slice(0, 80)}`);
+  for (const todo of diff.completed.slice(0, 5)) lines.push(`\u2705 Done: ${todo.content.slice(0, 80)}`);
+  if (diff.completed.length > 0) lines.push(`\u{1F4CB} ${diff.remaining} todos remaining`);
   if (lines.length === 0) return;
   void uiSend(chatId, lines.join("\n"), { parse_mode: "HTML" });
 }
@@ -3506,7 +3506,7 @@ function setBarCollapsed(chatId: number, collapsed: boolean): void {
       // A persistent reply keyboard survives the carrier deletion; Telegram
       // only replaces it when another keyboard message lands. Send the
       // collapsed one-button keyboard as the new carrier (#17).
-      const id = await t.sendTextControl(chatId, "\u{1F5DC}\uFE0F Bar \u5DF2\u6536\u8D77", {
+      const id = await t.sendTextControl(chatId, "\u{1F5DC}\uFE0F Bar collapsed", {
         parse_mode: "HTML",
         disable_notification: true,
         reply_markup: buildCollapsedBarKeyboard(),
@@ -3683,9 +3683,9 @@ export function apply(ctx: Context, loaderConfig?: unknown): void {
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [[
-              { text: "\u2705 \u81EA\u52A8\u538B\u7F29", callback_data: token({ action: "compact-auto", sessionId }) },
-              { text: "\u{1F4DD} \u6211\u6765\u624B\u52A8", callback_data: token({ action: "compact-manual", sessionId }) },
-              { text: "\u{1F7E2} \u538B\u7F29\u5E76\u7EE7\u7EED", callback_data: token({ action: "compact-auto", sessionId }) },
+              { text: "\u2705 Auto compact", callback_data: token({ action: "compact-auto", sessionId }) },
+              { text: "\u{1F4DD} Manual", callback_data: token({ action: "compact-manual", sessionId }) },
+              { text: "\u{1F7E2} Compact & continue", callback_data: token({ action: "compact-auto", sessionId }) },
             ]],
           },
         });

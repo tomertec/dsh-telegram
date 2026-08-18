@@ -174,7 +174,7 @@ test('collapsing the persistent bar sends the collapsed keyboard carrier (#17)',
     env.state.sends.length = 0;
     env.state.deletes.length = 0;
     await env.state.handlers.onText(7, COLLAPSE_BTN);
-    await waitFor(() => env.state.sends.some((entry) => entry.text.includes('Bar 已收起')));
+    await waitFor(() => env.state.sends.some((entry) => entry.text.includes('Bar collapsed')));
     const collapsed = env.state.sends.at(-1);
     assert.equal(collapsed.options.disable_notification, true);
     assert.ok(collapsed.options.reply_markup !== undefined, 'collapsed keyboard replaces the persistent bar');
@@ -236,7 +236,7 @@ test('a hanging card data service fails the card visibly after 10s (#20)', async
     await opening;
 
     assert.ok(
-      env.state.sends.some((entry) => entry.text.includes('❌ model catalog 加载失败')),
+      env.state.sends.some((entry) => entry.text.includes('❌ model catalog failed to load')),
       'card load deadline reports a visible failure instead of wedging the UI lane',
     );
     assert.equal(env.state.sends.some((entry) => /Models · current/.test(entry.text)), false, 'no half-loaded card');

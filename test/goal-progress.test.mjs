@@ -71,8 +71,8 @@ test('goal turn gets a progress card that finalizes into the openclaw receipt wi
   await sleep(20);
   const final = edits.at(-1).text;
   assert.match(final, /✅ research the market/);
-  assert.match(final, /🛠️ 1 次工具/);
-  assert.match(final, /💾 命中 44%/, 'openclaw receipt keeps the cache hit-rate line');
+  assert.match(final, /🛠️ 1 tool calls/);
+  assert.match(final, /💾 hit 44%/, 'openclaw receipt keeps the cache hit-rate line');
   assert.equal(feed.snapshot(7), undefined, 'turn end clears the running snapshot');
 });
 
